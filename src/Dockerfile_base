@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+# 设置工作目录
+WORKDIR /opt/application
+
+# 设置用户
+USER root
+
+# 复制依赖文件
+COPY requirements.txt .
+
+# 安装依赖
+RUN pip install --no-cache-dir -r requirements.txt
+
