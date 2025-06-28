@@ -1,2 +1,2 @@
 #!/bin/bash
-exec python3 -u /opt/application/main.py
+exec python3 -u /opt/application/app.py

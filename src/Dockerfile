@@ -1,4 +1,4 @@
-FROM unity-data-cn-shanghai.cr.volces.com/data-platform/nova-backend:basev1
+FROM dcc-cloud-cn-beijing.cr.volces.com/dcc-cloud/aura_backend:basev1
 
 WORKDIR /opt/application
 USER root

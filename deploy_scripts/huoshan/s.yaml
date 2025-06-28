@@ -1,12 +1,12 @@
 edition: 3.0.0
-name: nova-backend
-access: "default-data" # todo: 在系统下新建火山引擎的 AK / SK 密钥
+name: aura-backend
+access: "default-1" # todo: 在系统下新建火山引擎的 AK / SK 密钥
 
 vars:
-  sid: "novabackend"
-  region: "cn-shanghai"
-  functionName: "nova-backend-function"
-  version: "0.0.5"
+  sid: "aurabk"
+  region: "cn-beijing"
+  functionName: "aura-backend-function"
+  version: "0.0.1"
 
 resources:
   nova_backend:
@@ -18,13 +18,11 @@ resources:
         Name: ${vars.functionName}
         Description: template for neo4j-agent
         ExclusiveMode: true
-        RequestTimeout: 10800
-        AsyncConfig: # 异步配置
-          EnableAsyncTask: true # 开启异步任务
+        RequestTimeout: 900
         Runtime: native/v1
         SourceType: image # 支持 image / zip
-        Source: unity-data-cn-shanghai.cr.volces.com/data-platform/nova-backend:${vars.version}
-        MemoryMB: 16384
+        Source: dcc-cloud-cn-beijing.cr.volces.com/dcc-cloud/aura_backend:${vars.version}
+        MemoryMB: 4096
         Processor: cpu
         Envs:
           - Key: TOS_ENDPOINT
@@ -44,20 +42,20 @@ resources:
         VpcConfig:
           EnableVpc: true
           EnableSharedInternetAccess: true
-          VpcId: vpc-5gq2oliqyzgg73inqk1n6rxc
+          VpcId: vpc-rs46tr20ji0wv0x58vge86q
           SubnetIds:
-            - subnet-3qe9gmqnxwzr47prml09zu5l8
+            - subnet-minbd39plbeo5smt1ai7jqqb
           SecurityGroupIds:
-            - sg-5grd5ozhk00073inqkh3s72d
+            - sg-mincr0qv7aww5smt1ak50w94
 
       replicaLimit:
-        MaxInstance: 4
+        MaxInstance: 10
       triggers:
         - TriggerName: apig-trigger
           TriggerType: apig
-          GatewayId: "gcuph20n3phgiilmgfo6g" # todo: 新建 apig 后填写 gatewayId 即可
-          ServiceName: "service-novabackend"
-          UpstreamName: "upstream-novabackend"
+          GatewayId: "gcp1jht7vgc9hjb8nftb0" # todo: 新建 apig 后填写 gatewayId 即可
+          ServiceName: "service-aurabk"
+          UpstreamName: "upstream-aurabk"
           RouteName: default
           Path: "/"
           Method:
