@@ -6,13 +6,17 @@ from typing import Any, Optional, Dict, Literal
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
-
+from agents.aura_memory.message_store import MessageStore
+from agents.aura_memory.chat_stream import ChatStream, ChatStreamManager
 
 @dataclass(kw_only=True)
 class Configuration:
 	"""The configurable fields for the chatbot."""
-	user_id: str = "default" # User ID
+	chat_id: str = "default" # User ID
 	thread_id: str = "default" # Thread ID
+	chat_stream: ChatStream = None
+	message_store: MessageStore = None
+	chat_stream_manager: ChatStreamManager = None
 
 	@classmethod
 	def from_runnable_config(
@@ -31,9 +35,9 @@ class Configuration:
 
 LLMType = Literal["basic", "reasoning", "vision"]
 LLM_MODEL_MAP: dict[str, str] = {
-    "basic": "doubao-1-5-pro-32k-250115",
-    "reasoning": "doubao-1-5-pro-32k-250115",
-    "vision": "doubao-1-5-pro-32k-250115"
+    "basic": "doubao-seed-1-6-flash-250615",
+    "reasoning": "doubao-seed-1-6-flash-250615",
+    "vision": "doubao-seed-1-6-flash-250615"
 }
 
 def get_chat_model_by_type(
