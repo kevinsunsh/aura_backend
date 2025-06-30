@@ -90,7 +90,8 @@ async def test_websocket_stream():
                             delay = (receive_time - send_time) * 1000  # 转换为毫秒
                             delays.append(delay)
                         else:
-                            delays.append(0)
+                            delay = 0
+                            delays.append(delay)
                         
                         chunk_times.append(receive_time)
                         logger.info(f"收到第{chunk_count}个内容片段: '{content}' (延迟: {delay:.2f}ms)")

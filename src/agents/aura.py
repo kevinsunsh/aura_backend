@@ -77,26 +77,31 @@ class AuraAgent:
     
     async def remove_websocket_connection(self):
         """移除WebSocket连接"""
+        # 先获取锁，移除WebSocket连接
         async with self.websocket_lock:
             if self.websocket_connection:
                 self.websocket_connection = None
                 logger.info(f"用户已断开 WebSocket 连接")
 
-        # 清理文本消息处理器
-        if hasattr(self, 'message_processor_text'):
-            await self.message_processor_text.cleanup()
-        
-        # 清理消息分发器
-        if hasattr(self, 'message_processor_audio'):
-            await self.message_processor_audio.cleanup()
+        # 在锁外进行清理操作，避免死锁
+        try:
+            # 清理文本消息处理器
+            if hasattr(self, 'message_processor_text'):
+                await self.message_processor_text.cleanup()
+            
+            # 清理消息分发器
+            if hasattr(self, 'message_processor_audio'):
+                await self.message_processor_audio.cleanup()
 
-        # 释放聊天流锁
-        if hasattr(self, 'chat_stream') and self.chat_stream:
-            try:
-                self.chat_stream_manager.release_lock(self.chat_stream.chat_id)
-                logger.info(f"已释放聊天流锁: {self.chat_stream.chat_id}")
-            except Exception as e:
-                logger.error(f"释放聊天流锁时出错: {e}")
+            # 释放聊天流锁
+            if hasattr(self, 'chat_stream') and self.chat_stream:
+                try:
+                    self.chat_stream_manager.release_lock(self.chat_stream.chat_id)
+                    logger.info(f"已释放聊天流锁: {self.chat_stream.chat_id}")
+                except Exception as e:
+                    logger.error(f"释放聊天流锁时出错: {e}")
+        except Exception as e:
+            logger.error(f"清理资源时出错: {e}")
     
     async def send_websocket_message(self, message: dict):
         """发送WebSocket消息"""
