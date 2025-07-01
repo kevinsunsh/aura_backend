@@ -232,6 +232,12 @@ class MessageProcessorText:
                 }
             }
             
+            if self.websocket_send_callback:
+                await self.websocket_send_callback({
+                    "type": "ready",
+                    "message": "准备开始响应..."
+                })
+            
             # 使用优化的异步PostgreSQL连接
             async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
                 graph = quick_graph_builder.compile(checkpointer=checkpointer)
@@ -264,7 +270,11 @@ class MessageProcessorText:
                             elif "updates" in event:
                                 if "quick_response" in message_obj:
                                     if message_obj["quick_response"]["aura_response"] == "finished":
-                                        logger.info(f"快速回复任务完成: chat_id={chat_stream.chat_id}")
+                                        if self.websocket_send_callback:
+                                            await self.websocket_send_callback({
+                                                "type": "end",
+                                                "message": "处理完成"
+                                            })
                                         break  # 处理完成，退出循环
                 except asyncio.TimeoutError:
                     logger.warning(f"聊天任务超时: chat_id={chat_stream.chat_id}")

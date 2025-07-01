@@ -13,10 +13,8 @@ from datetime import datetime
 import websockets
 import gzip
 
-from ..aura_memory.message_store import Message
-from ..configuration import Configuration
-from ..graphs.main_graph import builder
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from .realtime_dialog_client import RealtimeDialogClient
+from .config import ws_connect_config
 
 logger = logging.getLogger(__name__)
 
@@ -29,259 +27,44 @@ class AudioConfig:
     sample_rate: int
     chunk: int
 
-
-class RealtimeDialogClient:
-    """实时对话客户端，基于参考代码实现"""
-    
-    def __init__(self, config: Dict[str, Any], session_id: str):
-        self.config = config
-        self.logid = ""
-        self.session_id = session_id
-        self.ws = None
-
-    async def connect(self) -> None:
-        """建立WebSocket连接"""
-        logger.info(f"连接服务器: {self.config['base_url']}")
-        self.ws = await websockets.connect(
-            self.config['base_url'],
-            extra_headers=self.config['headers'],
-            ping_interval=None
-        )
-        self.logid = self.ws.response_headers.get("X-Tt-Logid")
-        logger.info(f"服务器响应logid: {self.logid}")
-
-        # StartConnection request (事件ID: 1)
-        await self.start_connection()
-
-        # StartSession request (事件ID: 100)
-        await self.start_session()
-
-    async def start_connection(self) -> None:
-        """StartConnection - 客户端事件ID: 1"""
-        start_connection_request = bytearray(self._generate_header())
-        start_connection_request.extend(int(1).to_bytes(4, 'big'))
-        payload_bytes = str.encode("{}")
-        payload_bytes = gzip.compress(payload_bytes)
-        start_connection_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        start_connection_request.extend(payload_bytes)
-        await self.ws.send(start_connection_request)
-        response = await self.ws.recv()
-        logger.info(f"StartConnection响应: {self._parse_response(response)}")
-
-    async def start_session(self, bot_name: str = "豆包", dialog_id: str = None, strict_audit: bool = True) -> None:
-        """StartSession - 客户端事件ID: 100"""
-        # 构建会话参数
-        session_params = {
-            "dialog": {
-                "bot_name": bot_name,
-                "extra": {
-                    "strict_audit": strict_audit
-                }
-            }
-        }
-        
-        # 如果提供了dialog_id，添加到参数中
-        if dialog_id:
-            session_params["dialog"]["dialog_id"] = dialog_id
-        
-        payload_bytes = str.encode(json.dumps(session_params))
-        payload_bytes = gzip.compress(payload_bytes)
-        start_session_request = bytearray(self._generate_header())
-        start_session_request.extend(int(100).to_bytes(4, 'big'))
-        start_session_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        start_session_request.extend(str.encode(self.session_id))
-        start_session_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        start_session_request.extend(payload_bytes)
-        await self.ws.send(start_session_request)
-        response = await self.ws.recv()
-        logger.info(f"StartSession响应: {self._parse_response(response)}")
-
-    async def finish_session(self) -> None:
-        """FinishSession - 客户端事件ID: 102"""
-        finish_session_request = bytearray(self._generate_header())
-        finish_session_request.extend(int(102).to_bytes(4, 'big'))
-        payload_bytes = str.encode("{}")
-        payload_bytes = gzip.compress(payload_bytes)
-        finish_session_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        finish_session_request.extend(str.encode(self.session_id))
-        finish_session_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        finish_session_request.extend(payload_bytes)
-        await self.ws.send(finish_session_request)
-
-    async def finish_connection(self) -> None:
-        """FinishConnection - 客户端事件ID: 2"""
-        finish_connection_request = bytearray(self._generate_header())
-        finish_connection_request.extend(int(2).to_bytes(4, 'big'))
-        payload_bytes = str.encode("{}")
-        payload_bytes = gzip.compress(payload_bytes)
-        finish_connection_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        finish_connection_request.extend(payload_bytes)
-        await self.ws.send(finish_connection_request)
-        response = await self.ws.recv()
-        logger.info(f"FinishConnection响应: {self._parse_response(response)}")
-
-    async def task_request(self, audio: bytes) -> None:
-        """TaskRequest - 客户端事件ID: 200"""
-        task_request = bytearray(
-            self._generate_header(message_type=0b0010, serial_method=0b0000))
-        task_request.extend(int(200).to_bytes(4, 'big'))
-        task_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        task_request.extend(str.encode(self.session_id))
-        payload_bytes = gzip.compress(audio)
-        task_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        task_request.extend(payload_bytes)
-        await self.ws.send(task_request)
-
-    async def say_hello(self, content: str) -> None:
-        """SayHello - 客户端事件ID: 300"""
-        hello_data = {
-            "content": content
-        }
-        payload_bytes = str.encode(json.dumps(hello_data))
-        payload_bytes = gzip.compress(payload_bytes)
-        
-        say_hello_request = bytearray(self._generate_header(message_type=0b0001, serial_method=0b0001))
-        say_hello_request.extend(int(300).to_bytes(4, 'big'))
-        say_hello_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        say_hello_request.extend(str.encode(self.session_id))
-        say_hello_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        say_hello_request.extend(payload_bytes)
-        await self.ws.send(say_hello_request)
-
-    async def chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
-        """ChatTTSText - 客户端事件ID: 500"""
-        tts_data = {
-            "start": start,
-            "content": content,
-            "end": end
-        }
-        payload_bytes = str.encode(json.dumps(tts_data))
-        payload_bytes = gzip.compress(payload_bytes)
-        
-        chat_tts_request = bytearray(self._generate_header(message_type=0b0001, serial_method=0b0001))
-        chat_tts_request.extend(int(500).to_bytes(4, 'big'))
-        chat_tts_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        chat_tts_request.extend(str.encode(self.session_id))
-        chat_tts_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        chat_tts_request.extend(payload_bytes)
-        await self.ws.send(chat_tts_request)
-
-    def _generate_header(self, message_type=0b0010, serial_method=0b0000):
-        """生成协议头"""
-        header = bytearray()
-        header.append((0b0001 << 4) | 0b0001)  # version + header_size
-        header.append((message_type << 4) | 0b0100)  # message_type + flags
-        header.append((serial_method << 4) | 0b0001)  # serial + compression
-        header.append(0x00)  # reserved
-        return header
-
-    def _parse_response(self, res):
-        """解析服务器响应"""
-        if isinstance(res, str):
-            return {}
-        
-        protocol_version = res[0] >> 4
-        header_size = res[0] & 0x0f
-        message_type = res[1] >> 4
-        message_type_specific_flags = res[1] & 0x0f
-        serialization_method = res[2] >> 4
-        message_compression = res[2] & 0x0f
-        reserved = res[3]
-        header_extensions = res[4:header_size * 4]
-        payload = res[header_size * 4:]
-        
-        result = {}
-        payload_msg = None
-        payload_size = 0
-        start = 0
-        
-        if message_type == 0b1001 or message_type == 0b1011:  # SERVER_FULL_RESPONSE or SERVER_ACK
-            result['message_type'] = 'SERVER_FULL_RESPONSE'
-            if message_type == 0b1011:
-                result['message_type'] = 'SERVER_ACK'
-            if message_type_specific_flags & 0b0010 > 0:  # NEG_SEQUENCE
-                result['seq'] = int.from_bytes(payload[:4], "big", signed=False)
-                start += 4
-            if message_type_specific_flags & 0b0100 > 0:  # MSG_WITH_EVENT
-                result['event'] = int.from_bytes(payload[:4], "big", signed=False)
-                start += 4
-            payload = payload[start:]
-            session_id_size = int.from_bytes(payload[:4], "big", signed=True)
-            session_id = payload[4:4+session_id_size]
-            result['session_id'] = str(session_id, 'utf-8')
-            payload = payload[4 + session_id_size:]
-            payload_size = int.from_bytes(payload[:4], "big", signed=False)
-            payload_msg = payload[4:]
-        elif message_type == 0b1111:  # SERVER_ERROR_RESPONSE
-            code = int.from_bytes(payload[:4], "big", signed=False)
-            result['code'] = code
-            payload_size = int.from_bytes(payload[4:8], "big", signed=False)
-            payload_msg = payload[8:]
-            
-        if payload_msg is None:
-            return result
-            
-        if message_compression == 0b0001:  # GZIP
-            payload_msg = gzip.decompress(payload_msg)
-        if serialization_method == 0b0001:  # JSON
-            payload_msg = json.loads(str(payload_msg, "utf-8"))
-        elif serialization_method != 0b0000:  # NO_SERIALIZATION
-            payload_msg = str(payload_msg, "utf-8")
-            
-        result['payload_msg'] = payload_msg
-        result['payload_size'] = payload_size
-        return result
-
-    async def receive_server_response(self) -> Dict[str, Any]:
-        """接收服务器响应"""
-        try:
-            response = await self.ws.recv()
-            data = self._parse_response(response)
-            return data
-        except Exception as e:
-            raise Exception(f"接收消息失败: {e}")
-
-    async def close(self) -> None:
-        """关闭WebSocket连接"""
-        if self.ws:
-            logger.info("关闭WebSocket连接...")
-            await self.ws.close()
-
-
 class DialogSession:
     """对话会话管理类，集成RealtimeDialogClient和aura流式聊天"""
-
     def __init__(self, 
-                 chat_id: str,
-                 ws_config: Dict[str, Any],
-                 message_store,
-                 chat_stream_manager,
-                 db_conn_string: str,
-                 websocket_send_callback: Callable[[Dict[str, Any]], None]):
-        self.chat_id = chat_id
+                 asr_start_callback: Callable[[], None] = None,
+                 asr_end_callback: Callable[[str], None] = None,
+                 tts_start_callback: Callable[[], None] = None,
+                 tts_response_callback: Callable[[bytes], None] = None,
+                 tts_end_callback: Callable[[], None] = None,
+                 chat_end_callback: Callable[[str], None] = None,
+                 ):
         self.session_id = str(uuid.uuid4())
-        self.client = RealtimeDialogClient(config=ws_config, session_id=self.session_id)
-        
-        # aura相关组件
-        self.message_store = message_store
-        self.chat_stream_manager = chat_stream_manager
-        self.db_conn_string = db_conn_string
-        self.websocket_send_callback = websocket_send_callback
-        
+        self.client = RealtimeDialogClient(config=ws_connect_config, session_id=self.session_id)
+
         # 状态管理
         self.is_running = True
         self.is_session_finished = False
         
-        # 音频缓冲队列
-        self.audio_queue = queue.Queue()
+        # 重连状态管理
+        self.is_reconnecting = False
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 3
+        self.reconnect_delay = 2.0  # 重连延迟秒数
+        self.reconnect_start_time = None  # 重连开始时间
         
-        # 响应缓冲
+        # 服务器ASR结果
         self.server_asr_result = None
-        self.aura_chat_response = None
-        self.aura_tts_response = None
-        self.server_tts_response = None
-        self.server_chat_response = None
-        
+        self.asr_start_callback = asr_start_callback
+        self.asr_end_callback = asr_end_callback
+
+        # 服务器TTS结果
+        self.tts_start_callback = tts_start_callback
+        self.tts_response_callback = tts_response_callback
+        self.tts_end_callback = tts_end_callback
+
+        # 服务器Chat结果
+        self.server_chat_response = ""
+        self.chat_end_callback = chat_end_callback
+
         # 延迟监控
         self.last_input_time = None
         self.first_audio_response_time = None
@@ -294,9 +77,8 @@ class DialogSession:
         }
         
         # 任务管理
-        self.aura_task = None
         self.server_receive_task = None
-
+        
     def _update_latency_stats(self, latency: float) -> None:
         """更新延迟统计信息"""
         self.latency_stats['total_requests'] += 1
@@ -305,23 +87,121 @@ class DialogSession:
         self.latency_stats['max_latency'] = max(self.latency_stats['max_latency'], latency)
         self.latency_stats['avg_latency'] = self.latency_stats['total_latency'] / self.latency_stats['total_requests']
     
+    async def check_connection_and_reconnect(self) -> bool:
+        """检查连接状态并在断线时尝试重连"""
+        # 如果正在重连中，检查是否超时
+        if self.is_reconnecting:
+            if self.reconnect_start_time and time.time() - self.reconnect_start_time > 30:
+                logger.error("重连超时（30秒），重置重连状态")
+                self.is_reconnecting = False
+                self.reconnect_start_time = None
+                return False
+            logger.debug("当前正在重连中，跳过连接检查")
+            return False
+            
+        # 检查连接状态
+        if self.is_connected():
+            # 连接正常，重置重连计数和状态
+            if self.reconnect_attempts > 0:
+                logger.info("连接已恢复正常，重置重连计数")
+                self.reconnect_attempts = 0
+                self.reconnect_start_time = None
+            return True
+        
+        # 连接断开，尝试重连
+        if self.reconnect_attempts >= self.max_reconnect_attempts:
+            logger.error(f"已达到最大重连次数 ({self.max_reconnect_attempts})，停止重连")
+            self.is_running = False
+            return False
+        
+        logger.warning(f"检测到连接断开，开始第 {self.reconnect_attempts + 1} 次重连...")
+        return await self._reconnect()
+    
+    async def _reconnect(self) -> bool:
+        """执行重连逻辑"""
+        self.is_reconnecting = True
+        self.reconnect_start_time = time.time()
+        self.reconnect_attempts += 1
+        
+        try:
+            # 等待重连延迟
+            await asyncio.sleep(self.reconnect_delay)
+            
+            # 注意：不取消当前的接收任务，因为重连是由接收任务本身调用的
+            # 取消自己会导致死锁
+            
+            # 关闭现有连接
+            if self.client.ws:
+                try:
+                    await self.client.close()
+                except Exception as e:
+                    logger.warning(f"关闭旧连接时出错: {e}")
+            
+            # 确保旧连接完全关闭后再创建新连接
+            await asyncio.sleep(0.1)
+            
+            # 创建新的客户端实例
+            self.client = RealtimeDialogClient(config=ws_connect_config, session_id=self.session_id)
+            
+            # 重新连接
+            await self.client.connect()
+            
+            # 重连成功
+            logger.info(f"重连成功，第 {self.reconnect_attempts} 次尝试")
+            self.is_reconnecting = False
+            self.reconnect_start_time = None
+            self.is_session_finished = False  # 重置会话状态
+            
+            # 重置聊天响应缓冲区，避免数据混淆
+            self.server_chat_response = ""
+            self.server_asr_result = None
+            
+            # 注意：不需要重新创建接收任务，因为当前的接收循环会继续运行
+            logger.info("重连成功，接收循环将继续运行")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"重连失败，第 {self.reconnect_attempts} 次尝试: {e}")
+            self.is_reconnecting = False
+            self.reconnect_start_time = None
+            
+            # 如果还有重连机会，返回False让调用者稍后再试
+            if self.reconnect_attempts < self.max_reconnect_attempts:
+                return False
+            else:
+                # 已达到最大重连次数，停止运行
+                logger.error(f"已达到最大重连次数 ({self.max_reconnect_attempts})，停止运行")
+                self.is_running = False
+                return False
+    
+    def is_connection_healthy(self) -> bool:
+        """检查连接是否健康"""
+        try:
+            return (not self.is_reconnecting and 
+                    self.is_running and 
+                    not self.is_session_finished and 
+                    self.client.ws is not None and 
+                    self._is_websocket_open())
+        except Exception as e:
+            logger.debug(f"检查连接健康状态时出错: {e}")
+            return False
+    
     async def _handle_server_response(self, response: Dict[str, Any]) -> None:
         """处理服务器响应"""
         if response == {}:
             return
-            
+        print(f"ASR服务器响应: {response}")
+
         # 处理事件类型响应
         if response.get('event') is not None:
-            await self._handle_server_event(response)
+            event_id = response.get('event')
+            payload_msg = response.get('payload_msg', {})
+            logger.info(f"处理服务器事件: {event_id}")
+            await self._handle_server_event(event_id, payload_msg)
             return
-
-    async def _handle_server_event(self, response: Dict[str, Any]) -> None:
-        """处理服务器事件响应"""
-        event_id = response.get('event')
-        payload_msg = response.get('payload_msg', {})
-        
-        logger.info(f"处理服务器事件: {event_id}")
-        
+    
+    async def _handle_server_event(self, event_id: int, payload_msg: Dict[str, Any]) -> None:
         # Connect类事件 (50-52)
         if event_id == 50:  # ConnectionStarted
             await self._on_connection_started(payload_msg)
@@ -329,7 +209,6 @@ class DialogSession:
             await self._on_connection_failed(payload_msg)
         elif event_id == 52:  # ConnectionFinished
             await self._on_connection_finished(payload_msg)
-            
         # Session类事件 (150-153)
         elif event_id == 150:  # SessionStarted
             await self._on_session_started(payload_msg)
@@ -337,7 +216,6 @@ class DialogSession:
             await self._on_session_finished(payload_msg)
         elif event_id == 153:  # SessionFailed
             await self._on_session_failed(payload_msg)
-            
         # TTS类事件 (350-359)
         elif event_id == 350:  # TTSSentenceStart
             await self._on_tts_sentence_start(payload_msg)
@@ -347,7 +225,6 @@ class DialogSession:
             await self._on_tts_response(payload_msg)
         elif event_id == 359:  # TTSEnded
             await self._on_tts_ended(payload_msg)
-            
         # ASR类事件 (450-459)
         elif event_id == 450:  # ASRInfo
             await self._on_asr_info(payload_msg)
@@ -355,16 +232,14 @@ class DialogSession:
             await self._on_asr_response(payload_msg)
         elif event_id == 459:  # ASREnded
             await self._on_asr_ended(payload_msg)
-            
         # Chat类事件 (550-559)
         elif event_id == 550:  # ChatResponse
             await self._on_chat_response(payload_msg)
         elif event_id == 559:  # ChatEnded
             await self._on_chat_ended(payload_msg)
-            
         else:
             logger.warning(f"未知事件ID: {event_id}")
-
+    
     # Connect类事件回调方法
     async def _on_connection_started(self, payload: Dict[str, Any]) -> None:
         """连接建立成功事件回调"""
@@ -402,66 +277,58 @@ class DialogSession:
         tts_type = payload.get("tts_type", "")
         text = payload.get("text", "")
         logger.info(f"TTS句子开始 - 类型: {tts_type}, 文本: {text[:50]}...")
-
+        if self.tts_start_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.tts_start_callback):
+                    await self.tts_start_callback()
+                else:
+                    self.tts_start_callback()
+            except Exception as e:
+                logger.error(f"TTS开始回调执行失败: {e}")
+    
     async def _on_tts_sentence_end(self, payload: Dict[str, Any]) -> None:
         """TTS句子结束事件回调"""
         logger.info("TTS句子结束")
+        if self.tts_end_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.tts_end_callback):
+                    await self.tts_end_callback()
+                else:
+                    self.tts_end_callback()
+            except Exception as e:
+                logger.error(f"TTS结束回调执行失败: {e}")
 
     async def _on_tts_response(self, payload: Dict[str, Any]) -> None:
         """TTS音频响应事件回调"""
         # 这里payload应该是二进制音频数据
         audio_data = payload if isinstance(payload, bytes) else b""
         logger.info(f"收到TTS音频数据: {len(audio_data)} 字节")
-        
-        # 缓冲服务器TTS响应
-        self.server_tts_response = audio_data
-        
-        # 选择最终结果并发送给客户端
-        final_result = self._select_tts_result()
-        if final_result["type"] == "aura_tts":
-            # 发送aura的TTS结果
-            await self.websocket_send_callback({
-                "type": "stream_chunk",
-                "content": self.aura_chat_response,
-                "chat_id": self.chat_id,
-                "source": "aura",
-                "final": True
-            })
-        elif final_result["type"] == "server_tts":
-            # 发送服务器的TTS结果
-            await self.websocket_send_callback({
-                "type": "tts_audio",
-                "audio_data": audio_data,
-                "chat_id": self.chat_id,
-                "source": "server"
-            })
-        
-        await self.websocket_send_callback({
-            "type": "tts_response",
-            "audio_size": len(audio_data),
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
-
+        if self.tts_response_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.tts_response_callback):
+                    await self.tts_response_callback(audio_data)
+                else:
+                    self.tts_response_callback(audio_data)
+            except Exception as e:
+                logger.error(f"TTS响应回调执行失败: {e}")
+    
     async def _on_tts_ended(self, payload: Dict[str, Any]) -> None:
         """TTS结束事件回调"""
         logger.info("TTS合成结束")
-        await self.websocket_send_callback({
-            "type": "tts_ended",
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
-
+    
     # ASR类事件回调方法
     async def _on_asr_info(self, payload: Dict[str, Any]) -> None:
         """ASR信息事件回调 - 识别出首字"""
         logger.info("ASR识别出首字")
-        await self.websocket_send_callback({
-            "type": "asr_info",
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
-
+        if self.asr_start_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.asr_start_callback):
+                    await self.asr_start_callback()
+                else:
+                    self.asr_start_callback()
+            except Exception as e:
+                logger.error(f"ASR开始回调执行失败: {e}")
+    
     async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
         """ASR响应事件回调 - 识别出文本内容"""
         results = payload.get("results", [])
@@ -473,29 +340,19 @@ class DialogSession:
                 
                 if not is_interim:  # 最终结果
                     self.server_asr_result = text
-                    
-                    # 如果有ASR结果，启动aura聊天处理
-                    if self.server_asr_result and not self.aura_task:
-                        self.aura_task = asyncio.create_task(
-                            self._process_aura_chat(self.server_asr_result)
-                        )
-        
-        await self.websocket_send_callback({
-            "type": "asr_response",
-            "results": results,
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
-
+    
     async def _on_asr_ended(self, payload: Dict[str, Any]) -> None:
         """ASR结束事件回调"""
         logger.info("ASR识别结束")
-        await self.websocket_send_callback({
-            "type": "asr_ended",
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
-
+        if self.asr_end_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.asr_end_callback):
+                    await self.asr_end_callback(self.server_asr_result)
+                else:
+                    self.asr_end_callback(self.server_asr_result)
+            except Exception as e:
+                logger.error(f"ASR结束回调执行失败: {e}")
+    
     # Chat类事件回调方法
     async def _on_chat_response(self, payload: Dict[str, Any]) -> None:
         """聊天响应事件回调"""
@@ -503,110 +360,273 @@ class DialogSession:
         logger.info(f"收到聊天响应: {content[:50]}...")
         
         # 缓冲服务器聊天响应
-        self.server_chat_response = content
-        
-        await self.websocket_send_callback({
-            "type": "chat_response",
-            "content": content,
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
+        self.server_chat_response += content
 
     async def _on_chat_ended(self, payload: Dict[str, Any]) -> None:
         """聊天结束事件回调"""
         logger.info("聊天响应结束")
-        await self.websocket_send_callback({
-            "type": "chat_ended",
-            "chat_id": self.chat_id,
-            "source": "server"
-        })
-
+        if self.chat_end_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.chat_end_callback):
+                    await self.chat_end_callback(self.server_chat_response)
+                else:
+                    self.chat_end_callback(self.server_chat_response)
+            except Exception as e:
+                logger.error(f"聊天结束回调执行失败: {e}")
+            # 重置聊天响应缓冲区
+            self.server_chat_response = ""
+    
     async def _server_receive_loop(self):
         """服务器响应接收循环"""
         try:
             while self.is_running and not self.is_session_finished:
-                response = await self.client.receive_server_response()
-                await self._handle_server_response(response)
+                try:
+                    # 检查连接状态并尝试重连
+                    if not await self.check_connection_and_reconnect():
+                        # 如果正在重连中，等待重连完成
+                        if self.is_reconnecting:
+                            logger.debug("正在重连中，等待重连完成...")
+                            await asyncio.sleep(0.5)
+                        # 如果重连失败且不是因为正在重连中，则等待后重试
+                        elif self.is_running:
+                            logger.warning("连接检查失败，等待后重试...")
+                            await asyncio.sleep(1.0)
+                        continue
+                    
+                    # 尝试从ASR客户端接收响应
+                    try:
+                        asr_response = await self.client.receive_server_response()
+                        await self._handle_server_response(asr_response)
+                    except Exception as recv_error:
+                        # 特别处理WebSocket并发接收错误
+                        error_msg = str(recv_error).lower()
+                        if "recv" in error_msg and ("already running" in error_msg or "cannot call" in error_msg):
+                            logger.warning(f"检测到WebSocket并发接收问题: {recv_error}")
+                            # 短暂暂停，让其他操作完成
+                            await asyncio.sleep(0.1)
+                            continue
+                        else:
+                            # 重新抛出其他类型的错误
+                            raise recv_error
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info("服务器连接已关闭，尝试重连...")
+                    # 不立即退出，让重连逻辑处理
+                    reconnect_success = await self.check_connection_and_reconnect()
+                    if not reconnect_success and not self.is_running:
+                        logger.error("重连失败且系统已停止运行，退出接收循环")
+                        break
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    logger.warning(f"服务器接收响应失败: {e}")
+                    
+                    # 特别处理并发recv错误
+                    if ("recv" in error_msg and "already running" in error_msg) or "cannot call recv" in error_msg:
+                        logger.info("检测到WebSocket并发接收问题，短暂暂停后重试...")
+                        await asyncio.sleep(0.2)
+                        continue
+                    
+                    # 如果是连接相关错误，尝试重连
+                    if "connection" in error_msg or "websocket" in error_msg:
+                        reconnect_success = await self.check_connection_and_reconnect()
+                        if not reconnect_success and not self.is_running:
+                            logger.error("重连失败且系统已停止运行，退出接收循环")
+                            break
+                
                 await asyncio.sleep(0.01)  # 避免CPU过度使用
+                
         except asyncio.CancelledError:
             logger.info("服务器接收任务已取消")
         except Exception as e:
-            logger.error(f"服务器接收消息错误: {e}")
-
+            logger.error(f"服务器接收消息出现未预期错误: {e}")
+            # 只有在出现严重错误时才停止运行
+            if not self.is_reconnecting:
+                self.is_running = False
+    
     async def process_audio_input(self, audio_data: bytes) -> None:
         """处理音频输入"""
         try:
+            # 检查连接状态并尝试重连
+            if not await self.check_connection_and_reconnect():
+                logger.warning("连接检查失败，无法发送音频数据")
+                return
+                
             self.last_input_time = time.time()
             await self.client.task_request(audio_data)
-            logger.info(f"已发送音频数据: {len(audio_data)} 字节")
+            # logger.info(f"已发送音频数据: {len(audio_data)} 字节")
+        except websockets.exceptions.ConnectionClosed:
+            logger.error("WebSocket连接已关闭，尝试重连...")
+            if await self.check_connection_and_reconnect():
+                # 重连成功，重试发送
+                try:
+                    await self.client.task_request(audio_data)
+                    logger.info(f"重连后成功发送音频数据: {len(audio_data)} 字节")
+                except Exception as e:
+                    logger.error(f"重连后发送音频数据仍然失败: {e}")
+            else:
+                logger.error("重连失败，无法发送音频数据")
         except Exception as e:
             logger.error(f"发送音频数据失败: {e}")
-
+            # 如果是连接相关错误，尝试重连
+            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+                if await self.check_connection_and_reconnect():
+                    # 重连成功，重试发送
+                    try:
+                        await self.client.task_request(audio_data)
+                        logger.info(f"重连后成功发送音频数据: {len(audio_data)} 字节")
+                    except Exception as retry_e:
+                        logger.error(f"重连后发送音频数据仍然失败: {retry_e}")
+    
     async def send_say_hello(self, content: str) -> None:
         """发送打招呼消息"""
         try:
+            # 检查连接状态并尝试重连
+            if not await self.check_connection_and_reconnect():
+                logger.warning("连接检查失败，无法发送打招呼消息")
+                return
+                
             await self.client.say_hello(content)
             logger.info(f"已发送打招呼消息: {content}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.error("WebSocket连接已关闭，尝试重连...")
+            if await self.check_connection_and_reconnect():
+                # 重连成功，重试发送
+                try:
+                    await self.client.say_hello(content)
+                    logger.info(f"重连后成功发送打招呼消息: {content}")
+                except Exception as e:
+                    logger.error(f"重连后发送打招呼消息仍然失败: {e}")
+            else:
+                logger.error("重连失败，无法发送打招呼消息")
         except Exception as e:
             logger.error(f"发送打招呼消息失败: {e}")
-
+            # 如果是连接相关错误，尝试重连
+            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+                if await self.check_connection_and_reconnect():
+                    # 重连成功，重试发送
+                    try:
+                        await self.client.say_hello(content)
+                        logger.info(f"重连后成功发送打招呼消息: {content}")
+                    except Exception as retry_e:
+                        logger.error(f"重连后发送打招呼消息仍然失败: {retry_e}")
+    
     async def send_chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
         """发送聊天TTS文本"""
         try:
+            # 检查连接状态并尝试重连
+            if not await self.check_connection_and_reconnect():
+                logger.warning("连接检查失败，无法发送TTS文本")
+                return
+                
             await self.client.chat_tts_text(content, start, end)
             logger.info(f"已发送TTS文本: {content[:50]}...")
+        except websockets.exceptions.ConnectionClosed:
+            logger.error("WebSocket连接已关闭，尝试重连...")
+            if await self.check_connection_and_reconnect():
+                # 重连成功，重试发送
+                try:
+                    await self.client.chat_tts_text(content, start, end)
+                    logger.info(f"重连后成功发送TTS文本: {content[:50]}...")
+                except Exception as e:
+                    logger.error(f"重连后发送TTS文本仍然失败: {e}")
+            else:
+                logger.error("重连失败，无法发送TTS文本")
         except Exception as e:
             logger.error(f"发送TTS文本失败: {e}")
-
-    async def restart_session(self, bot_name: str = "豆包", dialog_id: str = None, strict_audit: bool = True) -> None:
-        """重新启动会话"""
-        try:
-            # 先结束当前会话
-            await self.client.finish_session()
-            
-            # 等待会话结束
-            await asyncio.sleep(0.1)
-            
-            # 重新启动会话
-            await self.client.start_session(bot_name, dialog_id, strict_audit)
-            logger.info(f"已重新启动会话: bot_name={bot_name}, dialog_id={dialog_id}")
-        except Exception as e:
-            logger.error(f"重新启动会话失败: {e}")
-
+            # 如果是连接相关错误，尝试重连
+            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+                if await self.check_connection_and_reconnect():
+                    # 重连成功，重试发送
+                    try:
+                        await self.client.chat_tts_text(content, start, end)
+                        logger.info(f"重连后成功发送TTS文本: {content[:50]}...")
+                    except Exception as retry_e:
+                        logger.error(f"重连后发送TTS文本仍然失败: {retry_e}")
+    
     async def get_session_info(self) -> Dict[str, Any]:
         """获取会话信息"""
         return {
-            "chat_id": self.chat_id,
             "session_id": self.session_id,
             "is_running": self.is_running,
             "is_session_finished": self.is_session_finished,
+            "is_connected": self.is_connected(),
+            "is_reconnecting": self.is_reconnecting,
+            "reconnect_attempts": self.reconnect_attempts,
+            "max_reconnect_attempts": self.max_reconnect_attempts,
             "latency_stats": self.latency_stats.copy()
         }
+    
+    def is_connected(self) -> bool:
+        """检查连接状态"""
+        try:
+            return (self.is_running and 
+                    not self.is_session_finished and 
+                    self.client.ws is not None and 
+                    self._is_websocket_open())
+        except Exception as e:
+            logger.debug(f"检查连接状态时出错: {e}")
+            return False
+    
+    def _is_websocket_open(self) -> bool:
+        """检查WebSocket是否开启"""
+        try:
+            if self.client.ws is None:
+                return False
+            
+            # 检查是否有state属性 (新版websockets)
+            if hasattr(self.client.ws, 'state'):
+                # 导入State枚举
+                try:
+                    from websockets.protocol import State
+                    return self.client.ws.state == State.OPEN
+                except ImportError:
+                    # 如果导入失败，尝试其他方法
+                    pass
+            
+            # 检查是否有closed属性 (旧版websockets)
+            if hasattr(self.client.ws, 'closed'):
+                return not self.client.ws.closed
+            
+            # 检查是否有open属性 (某些版本)
+            if hasattr(self.client.ws, 'open'):
+                return self.client.ws.open
+            
+            # 如果以上都没有，尝试通过其他方式检查
+            # 检查是否有close_code属性，如果有且不为None，说明连接已关闭
+            if hasattr(self.client.ws, 'close_code'):
+                return self.client.ws.close_code is None
+            
+            # 最后的兜底方案，假设连接是开启的
+            logger.warning("无法确定WebSocket连接状态，假设连接正常")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"检查WebSocket状态时出错: {e}")
+            return False
+    
+    def is_client_running(self) -> bool:
+        """检查客户端是否正在运行"""
+        return self.is_running
+    
+    def is_server_session_active(self) -> bool:
+        """检查服务器会话是否活跃"""
+        return not self.is_session_finished
 
     async def start(self) -> None:
         """启动对话会话"""
         try:
-            logger.info(f"启动对话会话: {self.chat_id}")
+            logger.info(f"启动对话会话: {self.session_id}")
             await self.client.connect()
             
             # 启动服务器响应接收任务
             self.server_receive_task = asyncio.create_task(self._server_receive_loop())
             
-            # 等待会话结束
-            while self.is_running and not self.is_session_finished:
-                await asyncio.sleep(0.1)
-                
         except Exception as e:
             logger.error(f"对话会话错误: {e}")
-        finally:
-            await self.cleanup()
 
     async def cleanup(self) -> None:
         """清理资源"""
         try:
             # 取消任务
-            if self.aura_task:
-                self.aura_task.cancel()
             if self.server_receive_task:
                 self.server_receive_task.cancel()
             
@@ -620,7 +640,7 @@ class DialogSession:
             await asyncio.sleep(0.1)
             await self.client.close()
             
-            logger.info(f"对话会话已清理: {self.chat_id}")
+            logger.info(f"对话会话已清理: {self.session_id}")
             
         except Exception as e:
             logger.error(f"清理资源时出错: {e}")
@@ -635,4 +655,36 @@ class DialogSession:
             logger.info(f"最大延迟: {self.latency_stats['max_latency']:.3f}秒")
             logger.info(f"总延迟: {self.latency_stats['total_latency']:.3f}秒")
         else:
-            logger.info("没有延迟统计数据") 
+            logger.info("没有延迟统计数据")
+
+    def get_reconnect_status(self) -> Dict[str, Any]:
+        """获取重连状态信息"""
+        return {
+            "is_reconnecting": self.is_reconnecting,
+            "reconnect_attempts": self.reconnect_attempts,
+            "max_reconnect_attempts": self.max_reconnect_attempts,
+            "reconnect_delay": self.reconnect_delay,
+            "is_connected": self.is_connected(),
+            "is_running": self.is_running,
+            "is_session_finished": self.is_session_finished
+        }
+    
+    async def force_reconnect(self) -> bool:
+        """强制重连（忽略最大重连次数限制）"""
+        if self.is_reconnecting:
+            logger.warning("已有重连任务在进行中，忽略强制重连请求")
+            return False
+        
+        logger.info("执行强制重连...")
+        old_attempts = self.reconnect_attempts
+        self.reconnect_attempts = 0  # 暂时重置计数以允许重连
+        
+        try:
+            result = await self._reconnect()
+            if not result:
+                self.reconnect_attempts = old_attempts  # 恢复原计数
+            return result
+        except Exception as e:
+            logger.error(f"强制重连失败: {e}")
+            self.reconnect_attempts = old_attempts  # 恢复原计数
+            return False 

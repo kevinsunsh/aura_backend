@@ -108,10 +108,38 @@ class AuraAgent:
         async with self.websocket_lock:
             if self.websocket_connection:
                 try:
-                    await self.websocket_connection.send_text(json.dumps(message))
+                    # 处理消息中的bytes类型数据，转换为base64编码
+                    processed_message = self._process_message_for_json(message)
+                    await self.websocket_connection.send_text(json.dumps(processed_message))
                 except Exception as e:
                     logger.error(f"发送消息失败: {str(e)}")
                     await self.remove_websocket_connection()
+
+    def _process_message_for_json(self, message: dict) -> dict:
+        """处理消息以确保可以JSON序列化，将bytes类型转换为base64编码"""
+        processed_message = {}
+        
+        for key, value in message.items():
+            if isinstance(value, bytes):
+                # 将bytes转换为base64编码的字符串
+                processed_message[key] = base64.b64encode(value).decode('utf-8')
+                logger.debug(f"已将 {key} 从bytes转换为base64编码 ({len(value)} 字节)")
+            elif isinstance(value, dict):
+                # 递归处理嵌套字典
+                processed_message[key] = self._process_message_for_json(value)
+            elif isinstance(value, list):
+                # 处理列表中可能的bytes数据
+                processed_message[key] = [
+                    base64.b64encode(item).decode('utf-8') if isinstance(item, bytes)
+                    else self._process_message_for_json(item) if isinstance(item, dict)
+                    else item
+                    for item in value
+                ]
+            else:
+                # 其他类型直接复制
+                processed_message[key] = value
+        
+        return processed_message
 
     def _determine_message_type(self, message_data: Dict[str, Any]) -> MessageType:
         """确定消息类型"""
