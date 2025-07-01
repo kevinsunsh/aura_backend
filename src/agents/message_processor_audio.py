@@ -75,7 +75,6 @@ class MessageProcessorAudio:
             # 结束TTS合成
             if self.tts_client and self.tts_client.is_connected():
                 try:
-                    await self.tts_client.finish_synthesis()
                     logger.info("TTS流式合成结束")
                 except Exception as e:
                     logger.error(f"结束TTS合成失败: {e}")

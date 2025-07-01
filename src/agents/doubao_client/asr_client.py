@@ -14,6 +14,58 @@ from .config import asr_config
 
 logger = logging.getLogger(__name__)
 
+
+class AsrConnectionError(Exception):
+    """ASR连接错误异常"""
+    def __init__(self, code: int, message: str = ""):
+        self.code = code
+        self.message = message
+        super().__init__(f"ASR连接错误: code={code}, message={message}")
+
+
+class AsrServiceError(Exception):
+    """ASR服务错误异常"""
+    def __init__(self, code: int, message: str = ""):
+        self.code = code
+        self.message = message
+        super().__init__(f"ASR服务错误: code={code}, message={message}")
+
+
+# 需要触发重连的ASR错误码
+RECONNECT_ERROR_CODES = {
+    45000001,  # 请求参数无效 - 请求参数缺失必需字段/字段值无效/重复请求
+    45000081,  # 等包超时
+    55000031,  # 服务器繁忙 - 服务过载，无法处理当前请求
+}
+
+# 不需要重连的错误码（仅记录，供参考）
+# 45000002: 空音频 - 客户端音频问题，重连无效
+# 45000151: 音频格式不正确 - 配置问题，重连无效
+
+def should_reconnect_on_error(code: int) -> bool:
+    """
+    判断错误码是否需要触发重连
+    
+    需要重连的错误码：
+    - 45000001: 请求参数无效
+    - 45000081: 等包超时  
+    - 55000031: 服务器繁忙
+    - 550xxxxx: 服务内部处理错误（55000000-55099999范围）
+    
+    不需要重连的错误码：
+    - 45000002: 空音频（客户端问题）
+    - 45000151: 音频格式不正确（配置问题）
+    """
+    # 检查精确匹配的错误码
+    if code in RECONNECT_ERROR_CODES:
+        return True
+    
+    # 检查550xxxxx范围的服务内部处理错误
+    if 55000000 <= code <= 55099999:
+        return True
+    
+    return False
+
 PROTOCOL_VERSION = 0b0001
 DEFAULT_HEADER_SIZE = 0b0001
 
@@ -173,6 +225,7 @@ class AsrClient:
         self.session_started = False
         self.seq = 1
         self.reqid = None
+        self.connection_lost = False  # 新增：标记连接是否丢失
         
         # 重连状态
         self.is_reconnecting = False
@@ -235,9 +288,6 @@ class AsrClient:
         """建立WebSocket连接"""
         logger.info(f"连接ASR服务: {self.ws_url}")
         
-        # 在建立新连接前，确保旧连接已完全清理
-        await self._cleanup_connection()
-        
         self.reqid = str(uuid.uuid4())
         
         # 构建连接头
@@ -278,6 +328,7 @@ class AsrClient:
             self.is_reconnecting = False
             self.reconnect_attempts = 0
             self.current_reconnect_interval = self.reconnect_interval
+            self.connection_lost = False  # 重连成功后重置连接丢失标志
             logger.info("ASR重连成功")
             if self.asr_reconnect_callback:
                 # 异步执行重连回调，不阻塞连接流程
@@ -318,6 +369,10 @@ class AsrClient:
                 except websockets.exceptions.ConnectionClosedOK:
                     logger.info("ASR WebSocket连接正常关闭")
                     break
+                except (AsrConnectionError, AsrServiceError) as e:
+                    logger.error(f"ASR服务错误，触发重连: {e}")
+                    self._mark_disconnected()
+                    break
                 except Exception as e:
                     logger.error(f"接收ASR响应失败: {e}")
                     self._mark_disconnected()
@@ -327,12 +382,14 @@ class AsrClient:
             logger.error(f"ASR接收循环异常: {e}")
             self._mark_disconnected()
         finally:
-            # 接收循环结束时，如果需要重连，启动重连逻辑
-            if self.is_running and self.should_reconnect:
-                logger.info("接收循环结束，启动重连逻辑")
+            # 接收循环结束时，根据连接丢失状态决定是否重连
+            if self.connection_lost and self.should_reconnect:
+                logger.info("接收循环结束，检测到连接丢失，启动重连逻辑")
                 # 在这里触发重连，避免在循环中创建新的接收任务
                 asyncio.create_task(self._handle_disconnect())
-            elif self.is_running:
+            
+            # 确保在接收循环结束时设置运行状态为False
+            if self.is_running:
                 self.is_running = False
                 
     async def _handle_response(self, result: Dict[str, Any]):
@@ -398,10 +455,25 @@ class AsrClient:
                         message = payload.get('message', '未知错误')
                         logger.error(f"ASR服务返回错误: code={code}, message={message}")
                         
+                        # 只有特定错误码才抛出异常触发重连
+                        if should_reconnect_on_error(code):
+                            logger.warning(f"错误码 {code} 需要重连，抛出异常")
+                            raise AsrServiceError(code, message)
+                        else:
+                            logger.info(f"错误码 {code} 不需要重连，继续处理")
+                        
         # 处理错误响应
         if 'code' in result:
             error_code = result['code']
-            logger.error(f"ASR连接错误: code={error_code}")
+            message = result.get('message', '未知错误')
+            logger.error(f"ASR连接错误: code={error_code}, message={message}")
+            
+            # 只有特定错误码才抛出异常触发重连
+            if should_reconnect_on_error(error_code):
+                logger.warning(f"连接错误码 {error_code} 需要重连，抛出异常")
+                raise AsrConnectionError(error_code, message)
+            else:
+                logger.info(f"连接错误码 {error_code} 不需要重连，继续处理")
             
         # 检查是否是最后一个包
         if result.get('is_last_package', False):
@@ -446,7 +518,7 @@ class AsrClient:
         """标记连接已断开（同步方法，避免在接收循环中创建新任务）"""
         if self.is_running:
             logger.warning("标记ASR连接已断开")
-            self.is_running = False
+            self.connection_lost = True  # 标记连接丢失，用于重连判断
 
     async def _handle_disconnect(self):
         """处理连接断开"""
@@ -556,6 +628,7 @@ class AsrClient:
         # 重置会话相关状态
         self.session_started = False
         self.seq = 1
+        # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
 
     async def process_audio_chunk(self, audio_chunk: bytes):
         """处理音频块"""
@@ -571,7 +644,8 @@ class AsrClient:
                 self.audio_buffer.extend(audio_chunk)
                 
                 # 计算分片大小（PCM格式：采样率 * 通道数 * 位深/8 * 时长）
-                segment_size = int(self.rate * self.channel * (self.bits // 8) * self.seg_duration / 1000)
+                # segment_size = int(self.rate * self.channel * (self.bits // 8) * self.seg_duration / 1000)
+                segment_size = 3200
                 
                 # 如果缓冲区足够大，发送数据
                 while len(self.audio_buffer) >= segment_size:
@@ -701,5 +775,6 @@ class AsrClient:
         self.is_reconnecting = False
         self.reconnect_attempts = 0
         self.current_reconnect_interval = self.reconnect_interval
+        self.connection_lost = False
         
         logger.info("ASR客户端已清理") 

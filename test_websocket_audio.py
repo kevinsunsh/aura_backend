@@ -46,6 +46,7 @@ import pyaudio
 import io
 import queue
 import threading
+import signal
 from pydub import AudioSegment
 from statistics import mean, median
 from datetime import datetime
@@ -53,6 +54,11 @@ from datetime import datetime
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 启用调试模式以便查看详细的MP3处理信息
+DEBUG_MP3_PROCESSING = True
+if DEBUG_MP3_PROCESSING:
+    logger.setLevel(logging.DEBUG)
 
 class AudioConfig:
     """音频配置类"""
@@ -72,7 +78,7 @@ class AudioDeviceManager:
 
     def __init__(self, input_config: AudioConfig = None, output_config: AudioConfig = None):
         self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=6400)  # 麦克风配置
-        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=2048)  # 播放配置
+        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=6400)  # 播放配置
         self.pyaudio = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
@@ -134,644 +140,872 @@ class AudioDeviceManager:
         self.input_stream = None
         self.output_stream = None
 
-class StreamingAudioPlayer:
-    """
-    流式音频播放器，支持实时播放音频片段
-    基于AudioDeviceManager的现代化实现
-    """
+class WebSocketTestSession:
+    """WebSocket测试会话管理类，参考audio_manager.py的设计"""
     
-    def __init__(self, sample_rate=24000, channels=1, sample_width=2):
-        # 创建输出配置
-        output_config = AudioConfig(
-            sample_rate=sample_rate,
-            channels=channels,
-            bit_size=pyaudio.paInt16 if sample_width == 2 else pyaudio.paInt32,
-            chunk=2048
+    def __init__(self, uri: str = "ws://localhost:5876/ws/stream/test_user_123"):
+        self.uri = uri
+        self.websocket = None
+        
+        # 音频设备管理
+        self.audio_device = AudioDeviceManager(
+            input_config=AudioConfig(sample_rate=16000, channels=1, chunk=3200),
+            output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
         )
         
-        # 创建设备管理器
-        self.device_manager = AudioDeviceManager(output_config=output_config)
-        self.audio_queue = queue.Queue()
-        self.is_playing = False
-        self.play_thread = None
+        # 状态控制
+        self.is_running = True
+        self.is_recording = True
+        self.is_playing = True
+        self.response_completed = False
         
-        # 音频文件录制
-        self.is_recording = False
-        self.audio_buffer = bytearray()
+        # 音频播放队列和线程 - 一开始就初始化
+        self.audio_queue = queue.Queue()
+        self.output_stream = None
+        self.player_thread = None
+        self.tts_initialized = False  # 标记TTS播放是否已初始化
+        
+        # MP3数据缓冲 - 新增
+        self.mp3_buffer = bytearray()
+        self.mp3_buffer_lock = threading.Lock()
+        self.min_mp3_buffer_size = 1024  # 最小缓冲区大小
+        
+        # 响应统计
+        self.full_response = ""
+        self.chunk_count = 0
+        
+        # 延迟统计
+        self.audio_send_completed_time = None
+        self.first_tts_audio_received_time = None
+        
+        # 音频录制 - 录制原始MP3数据
+        self.is_recording_audio = False
+        self.mp3_audio_buffer = bytearray()  # 存储原始MP3数据
         self.output_file = None
         
-        # 状态管理
-        self.total_samples_played = 0
-        
-    def start(self):
-        """启动音频播放"""
-        if self.is_playing:
-            return
-            
-        self.is_playing = True
-        
-        try:
-            # 打开输出流
-            self.device_manager.open_output_stream()
-            
-            # 启动播放线程
-            self.play_thread = threading.Thread(target=self._audio_player_thread, daemon=True)
-            self.play_thread.start()
-            
-            logger.info("🎵 音频播放器已启动")
-            
-        except Exception as e:
-            logger.error(f"启动音频播放器失败: {e}")
-            self.is_playing = False
-            raise
-        
-    def add_audio_data(self, audio_data: bytes):
-        """添加音频数据到播放队列和录制缓冲区"""
-        if self.is_playing:
-            self.audio_queue.put(audio_data)
-            
-        if self.is_recording:
-            self.audio_buffer.extend(audio_data)
-        
+        # 信号处理
+        signal.signal(signal.SIGINT, self._keyboard_signal)
+    
+    def _keyboard_signal(self, sig, frame):
+        """处理键盘中断信号"""
+        logger.info("收到 Ctrl+C 信号，正在停止...")
+        self.is_recording = False
+        self.is_playing = False
+        self.is_running = False
+        self.response_completed = True
+    
     def _audio_player_thread(self):
-        """音频播放线程"""
+        """音频播放线程，参考audio_manager.py的实现"""
         logger.info("🎵 播放线程已启动，等待音频数据...")
-        
-        # 启动输出流
-        output_stream = self.device_manager.output_stream
-        if output_stream:
-            output_stream.start_stream()
-            logger.info("🔊 音频输出流已启动")
         
         while self.is_playing:
             try:
-                # 从队列获取音频数据
-                audio_data = self.audio_queue.get(timeout=1.0)
-                if audio_data is not None and output_stream:
-                    output_stream.write(audio_data)
-                    self.total_samples_played += len(audio_data) // (
-                        self.device_manager.output_config.channels * 
-                        self.device_manager.output_config.sample_width
-                    )
+                # 从队列获取PCM音频数据
+                pcm_data = self.audio_queue.get(timeout=1.0)
+                if pcm_data is not None and self.output_stream:
+                    self.output_stream.write(pcm_data)
+                    
             except queue.Empty:
                 # 队列为空时等待一小段时间
-                import time
                 time.sleep(0.1)
             except Exception as e:
                 logger.error(f"音频播放错误: {e}")
-                import time
                 time.sleep(0.1)
                 
         logger.info("🔇 播放线程结束")
-        
-    def stop(self):
-        """停止音频播放"""
-        logger.info("🛑 正在停止音频播放器...")
-        self.is_playing = False
-        
-        if self.play_thread and self.play_thread.is_alive():
-            self.play_thread.join(timeout=3.0)
-            
-        # 停止录制
-        self.stop_recording()
-        
-        # 清理设备资源
-        self.device_manager.cleanup()
-        
-        total_time = self.total_samples_played / self.device_manager.output_config.sample_rate if self.device_manager.output_config.sample_rate > 0 else 0
-        logger.info(f"🔇 音频播放器已停止 (播放时长: {total_time:.2f}秒)")
-        
-    def start_recording(self, filename=None):
-        """开始录制音频到文件"""
+    
+    def start_audio_recording(self, filename=None):
+        """开始录制TTS音频（MP3格式）"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"websocket_tts_output_{timestamp}.mp3"
         
         os.makedirs("audio_output", exist_ok=True)
         self.output_file = os.path.join("audio_output", filename)
-        self.audio_buffer.clear()
-        self.is_recording = True
-        logger.info(f"🎵 开始录制TTS音频到: {self.output_file}")
-        
-    def stop_recording(self):
-        """停止录制并保存文件"""
-        if not self.is_recording:
+        self.mp3_audio_buffer.clear()
+        self.is_recording_audio = True
+        logger.info(f"🎵 开始录制TTS音频到: {self.output_file} (MP3格式)")
+    
+    def stop_audio_recording(self):
+        """停止录制并保存MP3文件"""
+        if not self.is_recording_audio:
             return None
             
-        self.is_recording = False
+        self.is_recording_audio = False
         
-        if self.audio_buffer and self.output_file:
+        if self.mp3_audio_buffer and self.output_file:
             with open(self.output_file, 'wb') as f:
-                f.write(self.audio_buffer)
+                f.write(self.mp3_audio_buffer)
             
-            file_size = len(self.audio_buffer)
-            logger.info(f"💾 TTS音频文件已保存: {self.output_file} ({file_size} 字节)")
-            
-            # 尝试播放保存的文件
-            try:
-                import subprocess
-                if os.name == 'posix':  # macOS/Linux
-                    subprocess.run(['afplay', self.output_file], check=False)
-                    logger.info("🔊 正在播放保存的TTS音频文件...")
-                elif os.name == 'nt':  # Windows
-                    os.system(f'start "" "{self.output_file}"')
-                    logger.info("🔊 正在播放保存的TTS音频文件...")
-            except Exception as e:
-                logger.warning(f"无法播放保存的文件: {e}")
-            
+            file_size = len(self.mp3_audio_buffer)
+            logger.info(f"💾 TTS音频文件已保存: {self.output_file} ({file_size} 字节, MP3格式)")
             return self.output_file
         else:
             logger.warning("没有录制到TTS音频数据")
             return None
-        
-    def get_status(self):
-        """获取当前播放器状态"""
-        return {
-            "is_playing": self.is_playing,
-            "is_recording": self.is_recording,
-            "total_samples_played": self.total_samples_played,
-            "sample_rate": self.device_manager.output_config.sample_rate,
-            "channels": self.device_manager.output_config.channels
-        }
-
-async def test_audio_websocket_stream():
-    """测试带预处理音频文件的WebSocket流式接口"""
-    uri = "ws://localhost:5876/ws/stream/test_user_123"
     
-    # 响应处理状态
-    response_completed = False
-    full_response = ""
-    chunk_count = 0
-    
-    # 延迟统计变量
-    audio_send_completed_time = None
-    first_tts_audio_received_time = None
-    audio_to_tts_delay = None
-    
-    # 创建流式音频播放器
-    audio_player = StreamingAudioPlayer()
-    
-    def play_audio_data(audio_data: bytes):
-        """播放TTS音频数据片段"""
+    def process_mp3_audio_data(self, mp3_data: bytes) -> bytes:
+        """处理MP3格式的TTS音频数据，转换为播放器需要的格式"""
         try:
-            logger.info(f"🔊 收到TTS音频片段: {len(audio_data)} 字节")
-            # 直接添加到播放器队列，支持流式播放
-            audio_player.add_audio_data(audio_data)
+            # 检查MP3数据是否为空
+            if not mp3_data or len(mp3_data) < 10:
+                logger.warning(f"接收到的MP3数据太小: {len(mp3_data)} 字节，跳过")
+                return b""
             
-        except Exception as e:
-            logger.error(f"处理TTS音频片段失败: {str(e)}")
-    
-    def read_audio_file(file_path):
-        """读取音频文件并返回符合input_audio_config格式的字节数据"""
-        try:
-            # 检查文件扩展名
-            file_ext = os.path.splitext(file_path)[1].lower()
+            # 简单检查是否包含MP3头（以确保数据格式正确）
+            if not self._is_valid_mp3_data(mp3_data):
+                logger.warning("接收到的数据不是有效的MP3格式，跳过此片段")
+                return b""
             
-            # 使用pydub加载音频文件
-            if file_ext in ['.wav', '.mp3']:
-                audio = AudioSegment.from_file(file_path)
+            # 使用pydub从内存中加载MP3数据
+            audio_segment = AudioSegment.from_file(io.BytesIO(mp3_data), format="mp3")
+            
+            # 获取输出配置
+            output_config = self.audio_device.output_config
+            
+            # 转换为目标格式
+            if output_config.bit_size == pyaudio.paFloat32:
+                # 转换为float32格式 (32位浮点)
+                target_audio = audio_segment.set_frame_rate(output_config.sample_rate).set_channels(output_config.channels)
+                # 导出为float32 PCM
+                buffer = io.BytesIO()
+                target_audio.export(buffer, format="f32le")  # 32位浮点，小端序
+                pcm_data = buffer.getvalue()
             else:
-                logger.error(f"不支持的音频格式: {file_ext}")
-                return None
+                # 转换为int16格式 (16位整型)
+                target_audio = audio_segment.set_frame_rate(output_config.sample_rate).set_channels(output_config.channels).set_sample_width(2)
+                # 导出为int16 PCM
+                buffer = io.BytesIO()
+                target_audio.export(buffer, format="s16le")  # 16位有符号整型，小端序
+                pcm_data = buffer.getvalue()
             
-            # 转换为符合input_audio_config的格式
-            # 目标格式: PCM, 16kHz, 单声道, 16位
-            target_audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-            
-            # 导出为PCM格式的字节数据
-            buffer = io.BytesIO()
-            target_audio.export(buffer, format="s16le")
-            pcm_data = buffer.getvalue()
-            
-            logger.info(f"音频转换完成: {len(pcm_data)} 字节, 16kHz, 单声道, 16位PCM")
-            return pcm_data
-                
-        except Exception as e:
-            logger.error(f"读取音频文件 {file_path} 失败: {str(e)}")
-            return None
-    
-    def generate_silence_audio(duration_ms=500):
-        """生成指定时长的静音音频"""
-        try:
-            # 创建静音音频段，16kHz, 单声道, 16位
-            silence = AudioSegment.silent(duration=duration_ms)
-            silence = silence.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-            
-            # 导出为PCM格式的字节数据
-            buffer = io.BytesIO()
-            silence.export(buffer, format="s16le")
-            pcm_data = buffer.getvalue()
-            
-            logger.info(f"生成静音音频: {len(pcm_data)} 字节, {duration_ms}ms, 16kHz, 单声道, 16位PCM")
+            logger.debug(f"MP3音频转换完成: {len(mp3_data)} 字节 MP3 → {len(pcm_data)} 字节 PCM")
             return pcm_data
             
         except Exception as e:
-            logger.error(f"生成静音音频失败: {str(e)}")
-            return None
-    
-    async def receive_messages(websocket):
-        """异步接收消息的任务"""
-        nonlocal response_completed, full_response, chunk_count
-        nonlocal audio_send_completed_time, first_tts_audio_received_time, audio_to_tts_delay
-        
-        try:
-            while not response_completed:
+            logger.error(f"处理MP3音频数据失败: {e}")
+            # 记录错误详情以便调试
+            logger.debug(f"MP3数据长度: {len(mp3_data)}")
+            if len(mp3_data) > 0:
+                logger.debug(f"MP3数据前16字节: {mp3_data[:16].hex() if len(mp3_data) >= 16 else mp3_data.hex()}")
+            
+            # 备用方案：尝试直接保存原始MP3数据以便后续分析
+            if DEBUG_MP3_PROCESSING and len(mp3_data) > 0:
                 try:
-                    response = await websocket.recv()
+                    timestamp = int(time.time() * 1000)
+                    debug_file = f"debug_mp3_{timestamp}.mp3"
+                    os.makedirs("debug_output", exist_ok=True)
+                    with open(f"debug_output/{debug_file}", "wb") as f:
+                        f.write(mp3_data)
+                    logger.debug(f"已保存问题MP3数据到: debug_output/{debug_file}")
+                except Exception as debug_e:
+                    logger.debug(f"保存调试MP3文件失败: {debug_e}")
+            
+            return b""  # 返回空数据避免播放中断
+    
+    def _is_valid_mp3_data(self, data: bytes) -> bool:
+        """检查数据是否包含有效的MP3头"""
+        try:
+            if len(data) < 4:
+                return False
+            
+            # 查找MP3帧同步字节 (0xFF, 0xFB 或类似的MP3帧头)
+            for i in range(len(data) - 1):
+                if data[i] == 0xFF and (data[i + 1] & 0xE0) == 0xE0:
+                    return True
+            
+            # 也检查ID3标签 (以"ID3"开头)
+            if data.startswith(b'ID3'):
+                return True
+                
+            return False
+        except Exception:
+            return False
+    
+    def process_mp3_stream_data(self, mp3_data: bytes):
+        """处理流式MP3数据，使用缓冲机制"""
+        with self.mp3_buffer_lock:
+            # 添加新数据到缓冲区
+            self.mp3_buffer.extend(mp3_data)
+            
+            # 尝试处理缓冲区中的完整MP3片段
+            while len(self.mp3_buffer) >= self.min_mp3_buffer_size:
+                # 尝试处理当前缓冲区的数据
+                success = self._try_process_buffered_mp3()
+                if not success:
+                    # 如果处理失败，等待更多数据
+                    break
+    
+    def _try_process_buffered_mp3(self) -> bool:
+        """尝试处理缓冲区中的MP3数据"""
+        try:
+            # 方法1: 尝试处理整个缓冲区
+            pcm_data = self.process_mp3_audio_data(bytes(self.mp3_buffer))
+            if pcm_data:
+                self.audio_queue.put(pcm_data)
+                self.mp3_buffer.clear()
+                logger.debug(f"成功处理完整缓冲区: {len(self.mp3_buffer)} 字节")
+                return True
+            
+            # 方法2: 如果整个缓冲区失败，尝试处理前半部分
+            if len(self.mp3_buffer) > self.min_mp3_buffer_size * 2:
+                half_size = len(self.mp3_buffer) // 2
+                pcm_data = self.process_mp3_audio_data(bytes(self.mp3_buffer[:half_size]))
+                if pcm_data:
+                    self.audio_queue.put(pcm_data)
+                    # 移除已处理的数据
+                    self.mp3_buffer = self.mp3_buffer[half_size:]
+                    logger.debug(f"成功处理部分缓冲区: {half_size} 字节")
+                    return True
+            
+            # 方法3: 如果缓冲区太大，强制清理一部分
+            if len(self.mp3_buffer) > 10240:  # 10KB
+                logger.warning(f"MP3缓冲区过大 ({len(self.mp3_buffer)} 字节)，清理前1KB数据")
+                self.mp3_buffer = self.mp3_buffer[1024:]
+                return False
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"处理缓冲MP3数据失败: {e}")
+            return False
+    
+    def flush_mp3_buffer(self):
+        """在TTS结束时刷新MP3缓冲区"""
+        with self.mp3_buffer_lock:
+            if len(self.mp3_buffer) > 0:
+                logger.info(f"刷新MP3缓冲区: {len(self.mp3_buffer)} 字节")
+                # 尝试最后一次处理剩余数据
+                pcm_data = self.process_mp3_audio_data(bytes(self.mp3_buffer))
+                if pcm_data:
+                    self.audio_queue.put(pcm_data)
+                    logger.debug("成功处理缓冲区剩余数据")
+                else:
+                    logger.warning("无法处理缓冲区剩余数据")
+                self.mp3_buffer.clear()
+    
+    def initialize_tts_player(self):
+        """初始化TTS音频播放器 - 只在第一次调用时执行"""
+        if self.tts_initialized:
+            return
+            
+        try:
+            # 创建音频输出流
+            self.output_stream = self.audio_device.open_output_stream()
+            self.output_stream.start_stream()
+            
+            # 启动播放线程
+            self.player_thread = threading.Thread(target=self._audio_player_thread, daemon=True)
+            self.player_thread.start()
+            
+            # 开始录制第一个TTS音频文件
+            self.start_audio_recording()
+            
+            self.tts_initialized = True
+            logger.info(f"🎵 TTS音频播放器已初始化 (格式: {self.audio_device.output_config.sample_rate}Hz, Float32)")
+            
+        except Exception as e:
+            logger.error(f"初始化TTS播放器失败: {e}")
+            raise
+    
+    def handle_websocket_response(self, data: dict):
+        """处理WebSocket响应，类似audio_manager.py的handle_server_response"""
+        if data["type"] == "start":
+            logger.info("开始处理麦克风音频消息...")
+            
+        elif data["type"] == "stream_chunk":
+            self.chunk_count += 1
+            content = data["content"]
+            self.full_response += content
+            logger.info(f"收到第{self.chunk_count}个内容片段: '{content}'")
+            print(content, end="", flush=True)
+            
+        elif data["type"] == "tts_start":
+            logger.info("TTS语音合成开始...")
+            # TTS播放器已在会话开始时预先初始化，这里只需确保已初始化
+            # self.initialize_tts_player()  # 如果已初始化会直接返回
+            
+        elif data["type"] == "tts_audio":
+            # 记录第一个TTS音频收到的时间
+            if self.first_tts_audio_received_time is None:
+                self.first_tts_audio_received_time = time.time()
+                if self.audio_send_completed_time is not None:
+                    delay = self.first_tts_audio_received_time - self.audio_send_completed_time
+                    logger.info(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {delay:.3f}秒")
+            
+            # 处理MP3格式的TTS音频数据
+            mp3_data = base64.b64decode(data["audio_data"])
+            logger.info(f"收到TTS音频数据: {len(mp3_data)} 字节 (MP3格式)")
+            
+            # 先将原始MP3数据存储到录制缓冲区
+            if self.is_recording_audio:
+                self.mp3_audio_buffer.extend(mp3_data)
+            
+            # 使用缓冲机制处理MP3数据
+            self.process_mp3_stream_data(mp3_data)
+            
+        elif data["type"] == "tts_end":
+            logger.info("当前句子TTS语音合成完成")
+            # 刷新MP3缓冲区，处理剩余数据
+            self.flush_mp3_buffer()
+            # 每句话的TTS结束，但播放器继续运行等待下一句
+            # 不做任何清理操作，保持播放器和录制继续
+            
+        elif data["type"] == "end":
+            logger.info("服务器一次回复结束，等待用户继续说话...")
+            # end只是一次回复结束，不是整个会话结束
+            # 保持播放器和录制继续运行，等待下一轮对话
+            
+        elif data["type"] == "error":
+            logger.error(f"发生错误: {data['message']}")
+            self.response_completed = True
+    
+    async def receive_loop(self):
+        """接收消息循环"""
+        try:
+            while self.is_running and not self.response_completed:
+                try:
+                    response = await self.websocket.recv()
                     data = json.loads(response)
-                    
                     logger.info(f"收到响应: {data['type']}")
+                    self.handle_websocket_response(data)
                     
-                    if data["type"] == "start":
-                        logger.info("开始处理音频文件消息...")
-                    elif data["type"] == "stream_chunk":
-                        chunk_count += 1
-                        content = data["content"]
-                        full_response += content
-                        logger.info(f"收到第{chunk_count}个内容片段: '{content}'")
-                        print(content, end="", flush=True)
-                    elif data["type"] == "tts_start":
-                        logger.info("TTS语音合成开始...")
-                        # 启动音频播放器和录制
-                        audio_player.start()
-                        audio_player.start_recording()
-                        # 显示播放器状态
-                        status = audio_player.get_status()
-                        logger.info(f"🎵 播放器状态: {status}")
-                    elif data["type"] == "tts_audio":
-                        # 记录第一个TTS音频收到的时间
-                        if first_tts_audio_received_time is None:
-                            first_tts_audio_received_time = time.time()
-                            if audio_send_completed_time is not None:
-                                audio_to_tts_delay = first_tts_audio_received_time - audio_send_completed_time
-                                logger.info(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {audio_to_tts_delay:.3f}秒")
-                        
-                        # 处理TTS音频数据 - 关键修改
-                        audio_data = base64.b64decode(data["audio_data"])
-                        logger.info(f"收到TTS音频数据: {len(audio_data)} 字节")
-                        
-                        # 直接播放音频片段（流式播放）
-                        play_audio_data(audio_data)
-                    elif data["type"] == "tts_end":
-                        logger.info("TTS语音合成完成")
-                        # 显示最终播放器状态
-                        status = audio_player.get_status()
-                        logger.info(f"🎵 TTS完成时播放器状态: {status}")
-                        # 等待一会儿确保音频播放完成
-                        await asyncio.sleep(2)
-                        # 停止音频播放器
-                        audio_player.stop()
-                    elif data["type"] == "end":
-                        logger.info("音频文件处理完成")
-                        response_completed = True
-                        break
-                    elif data["type"] == "error":
-                        logger.error(f"发生错误: {data['message']}")
-                        response_completed = True
-                        break
-                        
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("WebSocket连接已关闭")
-                    response_completed = True
+                    self.response_completed = True
                     break
                 except Exception as e:
                     logger.error(f"接收消息时发生错误: {str(e)}")
-                    response_completed = True
                     break
                     
         except Exception as e:
             logger.error(f"接收任务异常: {str(e)}")
-            response_completed = True
+            self.response_completed = True
     
-    async def send_audio_files(websocket):
-        """异步发送测试音频文件数据的任务"""
-        nonlocal audio_send_completed_time
-        
+    async def microphone_input_loop(self):
+        """麦克风输入循环，参考audio_manager.py的process_microphone_input"""
         try:
-            # 测试音频文件列表
-            test_audio_files = [
-                "audio_test_data/converted_20250630_151526_你好.wav",
-                "audio_test_data/converted_20250630_151540_我想了解一下.wav", 
-                "audio_test_data/converted_20250630_151545_你的功能.wav",
-                "audio_test_data/converted_20250630_151551_和特点.wav"
-            ]
-            
-            for audio_file in test_audio_files:
-                logger.info(f"正在发送测试音频文件: {audio_file}")
-                
-                # 读取音频文件数据
-                audio_data = read_audio_file(audio_file)
-                if audio_data is None:
-                    logger.error(f"无法读取音频文件: {audio_file}")
-                    continue
-                
-                # 模拟实时发送，将音频数据分片发送
-                # 200ms音频块大小：16kHz × 1声道 × 2字节 × 0.2秒 = 6400字节
-                CHUNK_SIZE = 6400  # 每次发送200ms的音频数据
-                total_chunks = len(audio_data) // CHUNK_SIZE + (1 if len(audio_data) % CHUNK_SIZE else 0)
-                
-                logger.info(f"开始分片发送音频数据，总共 {total_chunks} 个片段")
-                
-                for i in range(0, len(audio_data), CHUNK_SIZE):
-                    chunk = audio_data[i:i + CHUNK_SIZE]
-                    
-                    # 将音频数据转换为base64编码
-                    audio_base64 = base64.b64encode(chunk).decode('utf-8')
-                    
-                    # 发送音频消息
-                    audio_message = {
-                        "audio": audio_base64,
-                        "audio_format": "pcm"
-                    }
-                    
-                    await websocket.send(json.dumps(audio_message))
-                    
-                    # 控制发送频率，模拟真实音频流
-                    await asyncio.sleep(0.1)  # 200ms间隔，匹配音频块时长
-                
-                logger.info(f"音频文件 {audio_file} 发送完成")
-                
-                # 在音频文件之间添加停顿
-                await asyncio.sleep(2)
-            
-            logger.info("所有测试音频文件发送完成")
-            
-            # 发送2秒的静音数据
-            logger.info("正在发送2秒静音数据...")
-            silence_data = generate_silence_audio(duration_ms=2000)  # 2秒静音
-            if silence_data:
-                # 模拟实时发送，将静音数据分片发送
-                CHUNK_SIZE = 6400  # 每次发送200ms的音频数据
-                
-                for i in range(0, len(silence_data), CHUNK_SIZE):
-                    chunk = silence_data[i:i + CHUNK_SIZE]
-                    
-                    # 将音频数据转换为base64编码
-                    audio_base64 = base64.b64encode(chunk).decode('utf-8')
-                    
-                    # 发送音频消息
-                    audio_message = {
-                        "audio": audio_base64,
-                        "audio_format": "pcm"
-                    }
-                    
-                    await websocket.send(json.dumps(audio_message))
-                    
-                    # 控制发送频率，模拟真实音频流
-                    await asyncio.sleep(0.2)  # 200ms间隔，匹配音频块时长
-                
-                logger.info("2秒静音数据发送完成")
-            else:
-                logger.error("生成静音数据失败")
-            
-            # 记录音频发送完成时间
-            audio_send_completed_time = time.time()
-            logger.info(f"📤 所有音频数据发送完成，时间戳: {audio_send_completed_time}")
-                    
-        except Exception as e:
-            logger.error(f"发送音频文件失败: {str(e)}")
-    
-    try:
-        async with websockets.connect(uri) as websocket:
-            logger.info("已连接到WebSocket服务器")
-            
-            # 启动接收消息的异步任务
-            receive_task = asyncio.create_task(receive_messages(websocket))
-            
-            # 启动发送预处理音频文件的异步任务
-            send_task = asyncio.create_task(send_audio_files(websocket))
-            
-            # 等待两个任务都完成
-            await asyncio.gather(receive_task, send_task)
-            
-            print(f"\n=== 音频文件测试完成，总共收到 {chunk_count} 个内容片段 ===")
-            logger.info(f"完整响应: {full_response}")
-            
-            # 输出延迟统计结果
-            if audio_to_tts_delay is not None:
-                print(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {audio_to_tts_delay:.3f}秒")
-                logger.info(f"延迟统计 - 音频发送完成时间: {audio_send_completed_time}, 首个TTS音频收到时间: {first_tts_audio_received_time}")
-            else:
-                print("⚠️ 未能完整统计音频到TTS的延迟")
-            
-    except Exception as e:
-        logger.error(f"连接WebSocket失败: {str(e)}")
-    finally:
-        # 确保音频播放器已停止
-        audio_player.stop()
-
-async def test_microphone_websocket_stream():
-    """测试使用麦克风的WebSocket流式接口"""
-    uri = "ws://localhost:5876/ws/stream/test_user_123"
-    
-    # 响应处理状态
-    response_completed = False
-    full_response = ""
-    chunk_count = 0
-    recording_active = True
-    
-    # 延迟统计变量
-    audio_send_completed_time = None
-    first_tts_audio_received_time = None
-    audio_to_tts_delay = None
-    
-    # 麦克风录音参数 - 现在使用AudioDeviceManager
-    input_config = AudioConfig(sample_rate=16000, channels=1, chunk=6400)
-    device_manager = AudioDeviceManager(input_config=input_config)
-    
-    # 创建流式音频播放器
-    audio_player = StreamingAudioPlayer()
-    
-    def play_audio_data(audio_data: bytes):
-        """播放TTS音频数据片段"""
-        try:
-            logger.info(f"🔊 收到TTS音频片段: {len(audio_data)} 字节")
-            # 直接添加到播放器队列，支持流式播放
-            audio_player.add_audio_data(audio_data)
-            
-        except Exception as e:
-            logger.error(f"处理TTS音频片段失败: {str(e)}")
-    
-    async def receive_messages(websocket):
-        """异步接收消息的任务"""
-        nonlocal response_completed, full_response, chunk_count
-        nonlocal audio_send_completed_time, first_tts_audio_received_time, audio_to_tts_delay
-        
-        try:
-            while not response_completed:
-                try:
-                    response = await websocket.recv()
-                    data = json.loads(response)
-                    
-                    logger.info(f"收到响应: {data}")
-                    
-                    if data["type"] == "start":
-                        logger.info("开始处理麦克风音频消息...")
-                    elif data["type"] == "stream_chunk":
-                        chunk_count += 1
-                        content = data["content"]
-                        full_response += content
-                        logger.info(f"收到第{chunk_count}个内容片段: '{content}'")
-                        print(content, end="", flush=True)
-                    elif data["type"] == "tts_start":
-                        logger.info("TTS语音合成开始...")
-                        # 启动音频播放器和录制
-                        audio_player.start()
-                        audio_player.start_recording()
-                    elif data["type"] == "tts_audio":
-                        # 记录第一个TTS音频收到的时间
-                        if first_tts_audio_received_time is None:
-                            first_tts_audio_received_time = time.time()
-                            if audio_send_completed_time is not None:
-                                audio_to_tts_delay = first_tts_audio_received_time - audio_send_completed_time
-                                logger.info(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {audio_to_tts_delay:.3f}秒")
-                        
-                        # 处理TTS音频数据 - 关键修改
-                        audio_data = base64.b64decode(data["audio_data"])
-                        logger.info(f"收到TTS音频数据: {len(audio_data)} 字节")
-                        
-                        # 直接播放音频片段（流式播放）
-                        play_audio_data(audio_data)
-                    elif data["type"] == "tts_end":
-                        logger.info("TTS语音合成完成")
-                        # 显示最终播放器状态
-                        status = audio_player.get_status()
-                        logger.info(f"🎵 TTS完成时播放器状态: {status}")
-                        # 等待一会儿确保音频播放完成
-                        await asyncio.sleep(2)
-                        # 停止音频播放器
-                        audio_player.stop()
-                    elif data["type"] == "end":
-                        logger.info("麦克风音频处理完成")
-                        response_completed = True
-                        break
-                    elif data["type"] == "error":
-                        logger.error(f"发生错误: {data['message']}")
-                        response_completed = True
-                        break
-                        
-                except websockets.exceptions.ConnectionClosed:
-                    logger.info("WebSocket连接已关闭")
-                    response_completed = True
-                    break
-                except Exception as e:
-                    logger.error(f"接收消息时发生错误: {str(e)}")
-                    response_completed = True
-                    break
-                    
-        except Exception as e:
-            logger.error(f"接收任务异常: {str(e)}")
-            response_completed = True
-    
-    async def record_and_send_audio(websocket):
-        """异步录制麦克风音频并发送的任务"""
-        nonlocal recording_active
-        
-        try:
-            # 打开麦克风输入流
-            input_stream = device_manager.open_input_stream()
+            input_stream = self.audio_device.open_input_stream()
             logger.info("🎤 已打开麦克风，请讲话...")
             
-            while recording_active and not response_completed:
+            while self.is_recording and not self.response_completed:
                 try:
-                    # 添加exception_on_overflow=False参数来忽略溢出错误
+                    # 读取麦克风数据
                     audio_chunk = input_stream.read(
-                        input_config.chunk, 
+                        self.audio_device.input_config.chunk, 
                         exception_on_overflow=False
                     )
                     
-                    # 将音频数据转换为base64编码
+                    # 转换为base64并发送
                     audio_base64 = base64.b64encode(audio_chunk).decode('utf-8')
-                    
-                    # 发送音频消息
                     audio_message = {
                         "audio": audio_base64,
                         "audio_format": "pcm"
                     }
                     
-                    await websocket.send(json.dumps(audio_message))
-                    
-                    # 避免CPU过度使用
-                    await asyncio.sleep(0.01)
+                    await self.websocket.send(json.dumps(audio_message))
+                    await asyncio.sleep(0.01)  # 避免CPU过度使用
                     
                 except Exception as e:
                     logger.error(f"读取麦克风数据出错: {e}")
-                    await asyncio.sleep(0.1)  # 给系统一些恢复时间
+                    await asyncio.sleep(0.1)
             
             logger.info("🔇 麦克风录制已停止")
+            self.audio_send_completed_time = time.time()
+            logger.info(f"📤 麦克风音频录制完成，时间戳: {self.audio_send_completed_time}")
                     
         except Exception as e:
             logger.error(f"麦克风录制失败: {str(e)}")
-            recording_active = False
+            self.is_recording = False
     
-    async def handle_user_input():
-        """处理用户输入，用于控制录制"""
-        nonlocal recording_active, response_completed
-        nonlocal audio_send_completed_time
-        
+    async def auto_stop_after_timeout(self, timeout_seconds=20):
+        """自动停止录制的超时处理"""
+        await asyncio.sleep(timeout_seconds)
+        logger.info(f"录制时间达到{timeout_seconds}秒，自动停止...")
+        self.is_recording = False
+    
+    async def start(self):
+        """启动WebSocket测试会话"""
         try:
-            # 等待用户按键停止录制
-            await asyncio.sleep(1)  # 给其他任务启动的时间
-            
-            # 这里可以添加更复杂的用户交互逻辑
-            # 目前简单地录制20秒后自动停止
-            await asyncio.sleep(300)  # 录制20秒
-            
-            logger.info("录制时间达到20秒，自动停止...")
-            recording_active = False
-            
-            # 记录音频发送完成时间
-            audio_send_completed_time = time.time()
-            logger.info(f"📤 麦克风音频录制完成，时间戳: {audio_send_completed_time}")
-            
+            async with websockets.connect(self.uri) as websocket:
+                self.websocket = websocket
+                logger.info("已连接到WebSocket服务器")
+                logger.info("=== 开始麦克风音频测试 ===")
+                
+                # 在会话开始时就初始化TTS播放器，准备接收音频
+                self.initialize_tts_player()
+                logger.info("🎵 TTS播放器已预先初始化，准备接收多轮对话...")
+                
+                # 创建异步任务
+                receive_task = asyncio.create_task(self.receive_loop())
+                microphone_task = asyncio.create_task(self.microphone_input_loop())
+                # timeout_task = asyncio.create_task(self.auto_stop_after_timeout(20))
+                
+                # 等待任务完成（这里会一直运行直到用户中断或出错）
+                await asyncio.gather(receive_task, microphone_task, return_exceptions=True)
+                
+                print(f"\n=== 麦克风音频会话结束，总共收到 {self.chunk_count} 个内容片段 ===")
+                logger.info(f"完整响应内容: {self.full_response}")
+                
+                # 会话结束时停止录制并保存音频文件
+                if self.is_recording_audio:
+                    saved_file = self.stop_audio_recording()
+                    if saved_file:
+                        logger.info(f"💾 完整会话TTS音频已保存: {saved_file}")
+                
+                # 输出延迟统计结果（如果有的话）
+                if (self.audio_send_completed_time is not None and 
+                    self.first_tts_audio_received_time is not None):
+                    delay = self.first_tts_audio_received_time - self.audio_send_completed_time
+                    print(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {delay:.3f}秒")
+                else:
+                    print("⚠️ 未统计到完整的音频延迟数据")
+                
+        except KeyboardInterrupt:
+            logger.info("用户中断测试")
         except Exception as e:
-            logger.error(f"用户输入处理异常: {str(e)}")
-            recording_active = False
+            logger.error(f"连接WebSocket失败: {str(e)}")
+        finally:
+            # 清理资源
+            self.is_playing = False
+            self.audio_device.cleanup()
+
+# class StreamingAudioPlayer:
+#     """
+#     流式音频播放器，支持实时播放音频片段
+#     基于AudioDeviceManager的现代化实现
+#     """
     
-    try:
-        async with websockets.connect(uri) as websocket:
-            logger.info("已连接到WebSocket服务器")
-            logger.info("=== 开始麦克风音频测试 ===")
+#     def __init__(self, sample_rate=24000, channels=1, sample_width=2):
+#         # 创建输出配置
+#         output_config = AudioConfig(
+#             sample_rate=sample_rate,
+#             channels=channels,
+#             bit_size=pyaudio.paInt16 if sample_width == 2 else pyaudio.paInt32,
+#             chunk=2048
+#         )
+        
+#         # 创建设备管理器
+#         self.device_manager = AudioDeviceManager(output_config=output_config)
+#         self.audio_queue = queue.Queue()
+#         self.is_playing = False
+#         self.play_thread = None
+        
+#         # 音频文件录制
+#         self.is_recording = False
+#         self.audio_buffer = bytearray()
+#         self.output_file = None
+        
+#         # 状态管理
+#         self.total_samples_played = 0
+        
+#     def start(self):
+#         """启动音频播放"""
+#         if self.is_playing:
+#             return
             
-            # 启动接收消息的异步任务
-            receive_task = asyncio.create_task(receive_messages(websocket))
+#         self.is_playing = True
+        
+#         try:
+#             # 打开输出流
+#             self.device_manager.open_output_stream()
             
-            # 启动录制和发送麦克风音频的异步任务
-            record_task = asyncio.create_task(record_and_send_audio(websocket))
+#             # 启动播放线程
+#             self.play_thread = threading.Thread(target=self._audio_player_thread, daemon=True)
+#             self.play_thread.start()
             
-            # 启动用户输入处理任务
-            input_task = asyncio.create_task(handle_user_input())
+#             logger.info("🎵 音频播放器已启动")
             
-            # 等待任务完成
-            await asyncio.gather(receive_task, record_task, input_task, return_exceptions=True)
+#         except Exception as e:
+#             logger.error(f"启动音频播放器失败: {e}")
+#             self.is_playing = False
+#             raise
+        
+#     def add_audio_data(self, audio_data: bytes):
+#         """添加音频数据到播放队列和录制缓冲区"""
+#         if self.is_playing:
+#             self.audio_queue.put(audio_data)
             
-            print(f"\n=== 麦克风音频测试完成，总共收到 {chunk_count} 个内容片段 ===")
-            logger.info(f"完整响应: {full_response}")
+#         if self.is_recording:
+#             self.audio_buffer.extend(audio_data)
+        
+#     def _audio_player_thread(self):
+#         """音频播放线程"""
+#         logger.info("🎵 播放线程已启动，等待音频数据...")
+        
+#         # 启动输出流
+#         output_stream = self.device_manager.output_stream
+#         if output_stream:
+#             output_stream.start_stream()
+#             logger.info("🔊 音频输出流已启动")
+        
+#         while self.is_playing:
+#             try:
+#                 # 从队列获取音频数据
+#                 audio_data = self.audio_queue.get(timeout=1.0)
+#                 if audio_data is not None and output_stream:
+#                     output_stream.write(audio_data)
+#                     self.total_samples_played += len(audio_data) // (
+#                         self.device_manager.output_config.channels * 
+#                         self.device_manager.output_config.sample_width
+#                     )
+#             except queue.Empty:
+#                 # 队列为空时等待一小段时间
+#                 import time
+#                 time.sleep(0.1)
+#             except Exception as e:
+#                 logger.error(f"音频播放错误: {e}")
+#                 import time
+#                 time.sleep(0.1)
+                
+#         logger.info("🔇 播放线程结束")
+        
+#     def stop(self):
+#         """停止音频播放"""
+#         logger.info("🛑 正在停止音频播放器...")
+#         self.is_playing = False
+        
+#         if self.play_thread and self.play_thread.is_alive():
+#             self.play_thread.join(timeout=3.0)
             
-            # 输出延迟统计结果
-            if audio_to_tts_delay is not None:
-                print(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {audio_to_tts_delay:.3f}秒")
-                logger.info(f"延迟统计 - 音频发送完成时间: {audio_send_completed_time}, 首个TTS音频收到时间: {first_tts_audio_received_time}")
-            else:
-                print("⚠️ 未能完整统计音频到TTS的延迟")
+#         # 停止录制
+#         self.stop_recording()
+        
+#         # 清理设备资源
+#         self.device_manager.cleanup()
+        
+#         total_time = self.total_samples_played / self.device_manager.output_config.sample_rate if self.device_manager.output_config.sample_rate > 0 else 0
+#         logger.info(f"🔇 音频播放器已停止 (播放时长: {total_time:.2f}秒)")
+        
+#     def start_recording(self, filename=None):
+#         """开始录制音频到文件"""
+#         if filename is None:
+#             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+#             filename = f"websocket_tts_output_{timestamp}.mp3"
+        
+#         os.makedirs("audio_output", exist_ok=True)
+#         self.output_file = os.path.join("audio_output", filename)
+#         self.audio_buffer.clear()
+#         self.is_recording = True
+#         logger.info(f"🎵 开始录制TTS音频到: {self.output_file}")
+        
+#     def stop_recording(self):
+#         """停止录制并保存文件"""
+#         if not self.is_recording:
+#             return None
             
-    except KeyboardInterrupt:
-        logger.info("用户中断测试")
-        recording_active = False
-        response_completed = True
-    except Exception as e:
-        logger.error(f"连接WebSocket失败: {str(e)}")
-    finally:
-        # 清理PyAudio资源
-        device_manager.cleanup()
-        # 确保音频播放器已停止
-        audio_player.stop()
+#         self.is_recording = False
+        
+#         if self.audio_buffer and self.output_file:
+#             with open(self.output_file, 'wb') as f:
+#                 f.write(self.audio_buffer)
+            
+#             file_size = len(self.audio_buffer)
+#             logger.info(f"💾 TTS音频文件已保存: {self.output_file} ({file_size} 字节)")
+            
+#             # 尝试播放保存的文件
+#             try:
+#                 import subprocess
+#                 if os.name == 'posix':  # macOS/Linux
+#                     subprocess.run(['afplay', self.output_file], check=False)
+#                     logger.info("🔊 正在播放保存的TTS音频文件...")
+#                 elif os.name == 'nt':  # Windows
+#                     os.system(f'start "" "{self.output_file}"')
+#                     logger.info("🔊 正在播放保存的TTS音频文件...")
+#             except Exception as e:
+#                 logger.warning(f"无法播放保存的文件: {e}")
+            
+#             return self.output_file
+#         else:
+#             logger.warning("没有录制到TTS音频数据")
+#             return None
+        
+#     def get_status(self):
+#         """获取当前播放器状态"""
+#         return {
+#             "is_playing": self.is_playing,
+#             "is_recording": self.is_recording,
+#             "total_samples_played": self.total_samples_played,
+#             "sample_rate": self.device_manager.output_config.sample_rate,
+#             "channels": self.device_manager.output_config.channels
+#         }
+
+# async def test_audio_websocket_stream():
+#     """测试带预处理音频文件的WebSocket流式接口"""
+#     uri = "ws://localhost:5876/ws/stream/test_user_123"
+    
+#     # 响应处理状态
+#     response_completed = False
+#     full_response = ""
+#     chunk_count = 0
+    
+#     # 延迟统计变量
+#     audio_send_completed_time = None
+#     first_tts_audio_received_time = None
+#     audio_to_tts_delay = None
+    
+#     # 创建流式音频播放器
+#     audio_player = StreamingAudioPlayer()
+    
+#     def play_audio_data(audio_data: bytes):
+#         """播放TTS音频数据片段"""
+#         try:
+#             logger.info(f"🔊 收到TTS音频片段: {len(audio_data)} 字节")
+#             # 直接添加到播放器队列，支持流式播放
+#             audio_player.add_audio_data(audio_data)
+            
+#         except Exception as e:
+#             logger.error(f"处理TTS音频片段失败: {str(e)}")
+    
+#     def read_audio_file(file_path):
+#         """读取音频文件并返回符合input_audio_config格式的字节数据"""
+#         try:
+#             # 检查文件扩展名
+#             file_ext = os.path.splitext(file_path)[1].lower()
+            
+#             # 使用pydub加载音频文件
+#             if file_ext in ['.wav', '.mp3']:
+#                 audio = AudioSegment.from_file(file_path)
+#             else:
+#                 logger.error(f"不支持的音频格式: {file_ext}")
+#                 return None
+            
+#             # 转换为符合input_audio_config的格式
+#             # 目标格式: PCM, 16kHz, 单声道, 16位
+#             target_audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+            
+#             # 导出为PCM格式的字节数据
+#             buffer = io.BytesIO()
+#             target_audio.export(buffer, format="s16le")
+#             pcm_data = buffer.getvalue()
+            
+#             logger.info(f"音频转换完成: {len(pcm_data)} 字节, 16kHz, 单声道, 16位PCM")
+#             return pcm_data
+                
+#         except Exception as e:
+#             logger.error(f"读取音频文件 {file_path} 失败: {str(e)}")
+#             return None
+    
+#     def generate_silence_audio(duration_ms=500):
+#         """生成指定时长的静音音频"""
+#         try:
+#             # 创建静音音频段，16kHz, 单声道, 16位
+#             silence = AudioSegment.silent(duration=duration_ms)
+#             silence = silence.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+            
+#             # 导出为PCM格式的字节数据
+#             buffer = io.BytesIO()
+#             silence.export(buffer, format="s16le")
+#             pcm_data = buffer.getvalue()
+            
+#             logger.info(f"生成静音音频: {len(pcm_data)} 字节, {duration_ms}ms, 16kHz, 单声道, 16位PCM")
+#             return pcm_data
+            
+#         except Exception as e:
+#             logger.error(f"生成静音音频失败: {str(e)}")
+#             return None
+    
+#     async def receive_messages(websocket):
+#         """异步接收消息的任务"""
+#         nonlocal response_completed, full_response, chunk_count
+#         nonlocal audio_send_completed_time, first_tts_audio_received_time, audio_to_tts_delay
+        
+#         try:
+#             while not response_completed:
+#                 try:
+#                     response = await websocket.recv()
+#                     data = json.loads(response)
+                    
+#                     logger.info(f"收到响应: {data['type']}")
+                    
+#                     if data["type"] == "start":
+#                         logger.info("开始处理音频文件消息...")
+#                     elif data["type"] == "stream_chunk":
+#                         chunk_count += 1
+#                         content = data["content"]
+#                         full_response += content
+#                         logger.info(f"收到第{chunk_count}个内容片段: '{content}'")
+#                         print(content, end="", flush=True)
+#                     elif data["type"] == "tts_start":
+#                         logger.info("TTS语音合成开始...")
+#                         # 启动音频播放器和录制
+#                         audio_player.start()
+#                         audio_player.start_recording()
+#                         # 显示播放器状态
+#                         status = audio_player.get_status()
+#                         logger.info(f"🎵 播放器状态: {status}")
+#                     elif data["type"] == "tts_audio":
+#                         # 记录第一个TTS音频收到的时间
+#                         if first_tts_audio_received_time is None:
+#                             first_tts_audio_received_time = time.time()
+#                             if audio_send_completed_time is not None:
+#                                 audio_to_tts_delay = first_tts_audio_received_time - audio_send_completed_time
+#                                 logger.info(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {audio_to_tts_delay:.3f}秒")
+                        
+#                         # 处理TTS音频数据 - 关键修改
+#                         audio_data = base64.b64decode(data["audio_data"])
+#                         logger.info(f"收到TTS音频数据: {len(audio_data)} 字节")
+                        
+#                         # 直接播放音频片段（流式播放）
+#                         play_audio_data(audio_data)
+#                     elif data["type"] == "tts_end":
+#                         logger.info("TTS语音合成完成")
+#                         # 显示最终播放器状态
+#                         status = audio_player.get_status()
+#                         logger.info(f"🎵 TTS完成时播放器状态: {status}")
+#                         # 等待一会儿确保音频播放完成
+#                         await asyncio.sleep(2)
+#                         # 停止音频播放器
+#                         audio_player.stop()
+#                     elif data["type"] == "end":
+#                         logger.info("音频文件处理完成")
+#                         response_completed = True
+#                         break
+#                     elif data["type"] == "error":
+#                         logger.error(f"发生错误: {data['message']}")
+#                         response_completed = True
+#                         break
+                        
+#                 except websockets.exceptions.ConnectionClosed:
+#                     logger.info("WebSocket连接已关闭")
+#                     response_completed = True
+#                     break
+#                 except Exception as e:
+#                     logger.error(f"接收消息时发生错误: {str(e)}")
+#                     response_completed = True
+#                     break
+                    
+#         except Exception as e:
+#             logger.error(f"接收任务异常: {str(e)}")
+#             response_completed = True
+    
+#     async def send_audio_files(websocket):
+#         """异步发送测试音频文件数据的任务"""
+#         nonlocal audio_send_completed_time
+        
+#         try:
+#             # 测试音频文件列表
+#             test_audio_files = [
+#                 "audio_test_data/converted_20250630_151526_你好.wav",
+#                 "audio_test_data/converted_20250630_151540_我想了解一下.wav", 
+#                 "audio_test_data/converted_20250630_151545_你的功能.wav",
+#                 "audio_test_data/converted_20250630_151551_和特点.wav"
+#             ]
+            
+#             for audio_file in test_audio_files:
+#                 logger.info(f"正在发送测试音频文件: {audio_file}")
+                
+#                 # 读取音频文件数据
+#                 audio_data = read_audio_file(audio_file)
+#                 if audio_data is None:
+#                     logger.error(f"无法读取音频文件: {audio_file}")
+#                     continue
+                
+#                 # 模拟实时发送，将音频数据分片发送
+#                 # 200ms音频块大小：16kHz × 1声道 × 2字节 × 0.2秒 = 6400字节
+#                 CHUNK_SIZE = 6400  # 每次发送200ms的音频数据
+#                 total_chunks = len(audio_data) // CHUNK_SIZE + (1 if len(audio_data) % CHUNK_SIZE else 0)
+                
+#                 logger.info(f"开始分片发送音频数据，总共 {total_chunks} 个片段")
+                
+#                 for i in range(0, len(audio_data), CHUNK_SIZE):
+#                     chunk = audio_data[i:i + CHUNK_SIZE]
+                    
+#                     # 将音频数据转换为base64编码
+#                     audio_base64 = base64.b64encode(chunk).decode('utf-8')
+                    
+#                     # 发送音频消息
+#                     audio_message = {
+#                         "audio": audio_base64,
+#                         "audio_format": "pcm"
+#                     }
+                    
+#                     await websocket.send(json.dumps(audio_message))
+                    
+#                     # 控制发送频率，模拟真实音频流
+#                     await asyncio.sleep(0.1)  # 200ms间隔，匹配音频块时长
+                
+#                 logger.info(f"音频文件 {audio_file} 发送完成")
+                
+#                 # 在音频文件之间添加停顿
+#                 await asyncio.sleep(2)
+            
+#             logger.info("所有测试音频文件发送完成")
+            
+#             # 发送2秒的静音数据
+#             logger.info("正在发送2秒静音数据...")
+#             silence_data = generate_silence_audio(duration_ms=2000)  # 2秒静音
+#             if silence_data:
+#                 # 模拟实时发送，将静音数据分片发送
+#                 CHUNK_SIZE = 6400  # 每次发送200ms的音频数据
+                
+#                 for i in range(0, len(silence_data), CHUNK_SIZE):
+#                     chunk = silence_data[i:i + CHUNK_SIZE]
+                    
+#                     # 将音频数据转换为base64编码
+#                     audio_base64 = base64.b64encode(chunk).decode('utf-8')
+                    
+#                     # 发送音频消息
+#                     audio_message = {
+#                         "audio": audio_base64,
+#                         "audio_format": "pcm"
+#                     }
+                    
+#                     await websocket.send(json.dumps(audio_message))
+                    
+#                     # 控制发送频率，模拟真实音频流
+#                     await asyncio.sleep(0.2)  # 200ms间隔，匹配音频块时长
+                
+#                 logger.info("2秒静音数据发送完成")
+#             else:
+#                 logger.error("生成静音数据失败")
+            
+#             # 记录音频发送完成时间
+#             audio_send_completed_time = time.time()
+#             logger.info(f"📤 所有音频数据发送完成，时间戳: {audio_send_completed_time}")
+                    
+#         except Exception as e:
+#             logger.error(f"发送音频文件失败: {str(e)}")
+    
+#     try:
+#         async with websockets.connect(uri) as websocket:
+#             logger.info("已连接到WebSocket服务器")
+            
+#             # 启动接收消息的异步任务
+#             receive_task = asyncio.create_task(receive_messages(websocket))
+            
+#             # 启动发送预处理音频文件的异步任务
+#             send_task = asyncio.create_task(send_audio_files(websocket))
+            
+#             # 等待两个任务都完成
+#             await asyncio.gather(receive_task, send_task)
+            
+#             print(f"\n=== 音频文件测试完成，总共收到 {chunk_count} 个内容片段 ===")
+#             logger.info(f"完整响应: {full_response}")
+            
+#             # 输出延迟统计结果
+#             if audio_to_tts_delay is not None:
+#                 print(f"⏱️ 音频发送完成到首个TTS音频接收延迟: {audio_to_tts_delay:.3f}秒")
+#                 logger.info(f"延迟统计 - 音频发送完成时间: {audio_send_completed_time}, 首个TTS音频收到时间: {first_tts_audio_received_time}")
+#             else:
+#                 print("⚠️ 未能完整统计音频到TTS的延迟")
+            
+#     except Exception as e:
+#         logger.error(f"连接WebSocket失败: {str(e)}")
+#     finally:
+#         # 确保音频播放器已停止
+#         audio_player.stop()
+
+async def test_microphone_websocket_stream():
+    """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
+    session = WebSocketTestSession()
+    await session.start()
 
 if __name__ == "__main__":
     # 测试预处理音频文件输入
     # print("=== 测试预处理音频文件输入 ===")
     # asyncio.run(test_audio_websocket_stream())
     
-    # 测试麦克风输入
+    # 测试麦克风输入 - 使用重构后的简化版本
     print("=== 测试麦克风输入 ===")
     asyncio.run(test_microphone_websocket_stream())

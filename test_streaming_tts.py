@@ -168,7 +168,7 @@ async def test_streaming_tts():
         
         # 结束TTS会话
         logger.info("🔚 结束TTS会话...")
-        await tts_client.finish_synthesis()
+        await tts_client.cleanup()
         
         # 等待合成完成
         logger.info("⏳ 等待音频合成完成...")
@@ -265,7 +265,7 @@ async def test_multiple_sentences():
             await asyncio.sleep(1.0)
         
         # 结束并等待
-        await tts_client.finish_synthesis()
+        await tts_client.cleanup()
         await asyncio.sleep(3)  # 等待合成完成
         
         # 停止录制
