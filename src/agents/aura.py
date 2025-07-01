@@ -174,6 +174,7 @@ class AuraAgent:
                 if message_type == MessageType.TEXT:
                     await self.message_processor_text.handle_text_message(message_data, self.chat_stream)
                 elif message_type == MessageType.AUDIO:
+                    logger.debug(f"收到音频消息: len={len(message_data['audio'])}")
                     await self.message_processor_audio.handle_audio_message(message_data, self.chat_stream)
                 else:
                     logger.warning(f"不支持的消息类型: {message_type}")

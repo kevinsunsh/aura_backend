@@ -34,14 +34,17 @@ async def _quick_response(state: QuickState, config: RunnableConfig):
                 user_messages_segments=current_message,
             )
         writer = get_stream_writer()
+        final_response = ""
         quick_response_point_id = start_performance_point("快速响应")
         async for chunk in chat_model.astream([
             SystemMessage(content=system_instructions)
         ]):
             if hasattr(chunk, 'content'):
                 end_performance_point(quick_response_point_id)
-                logger.info(f"快速响应流式响应: {chunk.content}")
+                final_response += chunk.content
                 writer({"content": chunk.content})
+
+        logger.info(f"快速响应流式响应完成: {final_response}")
 
         return Command(
             update={"aura_response": "finished"},

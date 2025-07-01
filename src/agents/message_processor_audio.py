@@ -93,7 +93,7 @@ class MessageProcessorAudio:
     
     async def asr_response_callback(self, asr_text: str) -> None:
         """ASR响应回调 - 收到识别结果时调用"""
-        logger.info(f"收到ASR识别结果: {asr_text}")
+        logger.debug(f"收到ASR识别结果: {asr_text}")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "type": "asr_response",
@@ -116,7 +116,7 @@ class MessageProcessorAudio:
     # TTS 回调函数
     async def tts_start_callback(self) -> None:
         """TTS开始回调 - 开始合成语音时调用"""
-        logger.info("TTS合成开始")
+        logger.debug("TTS合成开始")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "type": "tts_start",
@@ -125,7 +125,7 @@ class MessageProcessorAudio:
     
     async def tts_response_callback(self, audio_data: bytes) -> None:
         """TTS响应回调 - 收到音频数据时调用"""
-        logger.info(f"收到TTS音频数据: {len(audio_data)} 字节")
+        logger.debug(f"收到TTS音频数据: {len(audio_data)} 字节")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "type": "tts_audio",
@@ -135,7 +135,7 @@ class MessageProcessorAudio:
     
     async def tts_end_callback(self) -> None:
         """TTS结束回调 - 语音合成完成时调用"""
-        logger.info("TTS合成结束")
+        logger.debug("TTS合成结束")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "type": "tts_end",
@@ -156,7 +156,7 @@ class MessageProcessorAudio:
     async def _handle_asr_result(self, asr_text: str, chat_stream: ChatStream = None) -> None:
         """处理ASR识别结果"""
         try:
-            logger.info(f"开始处理ASR结果: {asr_text}")
+            logger.debug(f"开始处理ASR结果: {asr_text}")
             
             if not chat_stream:
                 logger.warning("没有提供 chat_stream，无法处理 ASR 结果")
@@ -168,7 +168,7 @@ class MessageProcessorAudio:
                 chat_stream=chat_stream
             )
             
-            logger.info(f"ASR结果处理完成: {result}")
+            logger.debug(f"ASR结果处理完成: {result}")
             
         except Exception as e:
             logger.error(f"处理ASR结果失败: {e}")

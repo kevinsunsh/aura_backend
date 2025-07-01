@@ -116,7 +116,7 @@ async def test_streaming_tts():
         async def tts_start_callback():
             nonlocal synthesis_started, first_audio_received
             synthesis_started = True
-            logger.info("🎵 TTS合成开始")
+            # logger.info("🎵 TTS合成开始")
             # 只在第一次收到TTS开始信号时开始录制
             if not first_audio_received:
                 audio_recorder.start_recording()
@@ -131,7 +131,7 @@ async def test_streaming_tts():
             
         async def tts_end_callback():
             nonlocal synthesis_finished
-            logger.info("🎵 TTS合成结束")
+            # logger.info("🎵 TTS合成结束")
             
         async def tts_reconnect_callback():
             logger.info("🔄 TTS重连成功")

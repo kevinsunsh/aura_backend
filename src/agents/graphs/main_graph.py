@@ -86,13 +86,14 @@ async def _response_user_message(state: MainState, config: RunnableConfig):
             SystemMessage(content=state["current_message"])
         ]):
             if hasattr(chunk, 'content'):
-                logger.info(f"流式响应: {chunk.content}")
+                # logger.info(f"流式响应: {chunk.content}")
                 end_performance_point(response_user_message_point_id)
                 final_response += chunk.content
                 writer({"content": chunk.content})
             elif isinstance(chunk, dict) and 'content' in chunk:
                 writer({"content": chunk['content']})
 
+        logger.info(f"流式响应完成: {final_response}")
         configurable.message_store.add_message(Message(
                                                 msg_id=str(uuid.uuid4()),
                                                 chat_id=chat_id,
