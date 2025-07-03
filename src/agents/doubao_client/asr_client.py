@@ -422,9 +422,7 @@ class AsrClient:
         self.ws = await websockets.connect(
             self.ws_url, 
             additional_headers=header, 
-            max_size=1000000000,
-            ping_interval=30,  # 添加心跳检测
-            ping_timeout=10
+            max_size=1000000000
         )
         
         self.is_running = True
