@@ -63,6 +63,12 @@ async def test_websocket_stream():
         try:
             while not response_completed:
                 try:
+                    # 检查WebSocket连接状态
+                    if hasattr(websocket, 'closed') and websocket.closed:
+                        logger.info("WebSocket连接已关闭，停止接收")
+                        response_completed = True
+                        break
+                    
                     response = await websocket.recv()
                     receive_time = time.time()  # 记录接收时间
                     data = json.loads(response)
@@ -111,8 +117,25 @@ async def test_websocket_stream():
                     logger.info("WebSocket连接已关闭")
                     response_completed = True
                     break
+                except websockets.exceptions.ConnectionClosedError:
+                    logger.info("WebSocket连接异常关闭")
+                    response_completed = True
+                    break
+                except websockets.exceptions.ConnectionClosedOK:
+                    logger.info("WebSocket连接正常关闭")
+                    response_completed = True
+                    break
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON解析失败: {str(e)}")
+                    continue
                 except Exception as e:
                     logger.error(f"接收消息时发生错误: {str(e)}")
+                    # 检查是否是连接相关的错误
+                    error_msg = str(e).lower()
+                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
+                        logger.info("检测到连接断开相关错误，停止接收")
+                        response_completed = True
+                        break
                     response_completed = True
                     break
                     
@@ -205,6 +228,12 @@ async def test_interactive_chat():
         try:
             while not response_completed:
                 try:
+                    # 检查WebSocket连接状态
+                    if hasattr(websocket, 'closed') and websocket.closed:
+                        logger.info("WebSocket连接已关闭，停止接收")
+                        response_completed = True
+                        break
+                    
                     response = await websocket.recv()
                     data = json.loads(response)
                     logger.info(f"收到响应: {data}")
@@ -225,8 +254,25 @@ async def test_interactive_chat():
                     logger.info("WebSocket连接已关闭")
                     response_completed = True
                     break
+                except websockets.exceptions.ConnectionClosedError:
+                    logger.info("WebSocket连接异常关闭")
+                    response_completed = True
+                    break
+                except websockets.exceptions.ConnectionClosedOK:
+                    logger.info("WebSocket连接正常关闭")
+                    response_completed = True
+                    break
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON解析失败: {str(e)}")
+                    continue
                 except Exception as e:
                     logger.error(f"接收响应失败: {str(e)}")
+                    # 检查是否是连接相关的错误
+                    error_msg = str(e).lower()
+                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
+                        logger.info("检测到连接断开相关错误，停止接收")
+                        response_completed = True
+                        break
                     response_completed = True
                     break
                     

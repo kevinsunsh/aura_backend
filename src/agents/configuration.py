@@ -48,3 +48,29 @@ def get_chat_model_by_type(
     """
 
     return init_chat_model(model=LLM_MODEL_MAP[llm_type], model_provider="openai")
+
+class ClientEventEnum(Enum):
+	StartConnection = 1
+	FinishConnection = 2
+	StartSession = 100
+	FinishSession = 102
+	TaskRequest = 200
+	SayHello = 300
+	ChatTTSText = 500
+
+class ServerEventEnum(Enum):
+	ConnectionStarted = 50
+	ConnectionFailed = 51
+	ConnectionFinished = 52
+	SessionStarted = 150
+	SessionFinished = 152
+	SessionFailed = 153
+	TTSSentenceStart = 350
+	TTSSentenceEnd = 351
+	TTSResponse = 352
+	TTSEnded = 359
+	ASRInfo = 450
+	ASRResponse = 451
+	ASREnded = 459
+	ChatResponse = 550
+	ChatEnded = 559

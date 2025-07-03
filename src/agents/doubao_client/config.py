@@ -1,5 +1,4 @@
 import uuid
-import pyaudio
 
 # 配置信息
 ws_connect_config = {
@@ -29,22 +28,6 @@ start_session_req = {
     }
 }
 
-input_audio_config = {
-    "chunk": 3200,
-    "format": "pcm",
-    "channels": 1,
-    "sample_rate": 16000,
-    "bit_size": pyaudio.paInt16
-}
-
-output_audio_config = {
-    "chunk": 3200,
-    "format": "pcm",
-    "channels": 1,
-    "sample_rate": 24000,
-    "bit_size": pyaudio.paFloat32
-}
-
 # ASR API配置
 asr_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
@@ -60,8 +43,7 @@ asr_config = {
         "channel": 1,
         "codec": "raw"
     },
-    "seg_duration": 200,  # 分片时长(ms) - 双向流式模式推荐200ms以获得最优性能
-    "uid": "aura_user"
+    "seg_duration": 200  # 分片时长(ms) - 双向流式模式推荐200ms以获得最优性能
 }
 
 # TTS API配置
@@ -71,7 +53,7 @@ tts_config = {
     "token": "78VO_doF2SAJ6NwVmoS3RCOQcwyz_oLv",   # 需要配置实际的token
     "speaker": "zh_female_shuangkuaisisi_moon_bigtts",  # 默认说话人
     "audio": {
-        "format": "mp3",
+        "format": "pcm",
         "sample_rate": 24000
     }
 }

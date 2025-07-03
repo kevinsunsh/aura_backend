@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+import json
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
 from enum import Enum
@@ -10,6 +11,7 @@ from agents.graphs.main_graph import builder as main_graph_builder
 from agents.graphs.quick_graph import builder as quick_graph_builder
 from .aura_memory.message_store import MessageStore, Message
 from .aura_memory.chat_stream import ChatStream, ChatStreamManager
+from .configuration import ServerEventEnum
 
 logger = logging.getLogger(__name__)
 
@@ -231,13 +233,7 @@ class MessageProcessorText:
                     "chat_stream_manager": self.chat_stream_manager
                 }
             }
-            
-            if self.websocket_send_callback:
-                await self.websocket_send_callback({
-                    "type": "ready",
-                    "message": "准备开始响应..."
-                })
-            
+
             # 使用优化的异步PostgreSQL连接
             async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
                 graph = quick_graph_builder.compile(checkpointer=checkpointer)
@@ -259,9 +255,10 @@ class MessageProcessorText:
                                             # 只有成功激活的任务才发送stream_chunk
                                             if self.websocket_send_callback:
                                                 await self.websocket_send_callback({
-                                                    "type": "stream_chunk",
-                                                    "content": str(message_obj.content),
-                                                    "chat_id": chat_stream.chat_id
+                                                    "event": ServerEventEnum.ChatResponse.value,
+                                                    "payload_msg": {
+                                                        "content": str(message_obj.content)
+                                                    }
                                                 })
                                         else:
                                             # 如果无法激活，记录日志但不发送消息
@@ -272,8 +269,7 @@ class MessageProcessorText:
                                     if message_obj["quick_response"]["aura_response"] == "finished":
                                         if self.websocket_send_callback:
                                             await self.websocket_send_callback({
-                                                "type": "end",
-                                                "message": "处理完成"
+                                                "event": ServerEventEnum.ChatEnded.value
                                             })
                                         break  # 处理完成，退出循环
                 except asyncio.TimeoutError:
@@ -331,9 +327,10 @@ class MessageProcessorText:
                                             # 只有成功激活的任务才发送stream_chunk
                                             if self.websocket_send_callback:
                                                 await self.websocket_send_callback({
-                                                    "type": "stream_chunk",
-                                                    "content": str(message_obj.content),
-                                                    "chat_id": chat_stream.chat_id
+                                                    "event": ServerEventEnum.ChatResponse.value,
+                                                    "payload_msg": {
+                                                        "content": str(message_obj.content)
+                                                    }
                                                 })
                                         else:
                                             # 如果无法激活，记录日志但不发送消息
@@ -341,33 +338,31 @@ class MessageProcessorText:
                                             break  # 退出循环，因为无法激活
                             elif "updates" in event:
                                 type, message_obj = event
-                                if "check_user_message" in message_obj:
-                                    if message_obj["check_user_message"]["aura_response"] == "waiting":
-                                        if self.websocket_send_callback:
-                                            await self.websocket_send_callback({
-                                                "type": "waiting",
-                                                "message": "正在处理您的消息..."
-                                            })
-                                    elif message_obj["check_user_message"]["aura_response"] == "ready":
-                                        if self.websocket_send_callback:
-                                            await self.websocket_send_callback({
-                                                "type": "ready",
-                                                "message": "准备开始响应..."
-                                            })
-                                elif "response_user_message" in message_obj:
+                                # if "check_user_message" in message_obj:
+                                #     if message_obj["check_user_message"]["aura_response"] == "waiting":
+                                #         if self.websocket_send_callback:
+                                #             await self.websocket_send_callback({
+                                #                 "type": "waiting",
+                                #                 "message": "正在处理您的消息..."
+                                #             })
+                                #     elif message_obj["check_user_message"]["aura_response"] == "ready":
+                                #         if self.websocket_send_callback:
+                                #             await self.websocket_send_callback({
+                                #                 "type": "ready",
+                                #                 "message": "准备开始响应..."
+                                #             })
+                                if "response_user_message" in message_obj:
                                     if message_obj["response_user_message"]["aura_response"] == "finished":
                                         if self.websocket_send_callback:
                                             await self.websocket_send_callback({
-                                                "type": "end",
-                                                "message": "处理完成"
+                                                "event": ServerEventEnum.ChatEnded.value
                                             })
                                         break  # 处理完成，退出循环
                 except asyncio.TimeoutError:
                     logger.warning(f"聊天任务超时: chat_id={chat_stream.chat_id}")
                     if self.websocket_send_callback:
                         await self.websocket_send_callback({
-                            "type": "error",
-                            "message": "处理超时，请重试"
+                            "event": ServerEventEnum.ChatEnded.value
                         })
         
         except asyncio.CancelledError:
@@ -378,8 +373,7 @@ class MessageProcessorText:
             if self.websocket_send_callback:
                 try:
                     await self.websocket_send_callback({
-                        "type": "error",
-                        "message": f"处理失败: {str(e)}"
+                        "event": ServerEventEnum.ChatEnded.value
                     })
                 except Exception as send_error:
                     logger.error(f"发送错误消息失败: {send_error}")
@@ -408,6 +402,13 @@ class MessageProcessorText:
                 if self.active_task is not None:
                     logger.info(f"清理时清除激活任务: {self.active_task.value}")
                     self.active_task = None
+            
+            # 等待一小段时间确保所有异步任务都能正确结束
+            await asyncio.sleep(0.2)
+            
+            # 清理所有任务记录
+            async with self.task_lock:
+                self.processing_tasks.clear()
             
             logger.info("MessageProcessorText资源清理完成")
         except Exception as e:

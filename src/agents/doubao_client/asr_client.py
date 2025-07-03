@@ -8,11 +8,33 @@ import wave
 from io import BytesIO
 import logging
 from typing import Dict, Any, Callable, Optional
+from enum import Enum
+from dataclasses import dataclass
 import websockets
+from utils.utils import start_performance_point, end_performance_point
 
 from .config import asr_config
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+class SendMessageType(Enum):
+    """发送消息类型"""
+    AUDIO = "audio"
+    KEEPALIVE = "keepalive"
+
+
+@dataclass
+class SendMessage:
+    """发送消息数据类"""
+    type: SendMessageType
+    content: bytes  # 音频数据
+    is_last: bool = False
+    timestamp: float = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = time.time()
 
 
 class AsrConnectionError(Exception):
@@ -178,6 +200,7 @@ class AsrClient:
                  asr_end_callback: Callable[[], None] = None,
                  asr_reconnect_callback: Callable[[], None] = None,
                  asr_disconnect_callback: Callable[[], None] = None,
+                 uid: str = None,
                  max_reconnect_attempts: int = 5,
                  reconnect_interval: float = 2.0,
                  reconnect_backoff_factor: float = 1.5,
@@ -197,7 +220,7 @@ class AsrClient:
         """
         # 使用配置文件中的设置，也可以通过kwargs覆盖
         self.ws_url = kwargs.get("ws_url", asr_config["ws_url"])
-        self.uid = kwargs.get("uid", asr_config["uid"])
+        self.uid = uid
         self.format = kwargs.get("format", asr_config["audio"]["format"])
         self.rate = kwargs.get("rate", asr_config["audio"]["sample_rate"])
         self.bits = kwargs.get("bits", asr_config["audio"]["bits"])
@@ -222,7 +245,7 @@ class AsrClient:
         # 连接状态
         self.ws = None
         self.is_running = False
-        self.session_started = False
+        self.asr_started = False
         self.seq = 1
         self.reqid = None
         self.connection_lost = False  # 新增：标记连接是否丢失
@@ -241,10 +264,27 @@ class AsrClient:
         self.audio_buffer = bytearray()
         self.buffer_lock = asyncio.Lock()
         
-        # 回调任务管理
-        self.current_response_task = None  # 当前正在处理的响应任务
-        self.callback_task_lock = asyncio.Lock()  # 任务管理锁
+        # 回调任务管理 - 使用专门的异步循环任务
+        self.callback_loop_task = None  # 专门负责调用asr_response_callback的异步循环任务
+        self.callback_loop_lock = asyncio.Lock()  # 循环任务管理锁
         
+        # 共享变量 - 会被更新的状态
+        self.cur_utterance_text = ""  # 当前utterance文本
+        self.is_interim = False  # interim标记
+        self.last_update_time = 0  # 最后更新时间戳
+        self.callback_interval = 1.0  # 回调间隔时间（秒）
+        
+        # 发送队列和保活机制
+        self.send_queue = None  # 发送队列，在连接时初始化
+        self.send_task = None  # 发送任务
+        self.keepalive_interval = kwargs.get("keepalive_interval", 5.0)  # 保活间隔（秒）
+        self.last_send_time = 0  # 最后发送时间
+        self.keepalive_enabled = kwargs.get("keepalive_enabled", True)  # 是否启用自动保活
+        self.silence_audio_cache = None  # 静音音频缓存
+
+        # 性能点
+        # self.send_audio_chunk_performance_point_id = None
+
     def construct_request(self):
         """构造初始请求"""
         req = {
@@ -268,6 +308,90 @@ class AsrClient:
         }
         return req
         
+    def _generate_silence_audio(self, duration_seconds: float = 1.0) -> bytes:
+        """
+        生成指定时长的静音音频数据
+        :param duration_seconds: 静音时长（秒）
+        :return: PCM音频数据
+        """
+        if self.silence_audio_cache is None:
+            # 计算音频数据大小：采样率 * 通道数 * 位深度(字节) * 时长
+            bytes_per_sample = self.bits // 8
+            total_samples = int(self.rate * self.channel * duration_seconds)
+            audio_data_size = total_samples * bytes_per_sample
+            
+            # 生成静音数据（全为0）
+            self.silence_audio_cache = b'\x00' * audio_data_size
+            logger.debug(f"生成静音音频缓存: {audio_data_size} 字节 "
+                        f"(采样率={self.rate}, 通道={self.channel}, 位深={self.bits}, 时长={duration_seconds}秒)")
+        
+        return self.silence_audio_cache
+        
+    def _should_send_keepalive(self) -> bool:
+        # return False
+        """检查是否需要发送保活音频"""
+        if not self.keepalive_enabled:
+            return False
+        
+        current_time = time.time()
+        time_since_last_send = current_time - self.last_send_time
+        
+        return time_since_last_send >= self.keepalive_interval
+        
+    async def _send_keepalive(self):
+        """发送保活音频（静音）"""
+        try:
+            silence_audio = self._generate_silence_audio(1.0)  # 1秒静音
+            logger.debug(f"发送ASR保活音频: {len(silence_audio)} 字节")
+            await self._send_audio_chunk_direct(silence_audio, last=False)
+            self.last_send_time = time.time()
+        except Exception as e:
+            logger.error(f"发送ASR保活音频失败: {e}")
+            raise
+            
+    async def _send_loop(self):
+        """发送循环，处理队列中的音频消息和自动保活"""
+        logger.debug("ASR发送循环已启动")
+        
+        # 计算检查间隔：保活间隔的1/3，但不超过5秒，不少于1秒
+        check_interval = max(1.0, min(5.0, self.keepalive_interval / 3))
+        
+        try:
+            while self.is_running and self.ws:
+                try:
+                    # 尝试从队列获取消息，使用较短的超时时间确保能定期检查保活
+                    try:
+                        message = await asyncio.wait_for(
+                            self.send_queue.get(), 
+                            timeout=check_interval
+                        )
+                        
+                        # 处理音频消息
+                        if message.type == SendMessageType.AUDIO:
+                            await self._send_audio_chunk_direct(message.content, message.is_last)
+                            self.last_send_time = time.time()  # 更新最后发送时间
+                            # logger.debug(f"发送音频数据: {len(message.content)} 字节, last={message.is_last}")
+                            
+                        # 标记队列任务完成（asyncio.Queue标准用法）
+                        self.send_queue.task_done()
+                        
+                    except asyncio.TimeoutError:
+                        # 队列超时，检查是否需要发送保活
+                        if self._should_send_keepalive():
+                            logger.debug(f"触发ASR自动保活，距离上次发送: {time.time() - self.last_send_time:.1f}秒")
+                            await self._send_keepalive()
+                        
+                except Exception as e:
+                    logger.error(f"ASR发送循环处理消息时出错: {e}")
+                    # 发送错误可能表示连接问题，标记断开
+                    self._mark_disconnected()
+                    break
+                    
+        except Exception as e:
+            logger.error(f"ASR发送循环异常: {e}")
+        finally:
+            logger.debug("ASR发送循环已结束")
+    
     async def start(self):
         """启动ASR连接"""
         if self.is_running:
@@ -306,8 +430,6 @@ class AsrClient:
         self.is_running = True
         logger.info("ASR WebSocket连接已建立")
         
-
-        
         # 发送初始请求
         await self._send_initial_request()
         
@@ -322,6 +444,36 @@ class AsrClient:
         
         self.receive_task = asyncio.create_task(self._receive_loop())
         logger.debug("已启动新的接收任务")
+        
+        # 初始化发送队列（最大容量100）
+        self.send_queue = asyncio.Queue(maxsize=100)
+        
+        # 启动发送任务 - 确保没有旧任务在运行
+        if self.send_task and not self.send_task.done():
+            logger.warning("发现未完成的旧发送任务，正在取消...")
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except asyncio.CancelledError:
+                pass
+        
+        self.send_task = asyncio.create_task(self._send_loop())
+        logger.debug("已启动新的发送任务")
+        
+        # 启动回调循环任务 - 确保没有旧任务在运行
+        if self.callback_loop_task and not self.callback_loop_task.done():
+            logger.warning("发现未完成的旧回调循环任务，正在取消...")
+            self.callback_loop_task.cancel()
+            try:
+                await self.callback_loop_task
+            except asyncio.CancelledError:
+                pass
+        
+        self.callback_loop_task = asyncio.create_task(self._callback_loop())
+        logger.debug("已启动新的回调循环任务")
+        
+        # 初始化保活状态
+        self.last_send_time = time.time()
         
         # 重置重连状态
         if self.is_reconnecting:
@@ -353,11 +505,17 @@ class AsrClient:
         try:
             while self.is_running and self.ws:
                 try:
-                    logger.debug(f"开始接收新的ASR响应")
+                    # 检查WebSocket连接状态
+                    if hasattr(self.ws, 'closed') and self.ws.closed:
+                        logger.warning("ASR WebSocket连接已关闭，停止接收")
+                        self._mark_disconnected()
+                        break
+                    
+                    # logger.debug(f"开始接收新的ASR响应")
                     response = await self.ws.recv()
                     result = parse_response(response)
                     await self._handle_response(result)
-                    logger.debug(f"接收新的ASR响应完成")
+                    # logger.debug(f"接收新的ASR响应完成")
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning("ASR WebSocket连接已关闭")
                     self._mark_disconnected()
@@ -375,6 +533,13 @@ class AsrClient:
                     break
                 except Exception as e:
                     logger.error(f"接收ASR响应失败: {e}")
+                    # 检查是否是连接相关的错误
+                    error_msg = str(e).lower()
+                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
+                        logger.info("检测到连接断开相关错误，停止接收")
+                        self._mark_disconnected()
+                        break
+                    # 其他错误继续处理
                     self._mark_disconnected()
                     break
                     
@@ -394,15 +559,8 @@ class AsrClient:
                 
     async def _handle_response(self, result: Dict[str, Any]):
         """处理服务器响应"""
-        logger.debug(f"ASR响应: {result}")
+        # logger.debug(f"ASR响应: {result}")
         
-        # 如果是首次响应，标记会话已开始
-        if not self.session_started:
-            self.session_started = True
-            if self.asr_start_callback:
-                # 异步执行开始回调，不阻塞接收循环
-                asyncio.create_task(self._safe_execute_callback(self.asr_start_callback))
-                
         # 处理ASR结果
         if 'payload_msg' in result and result['payload_msg']:
             payload = result['payload_msg']
@@ -414,6 +572,13 @@ class AsrClient:
                 if 'result' in payload and payload['result']:
                     asr_result = payload['result']
                     
+                    # 如果是首次收到ASR包，标记会话已开始并触发ASRInfo事件
+                    if not self.asr_started:
+                        self.asr_started = True
+                        if self.asr_start_callback:
+                            # 异步执行开始回调，不阻塞接收循环
+                            asyncio.create_task(self._safe_execute_callback(self.asr_start_callback))
+                    
                     # 处理utterances，只处理新增的utterance
                     if isinstance(asr_result, dict) and 'utterances' in asr_result:
                         utterances = asr_result['utterances']
@@ -423,17 +588,11 @@ class AsrClient:
                                 if isinstance(utterance, dict) and 'text' in utterance:
                                     # 检查definite属性，只有确定的分句才处理
                                     is_definite = utterance.get('definite', False)
-                                    if not is_definite:
-                                        logger.debug(f"跳过非确定的utterance [{i+1}]: definite={is_definite}")
-                                        continue
-                                    
                                     utterance_text = utterance['text'].strip()
                                     if utterance_text and self.asr_response_callback:  # 只有非空文本才处理
-                                        logger.info(f"ASR 新utterance结果 [{i+1}] (definite=true): {utterance_text}")
-                                        # 使用任务管理执行回调，确保新消息能够打断之前的处理
-                                        asyncio.create_task(
-                                            self._execute_response_callback_with_management(utterance_text)
-                                        )
+                                        logger.info(f"ASR 新utterance结果 [{i+1}] (definite={is_definite}): {utterance_text}")
+                                        # 更新共享变量，让专门的循环任务处理回调
+                                        await self._update_callback_state(utterance_text, is_definite)
                     
                     # # 处理完整文本（作为备用，如果没有utterances）
                     # elif isinstance(asr_result, dict) and 'text' in asr_result:
@@ -490,29 +649,68 @@ class AsrClient:
             logger.error(f"执行回调函数失败: {e}")
             # 不重新抛出异常，避免影响主流程
 
-    async def _execute_response_callback_with_management(self, utterance_text: str):
-        """管理ASR响应回调任务，确保新消息能够取消之前的处理"""
-        async with self.callback_task_lock:
-            # 如果有正在运行的响应任务，先取消它
-            if self.current_response_task and not self.current_response_task.done():
-                logger.info(f"检测到新ASR消息，取消之前的处理任务")
-                self.current_response_task.cancel()
-                try:
-                    # 等待任务取消完成，但设置超时避免无限等待
-                    await asyncio.wait_for(self.current_response_task, timeout=0.5)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
-                    logger.debug("之前的ASR响应任务已取消")
-                except Exception as e:
-                    logger.error(f"取消之前的ASR响应任务时出错: {e}")
+    async def _update_callback_state(self, utterance_text: str, is_interim: bool = False):
+        """更新回调状态，让专门的循环任务处理回调"""
+        async with self.callback_loop_lock:
+            # 更新共享变量
+            self.cur_utterance_text = utterance_text
+            self.is_interim = is_interim
+            self.last_update_time = time.time()
             
-            # 创建新的响应任务，但不等待其完成
-            self.current_response_task = asyncio.create_task(
-                self._safe_execute_callback(self.asr_response_callback, utterance_text)
-            )
-            logger.debug(f"已创建新的ASR响应处理任务: {utterance_text[:30]}...")
+            logger.debug(f"更新回调状态: text='{utterance_text[:30]}...', interim={is_interim}")
+
+    async def _callback_loop(self):
+        """专门的异步循环任务，负责调用asr_response_callback"""
+        logger.info("ASR回调循环任务已启动")
         
-        # 不等待任务完成，立即返回，确保不阻塞接收循环
-        logger.debug("ASR响应任务管理完成，立即返回")
+        try:
+            while self.is_running:
+                try:
+                    current_time = time.time()
+                    
+                    # 检查是否有内容需要处理
+                    if self.cur_utterance_text:
+                        # 条件1: 如果是interim，立即调用
+                        if self.is_interim:
+                            text_to_call = self.cur_utterance_text
+                            interim_flag = self.is_interim
+                            
+                            # 清空状态，避免重复调用
+                            self.cur_utterance_text = ""
+                            self.is_interim = False
+                            logger.info(f"立即调用interim回调: '{text_to_call[:30]}...'")
+                            await self._safe_execute_callback(self.asr_response_callback, text_to_call, interim_flag)
+                            
+                            self.asr_started = False
+
+                        # 条件2: 如果时间间隔达到1秒，调用回调
+                        elif current_time - self.last_update_time >= self.callback_interval:
+                            text_to_call = self.cur_utterance_text
+                            interim_flag = self.is_interim
+                            
+                            # 清空状态，避免重复调用
+                            self.cur_utterance_text = ""
+                            self.is_interim = False
+                            
+                            logger.info(f"定时调用回调: '{text_to_call[:30]}...' (间隔: {current_time - self.last_update_time:.3f}秒)")
+                            await self._safe_execute_callback(self.asr_response_callback, text_to_call, interim_flag)
+                            
+                            self.asr_started = False
+
+                    # 等待一小段时间再检查
+                    await asyncio.sleep(0.1)  # 100ms检查间隔
+                    
+                except asyncio.CancelledError:
+                    logger.info("ASR回调循环任务被取消")
+                    break
+                except Exception as e:
+                    logger.error(f"ASR回调循环任务出错: {e}")
+                    await asyncio.sleep(0.1)  # 出错时也等待一下
+                    
+        except Exception as e:
+            logger.error(f"ASR回调循环任务异常: {e}")
+        finally:
+            logger.info("ASR回调循环任务已结束")
 
     def _mark_disconnected(self):
         """标记连接已断开（同步方法，避免在接收循环中创建新任务）"""
@@ -591,6 +789,28 @@ class AsrClient:
             
     async def _cleanup_connection(self):
         """清理连接相关资源（不重置重连状态）"""
+        # 取消并等待发送任务完成
+        if self.send_task and not self.send_task.done():
+            logger.debug("取消发送任务...")
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except asyncio.CancelledError:
+                logger.debug("发送任务已取消")
+            except Exception as e:
+                logger.error(f"等待发送任务结束时出错: {e}")
+        self.send_task = None
+        
+        # 清空发送队列
+        if self.send_queue:
+            while not self.send_queue.empty():
+                try:
+                    self.send_queue.get_nowait()
+                    self.send_queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+            self.send_queue = None
+        
         # 取消并等待接收任务完成
         if self.receive_task and not self.receive_task.done():
             logger.debug("取消接收任务...")
@@ -603,18 +823,23 @@ class AsrClient:
                 logger.error(f"等待接收任务结束时出错: {e}")
         self.receive_task = None
         
-        # 取消当前响应任务（重连时也需要清理）
-        async with self.callback_task_lock:
-            if self.current_response_task and not self.current_response_task.done():
-                logger.debug("重连时取消当前ASR响应任务...")
-                self.current_response_task.cancel()
+        # 取消回调循环任务（重连时也需要清理）
+        async with self.callback_loop_lock:
+            if self.callback_loop_task and not self.callback_loop_task.done():
+                logger.debug("清理时取消ASR回调循环任务...")
+                self.callback_loop_task.cancel()
                 try:
-                    await asyncio.wait_for(self.current_response_task, timeout=0.5)
+                    await asyncio.wait_for(self.callback_loop_task, timeout=0.5)
                 except (asyncio.CancelledError, asyncio.TimeoutError):
-                    logger.debug("重连时ASR响应任务已取消")
+                    logger.debug("ASR回调循环任务已取消")
                 except Exception as e:
-                    logger.error(f"重连时取消ASR响应任务时出错: {e}")
-                self.current_response_task = None
+                    logger.error(f"取消ASR回调循环任务时出错: {e}")
+                self.callback_loop_task = None
+            
+            # 重置回调状态
+            self.cur_utterance_text = ""
+            self.is_interim = False
+            self.last_update_time = 0
         
         # 关闭WebSocket连接
         if self.ws:
@@ -644,15 +869,15 @@ class AsrClient:
                 self.audio_buffer.extend(audio_chunk)
                 
                 # 计算分片大小（PCM格式：采样率 * 通道数 * 位深/8 * 时长）
-                # segment_size = int(self.rate * self.channel * (self.bits // 8) * self.seg_duration / 1000)
-                segment_size = 3200
+                segment_size = int(self.rate * self.channel * (self.bits // 8) * self.seg_duration / 1000)
+                # segment_size = 3200
                 
                 # 如果缓冲区足够大，发送数据
                 while len(self.audio_buffer) >= segment_size:
                     chunk_to_send = bytes(self.audio_buffer[:segment_size])
                     self.audio_buffer = self.audio_buffer[segment_size:]
-                    
-                    await self._send_audio_chunk(chunk_to_send, last=False)
+                    # self.send_audio_chunk_performance_point_id = start_performance_point("发送音频块")
+                    await self._send_audio_chunk_direct(chunk_to_send, last=False)
                     
         except Exception as e:
             logger.error(f"处理音频块失败: {e}")
@@ -681,8 +906,8 @@ class AsrClient:
             if self.is_running:
                 await self._handle_disconnect()
             
-    async def _send_audio_chunk(self, chunk: bytes, last: bool = False):
-        """发送音频块"""
+    async def _send_audio_chunk_direct(self, chunk: bytes, last: bool = False):
+        """直接发送音频块（底层方法）"""
         try:
             if not self.ws or not self.is_running:
                 raise Exception("WebSocket连接不可用")
@@ -710,9 +935,33 @@ class AsrClient:
             
             await self.ws.send(audio_request)
             logger.debug(f"发送音频块，序号: {self.seq}, 大小: {len(chunk)}, 最后: {last}")
-            
+            # end_performance_point(self.send_audio_chunk_performance_point_id)
         except Exception as e:
             logger.error(f"发送音频块失败: {e}")
+            raise
+            
+    async def _send_audio_chunk(self, chunk: bytes, last: bool = False):
+        """通过队列发送音频块"""
+        if not self.is_running or not self.send_queue:
+            logger.warning("ASR连接未就绪或发送队列不可用，无法发送音频")
+            return
+            
+        try:
+            # 创建发送消息
+            message = SendMessage(
+                type=SendMessageType.AUDIO,
+                content=chunk,
+                is_last=last
+            )
+            
+            # 非阻塞方式放入队列
+            try:
+                self.send_queue.put_nowait(message)
+            except asyncio.QueueFull:
+                logger.warning("ASR发送队列已满，丢弃音频数据")
+                
+        except Exception as e:
+            logger.error(f"将音频加入发送队列失败: {e}")
             raise
             
     def stop_reconnect(self):
@@ -727,13 +976,22 @@ class AsrClient:
         
     def get_connection_status(self) -> Dict[str, Any]:
         """获取连接状态信息"""
+        current_time = time.time()
+        send_queue_size = self.send_queue.qsize() if self.send_queue else 0
+        time_since_last_send = current_time - self.last_send_time if self.last_send_time > 0 else 0
+        
         return {
             "is_running": self.is_running,
             "is_reconnecting": self.is_reconnecting,
             "reconnect_attempts": self.reconnect_attempts,
             "current_reconnect_interval": self.current_reconnect_interval,
             "should_reconnect": self.should_reconnect,
-            "session_started": self.session_started
+            "session_started": self.session_started,
+            "send_queue_size": send_queue_size,
+            "keepalive_enabled": self.keepalive_enabled,
+            "keepalive_interval": self.keepalive_interval,
+            "last_send_time": self.last_send_time,
+            "time_since_last_send": time_since_last_send
         }
             
     async def cleanup(self):
@@ -755,18 +1013,32 @@ class AsrClient:
                 pass
             self.reconnect_task = None
         
-        # 取消当前响应任务
-        async with self.callback_task_lock:
-            if self.current_response_task and not self.current_response_task.done():
-                logger.debug("取消当前ASR响应任务...")
-                self.current_response_task.cancel()
+        # 取消发送任务
+        if self.send_task:
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except asyncio.CancelledError:
+                pass
+            self.send_task = None
+        
+        # 取消回调循环任务
+        async with self.callback_loop_lock:
+            if self.callback_loop_task and not self.callback_loop_task.done():
+                logger.debug("取消ASR回调循环任务...")
+                self.callback_loop_task.cancel()
                 try:
-                    await asyncio.wait_for(self.current_response_task, timeout=1.0)
+                    await asyncio.wait_for(self.callback_loop_task, timeout=1.0)
                 except (asyncio.CancelledError, asyncio.TimeoutError):
-                    logger.debug("当前ASR响应任务已取消")
+                    logger.debug("ASR回调循环任务已取消")
                 except Exception as e:
-                    logger.error(f"取消当前ASR响应任务时出错: {e}")
-                self.current_response_task = None
+                    logger.error(f"取消ASR回调循环任务时出错: {e}")
+                self.callback_loop_task = None
+            
+            # 重置回调状态
+            self.cur_utterance_text = ""
+            self.is_interim = False
+            self.last_update_time = 0
         
         # 清理连接
         await self._cleanup_connection()
@@ -777,4 +1049,5 @@ class AsrClient:
         self.current_reconnect_interval = self.reconnect_interval
         self.connection_lost = False
         
-        logger.info("ASR客户端已清理") 
+        logger.info("ASR客户端已清理")
+        
