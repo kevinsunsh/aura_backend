@@ -30,14 +30,17 @@ class AudioConfig:
 class DialogSession:
     """对话会话管理类，集成RealtimeDialogClient和aura流式聊天"""
     def __init__(self, 
+                 uid: str = None,
                  asr_start_callback: Callable[[], None] = None,
+                 asr_response_callback: Callable[[str, bool], None] = None,
                  asr_end_callback: Callable[[str], None] = None,
-                 tts_start_callback: Callable[[], None] = None,
+                 tts_start_callback: Callable[[str], None] = None,
                  tts_response_callback: Callable[[bytes], None] = None,
                  tts_end_callback: Callable[[], None] = None,
                  chat_end_callback: Callable[[str], None] = None,
                  ):
-        self.session_id = str(uuid.uuid4())
+        self.uid = uid or str(uuid.uuid4())
+        self.session_id = self.uid
         self.client = RealtimeDialogClient(config=ws_connect_config, session_id=self.session_id)
 
         # 状态管理
@@ -54,6 +57,7 @@ class DialogSession:
         # 服务器ASR结果
         self.server_asr_result = None
         self.asr_start_callback = asr_start_callback
+        self.asr_response_callback = asr_response_callback
         self.asr_end_callback = asr_end_callback
 
         # 服务器TTS结果
@@ -191,7 +195,7 @@ class DialogSession:
         """处理服务器响应"""
         if response == {}:
             return
-        print(f"ASR服务器响应: {response}")
+        # print(f"ASR服务器响应: {response}")
 
         # 处理事件类型响应
         if response.get('event') is not None:
@@ -233,10 +237,10 @@ class DialogSession:
         elif event_id == 459:  # ASREnded
             await self._on_asr_ended(payload_msg)
         # Chat类事件 (550-559)
-        elif event_id == 550:  # ChatResponse
-            await self._on_chat_response(payload_msg)
-        elif event_id == 559:  # ChatEnded
-            await self._on_chat_ended(payload_msg)
+        # elif event_id == 550:  # ChatResponse
+        #     await self._on_chat_response(payload_msg)
+        # elif event_id == 559:  # ChatEnded
+        #     await self._on_chat_ended(payload_msg)
         else:
             logger.warning(f"未知事件ID: {event_id}")
     
@@ -280,9 +284,9 @@ class DialogSession:
         if self.tts_start_callback:
             try:
                 if asyncio.iscoroutinefunction(self.tts_start_callback):
-                    await self.tts_start_callback()
+                    await self.tts_start_callback(text)
                 else:
-                    self.tts_start_callback()
+                    self.tts_start_callback(text)
             except Exception as e:
                 logger.error(f"TTS开始回调执行失败: {e}")
     
@@ -338,8 +342,17 @@ class DialogSession:
                 is_interim = result.get("is_interim", False)
                 logger.info(f"ASR识别结果: {text} (临时: {is_interim})")
                 
-                if not is_interim:  # 最终结果
-                    self.server_asr_result = text
+                self.server_asr_result = text
+                
+                # 调用ASR响应回调
+                if self.asr_response_callback:
+                    try:
+                        if asyncio.iscoroutinefunction(self.asr_response_callback):
+                            await self.asr_response_callback(text, is_interim)
+                        else:
+                            self.asr_response_callback(text, is_interim)
+                    except Exception as e:
+                        logger.error(f"ASR响应回调执行失败: {e}")
     
     async def _on_asr_ended(self, payload: Dict[str, Any]) -> None:
         """ASR结束事件回调"""
@@ -404,6 +417,10 @@ class DialogSession:
                             logger.warning(f"检测到WebSocket并发接收问题: {recv_error}")
                             # 短暂暂停，让其他操作完成
                             await asyncio.sleep(0.1)
+                            continue
+                        elif "超时" in str(recv_error) or "timeout" in error_msg:
+                            # 超时是正常情况，服务器没有消息时等待即可
+                            logger.debug("服务器无消息，继续等待...")
                             continue
                         else:
                             # 重新抛出其他类型的错误
@@ -475,6 +492,14 @@ class DialogSession:
                         logger.info(f"重连后成功发送音频数据: {len(audio_data)} 字节")
                     except Exception as retry_e:
                         logger.error(f"重连后发送音频数据仍然失败: {retry_e}")
+    
+    async def process_audio_chunk(self, audio_chunk: bytes) -> None:
+        """处理音频块（兼容ASR客户端的接口）"""
+        await self.process_audio_input(audio_chunk)
+    
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
+        """发送文本块到TTS（兼容TTS客户端的接口）"""
+        await self.send_chat_tts_text(text, start, end)
     
     async def send_say_hello(self, content: str) -> None:
         """发送打招呼消息"""

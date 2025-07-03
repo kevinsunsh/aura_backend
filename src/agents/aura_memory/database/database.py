@@ -12,6 +12,9 @@ import urllib.parse
 import asyncpg
 import sys
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+import sys
+import os
+# sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 from utils.utils import performance_point_context
 
 logger = logging.getLogger(__name__)

@@ -36,13 +36,27 @@ from pydub import AudioSegment
 from statistics import mean, median
 from datetime import datetime
 import sys
+import tempfile
+import opuslib
+
+# 配置日志（提前）
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 添加OGG/Opus解码支持
+try:
+    import pyogg
+    PYOGG_AVAILABLE = True
+    logger.info("✅ PyOgg流式解码库已加载")
+except ImportError:
+    PYOGG_AVAILABLE = False
+    logger.warning("⚠️ 未找到PyOgg库，将尝试使用pydub处理OGG音频")
+except Exception as e:
+    PYOGG_AVAILABLE = False
+    logger.warning(f"⚠️ PyOgg库加载失败: {e}，将使用pydub处理OGG音频")
 
 # 添加src路径以导入protocol模块
 sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
-
-# 配置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # === 二进制协议支持 ===
 # 导入protocol模块和枚举
@@ -136,7 +150,7 @@ class AudioDeviceManager:
 
     def __init__(self, input_config: AudioConfig = None, output_config: AudioConfig = None):
         self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=6400)  # 麦克风配置
-        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=6400)  # 播放配置
+        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=6400, bit_size=pyaudio.paInt32)  # 播放配置
         self.pyaudio = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
@@ -445,33 +459,28 @@ class AudioDeviceManager:
 
 
 class WebSocketTestSession:
-    """WebSocket测试会话管理类 - 重构简化版本"""
+    """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
     def __init__(self, uri: str = "ws://localhost:5876/ws/stream/test_user_123"):
         self.uri = uri
         self.websocket = None
-        
-        # 音频设备管理
+        # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
             input_config=AudioConfig(sample_rate=16000, channels=1, chunk=800),
-            output_config=AudioConfig(sample_rate=48000, channels=1, chunk=1200, bit_size=pyaudio.paInt16)
+            output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
         )
-        
         # 状态控制
         self.is_running = True
         self.is_playing = True
         self.response_completed = False
-        
         # 音频播放队列和线程
         self.audio_queue = queue.Queue(maxsize=20)
         self.output_stream = None
         self.player_thread = None
         self.tts_initialized = False
-        
         # 响应统计
         self.full_response = ""
         self.chunk_count = 0
-        
         # 延迟统计
         self.first_tts_audio_received_time = None
         self.second_tts_audio_received_time = None
@@ -479,13 +488,18 @@ class WebSocketTestSession:
         self.first_asr_info_received_time = None
         self.second_asr_info_received_time = None
         self.interrupt_audio_send_time = None
-
+        self.first_request_send_time = None
         # 信号处理
         signal.signal(signal.SIGINT, self._keyboard_signal)
-        
         # 文件发送模式标记
         self.file_mode = False
-    
+        # 预生成的静音音频缓存
+        self.silence_audio_cache = None
+        # 异步打断队列
+        self.interrupt_queue = None
+        # 初始化Opus解码器（24kHz, 单声道）- 匹配服务器音频格式
+        self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
+
     def _keyboard_signal(self, sig, frame):
         """处理键盘中断信号"""
         logger.info("收到 Ctrl+C 信号，正在停止...")
@@ -594,8 +608,30 @@ class WebSocketTestSession:
             elif event_id == 351:  # TTSSentenceEnd
                 logger.info("当前句子TTS语音合成完成")
             elif event_id == 352:  # TTSResponse
+                # 处理TTS音频数据 - 可能是PCM格式，不是Opus
                 audio_data = data["audio_data"]
-                self.audio_queue.put(audio_data)
+                logger.debug(f"🎵 收到TTS音频数据: {len(audio_data)} 字节")
+                
+                # 尝试多种音频格式处理
+                try:
+                    # 方法1: 尝试作为PCM数据直接播放
+                    if len(audio_data) > 0:
+                        self.audio_queue.put(audio_data)
+                        logger.debug(f"✅ 直接播放PCM音频: {len(audio_data)} 字节")
+                    else:
+                        logger.warning("⚠️ 收到空的音频数据")
+                        
+                except Exception as e:
+                    logger.error(f"❌ 处理TTS音频数据失败: {e}")
+                    
+                # 注释掉Opus解码，因为服务器返回的是Float32 PCM格式
+                # try:
+                #     # 20ms帧，24kHz单声道，frame_size=480
+                #     pcm_data = self.opus_decoder.decode(audio_data, frame_size=480)
+                #     self.audio_queue.put(pcm_data)
+                #     logger.debug(f"🎵 Opus解码成功: {len(audio_data)} -> {len(pcm_data)} 字节")
+                # except Exception as e:
+                #     logger.error(f"❌ Opus解码失败: {e}")
             elif event_id == 353:  # ChatEnded
                 logger.info("服务器一次回复结束，等待用户继续说话...")
             elif event_id == 999:  # Error
@@ -701,7 +737,7 @@ class WebSocketTestSession:
             input_stream = self.audio_device.open_input_stream()
             logger.info("🎤 已打开麦克风，开始录制音频流...")
             
-            while self.is_recording and not self.response_completed:
+            while self.is_running and not self.response_completed:
                 try:
                     # 检查退出条件和WebSocket连接状态
                     if not self.is_running or self._is_websocket_closed():
@@ -738,13 +774,13 @@ class WebSocketTestSession:
                     
         except Exception as e:
             logger.error(f"麦克风录制失败: {str(e)}")
-            self.is_recording = False
+            pass
     
     async def auto_stop_after_timeout(self, timeout_seconds=20):
         """自动停止录制的超时处理"""
         await asyncio.sleep(timeout_seconds)
         logger.info(f"录制时间达到{timeout_seconds}秒，自动停止...")
-        self.is_recording = False
+        self.is_running = False
     
     async def send_control_message(self, action: str, data: dict = None):
         """发送控制消息（连接、session等）"""
@@ -1017,7 +1053,6 @@ class WebSocketTestSession:
         finally:
             # 设置停止标志
             self.is_running = False
-            self.is_recording = False
             self.is_playing = False
             # 清理资源
             self.audio_device.cleanup()
@@ -1069,6 +1104,13 @@ class WebSocketTestSession:
         except Exception as e:
             logger.error(f"生成静音音频失败: {str(e)}")
             return None
+    
+    def get_or_create_silence_audio(self, duration_ms=1000):
+        """获取或创建指定时长的静音音频缓存"""
+        if self.silence_audio_cache is None:
+            self.silence_audio_cache = self.generate_silence_audio(duration_ms)
+            logger.info(f"创建并缓存 {duration_ms}ms 静音音频")
+        return self.silence_audio_cache
 
     async def send_audio_files_loop(self):
         """发送测试音频文件数据的任务 - 打断测试模式"""
@@ -1087,6 +1129,9 @@ class WebSocketTestSession:
             if not await self._send_audio_file(test_audio_files["request_audio_1"]):
                 logger.error("发送第一个请求音频失败")
                 return
+            
+            # 发送1秒静音（使用缓存的静音音频）
+            await self._send_silence_audio()
 
             # 记录第一个request发送完成时间
             self.first_request_send_time = time.time()
@@ -1180,6 +1225,60 @@ class WebSocketTestSession:
             
         except Exception as e:
             logger.error(f"发送音频文件失败: {e}")
+            return False
+    
+    async def _send_silence_audio(self) -> bool:
+        """发送缓存的静音音频"""
+        try:
+            logger.info("正在发送1秒静音音频...")
+            
+            # 获取缓存的静音音频
+            silence_data = self.get_or_create_silence_audio(1000)  # 1000ms = 1秒
+            if silence_data is None:
+                logger.error("无法生成静音音频")
+                return False
+            
+            # 模拟实时发送，将音频数据分片发送
+            # 200ms音频块大小：16kHz × 1声道 × 2字节 × 0.2秒 = 6400字节
+            CHUNK_SIZE = 6400  # 每次发送200ms的音频数据
+            total_chunks = len(silence_data) // CHUNK_SIZE + (1 if len(silence_data) % CHUNK_SIZE else 0)
+            
+            logger.info(f"开始分片发送静音音频数据，总共 {total_chunks} 个片段")
+            
+            for i in range(0, len(silence_data), CHUNK_SIZE):
+                if not self.is_running or self._is_websocket_closed():
+                    break
+                    
+                chunk = silence_data[i:i + CHUNK_SIZE]
+                
+                try:
+                    # 🔥 使用简洁的task_request方式发送音频数据
+                    await send_audio_task_request(self.websocket, chunk, "test_user_123")
+                    logger.debug(f"📤 发送静音音频块: {len(chunk)} 字节")
+                    
+                    # 控制发送频率，模拟真实音频流
+                    await asyncio.sleep(0.2)  # 200ms间隔，匹配音频块时长
+                    
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info("WebSocket连接关闭，停止静音音频发送")
+                    return False
+                except websockets.exceptions.ConnectionClosedError:
+                    logger.info("WebSocket连接异常关闭，停止静音音频发送")
+                    return False
+                except Exception as e:
+                    logger.error(f"发送静音音频块失败: {e}")
+                    # 检查是否是连接相关的错误
+                    error_msg = str(e).lower()
+                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
+                        logger.info("检测到连接断开相关错误，停止静音音频发送")
+                        return False
+                    await asyncio.sleep(0.1)
+            
+            logger.info("静音音频发送完成")
+            return True
+            
+        except Exception as e:
+            logger.error(f"发送静音音频失败: {e}")
             return False
     
     async def _wait_for_tts_start(self):
@@ -1281,10 +1380,30 @@ class WebSocketTestSession:
         finally:
             # 设置停止标志
             self.is_running = False
-            self.is_recording = False  
             self.is_playing = False
             # 清理资源
             self.audio_device.cleanup()
+
+    async def interrupt_handler(self):
+        """异步打断处理"""
+        logger.info("🎛️ 异步打断控制系统已启动")
+        while self.is_running:
+            try:
+                # 从队列获取打断信号
+                interrupt_signal = await self.interrupt_queue.get()
+                if interrupt_signal:
+                    logger.info("🎤 收到打断信号，暂停播放...")
+                    self.is_playing = False
+                    await asyncio.sleep(interrupt_signal)
+                    logger.info("🎤 已恢复播放")
+                    self.is_playing = True
+            except asyncio.CancelledError:
+                logger.info("异步打断任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"异步打断处理时发生错误: {e}")
+                await asyncio.sleep(0.1)
+        logger.info("🔇 异步打断控制系统已停止")
 
 async def test_audio_websocket_stream():
     """测试带预处理音频文件的WebSocket流式接口"""

@@ -887,27 +887,6 @@ class AsrClient:
             if self.is_running:
                 await self._handle_disconnect()
             
-    async def finish_audio(self):
-        """结束音频输入"""
-        if not self.is_running or not self.ws:
-            return
-            
-        try:
-            async with self.buffer_lock:
-                # 发送剩余的音频数据
-                if len(self.audio_buffer) > 0:
-                    remaining_chunk = bytes(self.audio_buffer)
-                    self.audio_buffer.clear()
-                    await self._send_audio_chunk(remaining_chunk, last=True)
-                else:
-                    # 发送空的最后包
-                    await self._send_audio_chunk(b'', last=True)
-                    
-        except Exception as e:
-            logger.error(f"结束音频输入失败: {e}")
-            if self.is_running:
-                await self._handle_disconnect()
-            
     async def _send_audio_chunk_direct(self, chunk: bytes, last: bool = False):
         """直接发送音频块（底层方法）"""
         try:

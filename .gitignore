@@ -182,3 +182,4 @@ cython_debug/
 audio_output/
 audio_test_data/
 debug_output/
+*.code-workspace

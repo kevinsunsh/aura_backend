@@ -129,9 +129,6 @@ async def test_asr_with_file(file_path):
             # 模拟实时发送，按200ms间隔
             await asyncio.sleep(0.2)  # 每200ms发送一个分片
         
-        logger.info("🔚 结束音频输入...")
-        await asr_client.finish_audio()
-        
         # 等待ASR处理完成
         logger.info("⏳ 等待ASR处理完成...")
         await asyncio.sleep(3)  # 等待处理完成
