@@ -12,6 +12,7 @@ from agents.graphs.quick_graph import builder as quick_graph_builder
 from .aura_memory.message_store import MessageStore, Message
 from .aura_memory.chat_stream import ChatStream, ChatStreamManager
 from .configuration import ServerEventEnum
+from utils.utils import performance_point_context
 
 logger = logging.getLogger(__name__)
 
@@ -387,29 +388,30 @@ class MessageProcessorText:
     async def cleanup(self):
         """清理资源"""
         try:
-            # 获取所有需要取消的任务类型
-            task_types_to_cancel = list(self.processing_tasks.keys())
-            
-            # 取消所有任务
-            for task_type in task_types_to_cancel:
-                try:
-                    await self._cancel_existing_task(task_type)
-                except Exception as e:
-                    logger.error(f"取消{task_type.value}任务时出错: {e}")
-            
-            # 清除激活任务状态
-            async with self.active_task_lock:
-                if self.active_task is not None:
-                    logger.info(f"清理时清除激活任务: {self.active_task.value}")
-                    self.active_task = None
-            
-            # 等待一小段时间确保所有异步任务都能正确结束
-            await asyncio.sleep(0.2)
-            
-            # 清理所有任务记录
-            async with self.task_lock:
-                self.processing_tasks.clear()
-            
-            logger.info("MessageProcessorText资源清理完成")
+            with performance_point_context("取消所有任务"):
+                # 获取所有需要取消的任务类型
+                task_types_to_cancel = list(self.processing_tasks.keys())
+                
+                # 取消所有任务
+                for task_type in task_types_to_cancel:
+                    try:
+                        await self._cancel_existing_task(task_type)
+                    except Exception as e:
+                        logger.error(f"取消{task_type.value}任务时出错: {e}")
+                
+                # 清除激活任务状态
+                async with self.active_task_lock:
+                    if self.active_task is not None:
+                        logger.info(f"清理时清除激活任务: {self.active_task.value}")
+                        self.active_task = None
+                
+                # 等待一小段时间确保所有异步任务都能正确结束
+                await asyncio.sleep(0.2)
+                
+                # 清理所有任务记录
+                async with self.task_lock:
+                    self.processing_tasks.clear()
+                
+                logger.info("MessageProcessorText资源清理完成")
         except Exception as e:
             logger.error(f"清理资源时发生异常: {e}")

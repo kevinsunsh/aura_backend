@@ -16,7 +16,7 @@ from utils.utils import start_performance_point, end_performance_point
 from .config import asr_config
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 class SendMessageType(Enum):
     """发送消息类型"""
@@ -283,7 +283,7 @@ class AsrClient:
         self.silence_audio_cache = None  # 静音音频缓存
 
         # 性能点
-        # self.send_audio_chunk_performance_point_id = None
+        self.asr_service_performance_point_id = None
 
     def construct_request(self):
         """构造初始请求"""
@@ -572,13 +572,6 @@ class AsrClient:
                 if 'result' in payload and payload['result']:
                     asr_result = payload['result']
                     
-                    # 如果是首次收到ASR包，标记会话已开始并触发ASRInfo事件
-                    if not self.asr_started:
-                        self.asr_started = True
-                        if self.asr_start_callback:
-                            # 异步执行开始回调，不阻塞接收循环
-                            asyncio.create_task(self._safe_execute_callback(self.asr_start_callback))
-                    
                     # 处理utterances，只处理新增的utterance
                     if isinstance(asr_result, dict) and 'utterances' in asr_result:
                         utterances = asr_result['utterances']
@@ -589,7 +582,16 @@ class AsrClient:
                                     # 检查definite属性，只有确定的分句才处理
                                     is_definite = utterance.get('definite', False)
                                     utterance_text = utterance['text'].strip()
-                                    if utterance_text and self.asr_response_callback:  # 只有非空文本才处理
+                                    if len(utterance_text) > 0:  # 只有非空文本才处理
+                                        # 如果是首次收到ASR包，标记会话已开始并触发ASRInfo事件
+                                        if not self.asr_started:
+                                            self.asr_started = True
+                                            if self.asr_start_callback:
+                                                # 异步执行开始回调，不阻塞接收循环
+                                                if self.asr_service_performance_point_id is None:
+                                                    self.asr_service_performance_point_id = start_performance_point("ASR服务")
+                                                asyncio.create_task(self._safe_execute_callback(self.asr_start_callback))
+                                        
                                         logger.info(f"ASR 新utterance结果 [{i+1}] (definite={is_definite}): {utterance_text}")
                                         # 更新共享变量，让专门的循环任务处理回调
                                         await self._update_callback_state(utterance_text, is_definite)
@@ -669,7 +671,7 @@ class AsrClient:
                     current_time = time.time()
                     
                     # 检查是否有内容需要处理
-                    if self.cur_utterance_text:
+                    if len(self.cur_utterance_text) > 0:
                         # 条件1: 如果是interim，立即调用
                         if self.is_interim:
                             text_to_call = self.cur_utterance_text
@@ -680,9 +682,10 @@ class AsrClient:
                             self.is_interim = False
                             logger.info(f"立即调用interim回调: '{text_to_call[:30]}...'")
                             await self._safe_execute_callback(self.asr_response_callback, text_to_call, interim_flag)
-                            
-                            self.asr_started = False
 
+                            end_performance_point(self.asr_service_performance_point_id)
+                            self.asr_started = False
+                        
                         # 条件2: 如果时间间隔达到1秒，调用回调
                         elif current_time - self.last_update_time >= self.callback_interval:
                             text_to_call = self.cur_utterance_text
@@ -695,6 +698,7 @@ class AsrClient:
                             logger.info(f"定时调用回调: '{text_to_call[:30]}...' (间隔: {current_time - self.last_update_time:.3f}秒)")
                             await self._safe_execute_callback(self.asr_response_callback, text_to_call, interim_flag)
                             
+                            end_performance_point(self.asr_service_performance_point_id)
                             self.asr_started = False
 
                     # 等待一小段时间再检查
@@ -865,20 +869,20 @@ class AsrClient:
             return
         # logger.info(f"处理音频块: {len(audio_chunk)}")
         try:
-            async with self.buffer_lock:
-                self.audio_buffer.extend(audio_chunk)
+            # async with self.buffer_lock:
+            #     self.audio_buffer.extend(audio_chunk)
                 
-                # 计算分片大小（PCM格式：采样率 * 通道数 * 位深/8 * 时长）
-                segment_size = int(self.rate * self.channel * (self.bits // 8) * self.seg_duration / 1000)
-                # segment_size = 3200
+            #     # 计算分片大小（PCM格式：采样率 * 通道数 * 位深/8 * 时长）
+            #     segment_size = int(self.rate * self.channel * (self.bits // 8) * self.seg_duration / 1000)
+            #     segment_size = 3200
                 
-                # 如果缓冲区足够大，发送数据
-                while len(self.audio_buffer) >= segment_size:
-                    chunk_to_send = bytes(self.audio_buffer[:segment_size])
-                    self.audio_buffer = self.audio_buffer[segment_size:]
-                    # self.send_audio_chunk_performance_point_id = start_performance_point("发送音频块")
-                    await self._send_audio_chunk_direct(chunk_to_send, last=False)
-                    
+            #     # 如果缓冲区足够大，发送数据
+            #     while len(self.audio_buffer) >= segment_size:
+            #         chunk_to_send = bytes(self.audio_buffer[:segment_size])
+            #         self.audio_buffer = self.audio_buffer[segment_size:]
+            #         self.send_audio_chunk_performance_point_id = start_performance_point("发送音频块")
+            #         await self._send_audio_chunk(chunk_to_send, last=False)
+            await self._send_audio_chunk_direct(audio_chunk, last=False)
         except Exception as e:
             logger.error(f"处理音频块失败: {e}")
             # 如果发送失败，可能是连接问题，触发重连
@@ -935,7 +939,6 @@ class AsrClient:
             
             await self.ws.send(audio_request)
             logger.debug(f"发送音频块，序号: {self.seq}, 大小: {len(chunk)}, 最后: {last}")
-            # end_performance_point(self.send_audio_chunk_performance_point_id)
         except Exception as e:
             logger.error(f"发送音频块失败: {e}")
             raise

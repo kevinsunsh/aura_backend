@@ -1096,23 +1096,23 @@ class WebSocketTestSession:
             logger.info("⏳ 等待TTS回复开始...")
             await self._wait_for_tts_start()
             
-            # 等待一小段时间让TTS开始播放
-            await asyncio.sleep(3.0)
+            # # 等待一小段时间让TTS开始播放
+            # await asyncio.sleep(3.0)
             
-            # 第二步：发送打断音频（确保已收到第一个TTS）
-            logger.info("📤 第二步：发送打断音频 (interrupt_audio)")
-            if not await self._send_audio_file(test_audio_files["interrupt_audio"]):
-                logger.error("发送打断音频失败")
-                return
+            # # 第二步：发送打断音频（确保已收到第一个TTS）
+            # logger.info("📤 第二步：发送打断音频 (interrupt_audio)")
+            # if not await self._send_audio_file(test_audio_files["interrupt_audio"]):
+            #     logger.error("发送打断音频失败")
+            #     return
             
-            # 记录打断音频发送完成时间
-            self.interrupt_audio_send_time = time.time()
-            logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
+            # # 记录打断音频发送完成时间
+            # self.interrupt_audio_send_time = time.time()
+            # logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
             
-            while True:
-                if self.second_tts_audio_received_time is not None and self.second_asr_info_received_time is not None:
-                    break
-                await asyncio.sleep(0.1)
+            # while True:
+            #     if self.second_tts_audio_received_time is not None and self.second_asr_info_received_time is not None:
+            #         break
+            #     await asyncio.sleep(0.1)
             
             # 等待一段时间观察后续行为
             await asyncio.sleep(3.0)

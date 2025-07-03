@@ -9,7 +9,7 @@ from enum import Enum
 import websockets
 import aiofiles
 import fastrand
-
+from utils.utils import start_performance_point, end_performance_point
 from .config import tts_config
 
 logger = logging.getLogger(__name__)
@@ -222,6 +222,7 @@ class TtsClient:
         self.keepalive_interval = kwargs.get("keepalive_interval", 30.0)  # 自动保活间隔（秒）
         self.last_send_time = 0  # 最后发送时间
         self.keepalive_enabled = kwargs.get("keepalive_enabled", True)  # 是否启用自动保活
+        self.tts_service_performance_point_id = None
         
     def _gen_log_id(self):
         """生成logID"""
@@ -457,6 +458,7 @@ class TtsClient:
                     if res.optional.event == EVENT_TTSResponse and res.header.message_type == AUDIO_ONLY_RESPONSE:
                         if res.payload:
                             # 触发TTS响应回调
+                            end_performance_point(self.tts_service_performance_point_id)
                             if self.tts_response_callback:
                                 try:
                                     if asyncio.iscoroutinefunction(self.tts_response_callback):
@@ -812,7 +814,8 @@ class TtsClient:
             
             # 非阻塞方式放入队列，如果队列满了就记录警告
             try:
-                self.send_queue.put_nowait(message)
+                # self.send_queue.put_nowait(message)
+                await self._send_text_internal(text)
                 logger.debug(f"文本已加入发送队列: {text[:50]}...")
             except asyncio.QueueFull:
                 logger.warning("发送队列已满，文本将被丢弃")
@@ -827,8 +830,10 @@ class TtsClient:
 
     async def _send_text_internal(self, text: str):
         """内部发送文本方法"""
+        if self.tts_service_performance_point_id is None:
+            self.tts_service_performance_point_id = start_performance_point("TTS服务")
         await self._tts_send_text(self.ws, self.speaker, text, self.session_id)
-        logger.debug(f"已发送文本片段: {text[:50]}...")
+        logger.info(f"已发送文本片段: {text[:50]}...")
 
     def enable_reconnect(self):
         """启用自动重连"""

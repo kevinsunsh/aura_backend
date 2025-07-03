@@ -15,6 +15,7 @@ from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
 from .doubao_client.config import ws_connect_config
 from .configuration import ServerEventEnum
+from utils.utils import start_performance_point, end_performance_point
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class MessageProcessorAudio:
             db_conn_string=db_conn_string,
             websocket_send_callback=self._text_processor_callback
         )
+        self.total_performance_point_id = None
     
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应并发送到TTS"""
@@ -87,6 +89,8 @@ class MessageProcessorAudio:
             await self.websocket_send_callback({
                 "event": ServerEventEnum.ASRInfo.value
             })
+        if self.total_performance_point_id is None:
+            self.total_performance_point_id = start_performance_point("总性能点")
         await self.text_processor.cleanup()
     
     async def asr_response_callback(self, asr_text: str, is_interim: bool) -> None:
@@ -135,6 +139,7 @@ class MessageProcessorAudio:
                     "audio_size": len(audio_data)
                 }
             })
+        end_performance_point(self.total_performance_point_id)
     
     async def tts_end_callback(self) -> None:
         """TTS结束回调 - 语音合成完成时调用"""
