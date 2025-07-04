@@ -1,6 +1,6 @@
 #!/bin/bash
 
-docker build --platform=linux/amd64 --no-cache -t dcc-cloud2-cn-beijing.cr.volces.com/dcc-cloud/aura_backend:basev1 -f ../../src/Dockerfile_base ../../src
+docker build --platform=linux/amd64 --no-cache -t mengs-cn-shanghai.cr.volces.com/aura/aura_backend:basev1 -f ../../src/Dockerfile_base ../../src
 
 # 推送 Docker 镜像
-docker push dcc-cloud2-cn-beijing.cr.volces.com/dcc-cloud/aura_backend:basev1
+docker push mengs-cn-shanghai.cr.volces.com/aura/aura_backend:basev1

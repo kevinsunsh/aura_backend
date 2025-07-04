@@ -1,28 +1,28 @@
 edition: 3.0.0
 name: aura-backend
-access: "default-1" # todo: 在系统下新建火山引擎的 AK / SK 密钥
+access: "default" # todo: 在系统下新建火山引擎的 AK / SK 密钥
 
 vars:
   sid: "aurabk"
-  region: "cn-beijing"
+  region: "cn-shanghai"
   functionName: "aura-backend-function"
   version: "0.0.1"
 
 resources:
-  nova_backend:
+  aura_backend:
     component: volcano-vefaas
     props:
       common:
         Region: ${vars.region}
       function:
         Name: ${vars.functionName}
-        Description: template for neo4j-agent
+        Description: aura-backend
         ExclusiveMode: true
         RequestTimeout: 900
         Runtime: native/v1
         SourceType: image # 支持 image / zip
-        Source: dcc-cloud-cn-beijing.cr.volces.com/dcc-cloud/aura_backend:${vars.version}
-        MemoryMB: 4096
+        Source: mengs-cn-shanghai.cr.volces.com/aura/aura_backend:${vars.version}
+        MemoryMB: 1024
         Processor: cpu
         Envs:
           - Key: TOS_ENDPOINT
@@ -31,29 +31,23 @@ resources:
             Value: cn-shanghai
           - Key: CLOUD_PROVIDER
             Value: TOS
-          - Key: MCP_HOST
-            Value: 10.7.224.23
-          - Key: REDIS_HOST
-            Value: redis-shzldk7uha71dzy8a.redis.ivolces.com
           - Key: SERVER_PORT
             Value: '8000'
-          - Key: NEO4J_HOST
-            Value: 10.7.224.29
         VpcConfig:
           EnableVpc: true
           EnableSharedInternetAccess: true
-          VpcId: vpc-rs46tr20ji0wv0x58vge86q
+          VpcId: vpc-3qdp4y7bewqv47prml0435ung
           SubnetIds:
-            - subnet-minbd39plbeo5smt1ai7jqqb
+            - subnet-22iyhsqz1g1s07r2qr11p3qgy
           SecurityGroupIds:
-            - sg-mincr0qv7aww5smt1ak50w94
+            - sg-3qdp4yf7jcyrk7prml0n2gmj3
 
       replicaLimit:
         MaxInstance: 10
       triggers:
         - TriggerName: apig-trigger
           TriggerType: apig
-          GatewayId: "gcp1jht7vgc9hjb8nftb0" # todo: 新建 apig 后填写 gatewayId 即可
+          GatewayId: "gd1jlf1k3k341ncbl2c5g" # todo: 新建 apig 后填写 gatewayId 即可
           ServiceName: "service-aurabk"
           UpstreamName: "upstream-aurabk"
           RouteName: default
