@@ -132,11 +132,10 @@ def server_parse_request(req):
         # 解析 session ID
         if len(payload) >= 4:
             session_id_size = int.from_bytes(payload[:4], "big", signed=True)
-            if session_id_size > 0 and len(payload) >= 4 + session_id_size:
-                session_id = payload[4:4+session_id_size]
-                result['session_id'] = str(session_id, "utf-8")
-                payload = payload[4 + session_id_size:]
-        
+            session_id = payload[4:session_id_size]
+            result['session_id'] = str(session_id)
+            payload = payload[4 + session_id_size:]
+            
         # 解析数据长度和数据
         if len(payload) >= 4:
             payload_size = int.from_bytes(payload[:4], "big", signed=False)
@@ -148,9 +147,9 @@ def server_parse_request(req):
             
             # 反序列化
             if serialization_method == JSON:
-                payload_msg = json.loads(str(payload_msg, "utf-8"))
+                payload_msg = json.loads(payload_msg)
             elif serialization_method != NO_SERIALIZATION:
-                payload_msg = str(payload_msg, "utf-8")
+                payload_msg = payload_msg
             
             result['payload_msg'] = payload_msg
             result['payload_size'] = payload_size

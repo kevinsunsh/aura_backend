@@ -610,7 +610,7 @@ class WebSocketTestSession:
                 logger.info("当前句子TTS语音合成完成")
             elif event_id == 352:  # TTSResponse
                 # 处理TTS音频数据 - 可能是PCM格式，不是Opus
-                audio_data = data["audio_data"]
+                audio_data = payload_msg
                 logger.debug(f"🎵 收到TTS音频数据: {len(audio_data)} 字节")
                 
                 # 尝试多种音频格式处理
@@ -819,9 +819,8 @@ class WebSocketTestSession:
             
             # 添加session ID
             session_id = "test_user_123"
-            session_id_bytes = str.encode(session_id)
-            request.extend((len(session_id_bytes)).to_bytes(4, 'big'))
-            request.extend(session_id_bytes)
+            request.extend((len(session_id)).to_bytes(4, 'big'))
+            request.extend(str.encode(session_id))
             
             # 添加payload
             request.extend((len(payload_bytes)).to_bytes(4, 'big'))

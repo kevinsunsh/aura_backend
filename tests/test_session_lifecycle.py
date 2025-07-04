@@ -62,7 +62,7 @@ class SessionLifecycleClient:
             
             # 添加session ID
             session_id_bytes = str.encode(self.chat_id)
-            request.extend((len(session_id_bytes)).to_bytes(4, 'big'))
+            request.extend(len(session_id_bytes).to_bytes(4, 'big', signed=True))
             request.extend(session_id_bytes)
             
             # 添加payload
@@ -94,7 +94,7 @@ class SessionLifecycleClient:
             
             # 添加session ID
             session_id_bytes = str.encode(self.chat_id)
-            request.extend((len(session_id_bytes)).to_bytes(4, 'big'))
+            request.extend(len(session_id_bytes).to_bytes(4, 'big', signed=True))
             request.extend(session_id_bytes)
             
             # 添加压缩的音频数据
@@ -114,9 +114,9 @@ class SessionLifecycleClient:
             import sys
             import os
             sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
-            from agents.server_protocol import server_parse_request
+            from agents.doubao_client.protocol import parse_response
             
-            result = server_parse_request(data)
+            result = parse_response(data)
             return result
                 
         except Exception as e:
