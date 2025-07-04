@@ -114,9 +114,9 @@ class SessionLifecycleClient:
             import sys
             import os
             sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
-            from agents.doubao_client.protocol import parse_response
+            from agents.server_protocol import server_parse_request
             
-            result = parse_response(data)
+            result = server_parse_request(data)
             return result
                 
         except Exception as e:

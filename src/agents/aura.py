@@ -20,6 +20,7 @@ from .message_processor_audio import MessageProcessorAudio
 from .message_processor_text import MessageProcessorText
 from .doubao_client import protocol
 from .configuration import ServerEventEnum, ClientEventEnum
+from .server_protocol import server_parse_request, server_generate_response
 from utils.utils import performance_point_context
 
 # 配置LangChain日志
@@ -73,13 +74,13 @@ class AuraAgent:
         )
     
     async def send_websocket_message(self, message: dict):
-        """发送WebSocket消息，使用二进制协议格式"""
+        """发送WebSocket消息，使用统一的协议格式"""
         try:
             async with asyncio.timeout(5.0):  # 5秒超时
                 async with self.websocket_lock:
                     if self.websocket_connection:
                         try:
-                            # 根据消息中的事件类型构造二进制协议数据
+                            # 使用统一的协议构造方法
                             binary_data = self._construct_protocol_message(message)
                             
                             # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
@@ -98,51 +99,43 @@ class AuraAgent:
             logger.error(f"发送WebSocket消息时出错: {e}")
 
     def _construct_protocol_message(self, message: dict) -> bytes:
-        """构造协议格式的二进制消息，参考RealtimeDialogClient的实现"""
+        """使用统一的协议构造方法"""
         try:
             # 获取事件ID
             event_id = message.get("event")
             
-            # 构造payload
+            # 获取payload数据
             payload_data = message.get("payload_msg", message)
+            
+            # 获取session_id
+            session_id = getattr(self.chat_stream, 'chat_id', 'default') if self.chat_stream else 'default'
             
             # 处理音频数据
             if "audio_data" in payload_data and isinstance(payload_data["audio_data"], bytes):
                 # 音频数据不需要JSON序列化，直接发送
                 payload_bytes = payload_data["audio_data"]
-                message_type = protocol.SERVER_FULL_RESPONSE
+                message_type = protocol.SERVER_ACK
                 serial_method = protocol.NO_SERIALIZATION
-                compression_type = protocol.NO_COMPRESSION
+                compression_type = protocol.GZIP
             else:
-                # 其他数据使用JSON序列化
-                payload_bytes = str.encode(json.dumps(payload_data))
-                payload_bytes = gzip.compress(payload_bytes)
+                # 其他数据使用JSON序列化，让server_generate_response处理序列化和压缩
+                payload_bytes = payload_data
                 message_type = protocol.SERVER_FULL_RESPONSE
                 serial_method = protocol.JSON
                 compression_type = protocol.GZIP
             
-            # 构造协议头
-            request = bytearray(protocol.generate_header(
+            # 使用统一的协议生成方法
+            binary_data = server_generate_response(
+                payload_data=payload_bytes,
                 message_type=message_type,
                 message_type_specific_flags=protocol.MSG_WITH_EVENT,
                 serial_method=serial_method,
-                compression_type=compression_type
-            ))
+                compression_type=compression_type,
+                event=event_id,
+                session_id=session_id
+            )
             
-            # 添加事件ID (4 bytes)
-            request.extend(int(event_id).to_bytes(4, 'big'))
-            
-            # 添加session ID (这里使用chat_id或默认值)
-            session_id = getattr(self.chat_stream, 'chat_id', 'default') if self.chat_stream else 'default'
-            session_id_bytes = str.encode(session_id)
-            request.extend((len(session_id_bytes)).to_bytes(4, 'big'))
-            request.extend(session_id_bytes)
-            
-            # 添加payload
-            request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-            request.extend(payload_bytes)
-            
-            return bytes(request)
+            return binary_data
             
         except Exception as e:
             logger.error(f"构造协议消息失败: {e}")
@@ -206,12 +199,10 @@ class AuraAgent:
             logger.error(f"清理资源时出错: {e}")
     
     def _parse_binary_protocol_message(self, data: bytes) -> Dict[str, Any]:
-        """解析二进制协议消息 - 使用统一的协议解析函数"""
+        """使用统一的协议解析方法"""
         try:
-            # 直接调用 protocol.py 中的 parse_response 函数
-            from .doubao_client.protocol import parse_response
-            
-            result = parse_response(data)
+            # 使用统一的协议解析函数
+            result = server_parse_request(data)
             
             # 如果解析成功，添加额外的调试信息
             if 'error' not in result:

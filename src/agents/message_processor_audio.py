@@ -138,8 +138,7 @@ class MessageProcessorAudio:
             await self.websocket_send_callback({
                 "event": ServerEventEnum.TTSResponse.value,
                 "payload_msg": {
-                    "audio_data": audio_data,
-                    "audio_size": len(audio_data)
+                    "audio_data": audio_data
                 }
             })
         end_performance_point(self.total_performance_point_id)

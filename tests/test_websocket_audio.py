@@ -37,7 +37,7 @@ from statistics import mean, median
 from datetime import datetime
 import sys
 import tempfile
-import opuslib
+# import opuslib
 
 # 配置日志（提前）
 logging.basicConfig(level=logging.INFO)
@@ -498,7 +498,7 @@ class WebSocketTestSession:
         # 异步打断队列
         self.interrupt_queue = None
         # 初始化Opus解码器（24kHz, 单声道）- 匹配服务器音频格式
-        self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
+        # self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
 
     def _keyboard_signal(self, sig, frame):
         """处理键盘中断信号"""
@@ -586,6 +586,7 @@ class WebSocketTestSession:
         """处理WebSocket响应"""
         if "event" in data:
             event_id = data["event"]
+            payload_msg = data.get("payload_msg", {})
             if event_id == 450:  # ASRInfo
                 logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
                 self.asr_info_received_time = time.time()
@@ -593,7 +594,7 @@ class WebSocketTestSession:
                 logger.info("⏸️ 播放已暂停")
             elif event_id == 451:  # ASRResponse
                 self.chunk_count += 1
-                content = data.get("text", "")
+                content = payload_msg.get("text", "")
                 self.full_response += content
                 logger.info(f"收到第{self.chunk_count}个内容片段: '{content}'")
             elif event_id == 350:  # TTSSentenceStart
