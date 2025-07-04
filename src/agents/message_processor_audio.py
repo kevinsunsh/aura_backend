@@ -228,6 +228,13 @@ class MessageProcessorAudio:
     async def cleanup(self) -> None:
         """清理资源"""
         if self.dialog_session:
-            await self.dialog_session.cleanup()
-            self.dialog_session = None
+            try:
+                logger.info("清理DialogSession资源...")
+                await self.dialog_session.cleanup()
+                logger.info("DialogSession资源清理完成")
+            except Exception as e:
+                logger.warning(f"清理DialogSession时出错: {e}")
+            finally:
+                self.dialog_session = None
+                logger.info("DialogSession引用已置空")
         self.current_chat_stream = None

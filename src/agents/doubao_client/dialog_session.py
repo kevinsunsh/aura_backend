@@ -93,6 +93,8 @@ class DialogSession:
     
     async def check_connection_and_reconnect(self) -> bool:
         """检查连接状态并在断线时尝试重连"""
+        logger.debug(f"检查连接状态: is_reconnecting={self.is_reconnecting}, is_running={self.is_running}, is_session_finished={self.is_session_finished}")
+        
         # 如果正在重连中，检查是否超时
         if self.is_reconnecting:
             if self.reconnect_start_time and time.time() - self.reconnect_start_time > 30:
@@ -104,7 +106,9 @@ class DialogSession:
             return False
             
         # 检查连接状态
-        if self.is_connected():
+        connection_ok = self.is_connected()
+        logger.debug(f"连接状态检查结果: {connection_ok}")
+        if connection_ok:
             # 连接正常，重置重连计数和状态
             if self.reconnect_attempts > 0:
                 logger.info("连接已恢复正常，重置重连计数")
@@ -119,7 +123,9 @@ class DialogSession:
             return False
         
         logger.warning(f"检测到连接断开，开始第 {self.reconnect_attempts + 1} 次重连...")
-        return await self._reconnect()
+        # 异步触发重连，不阻塞当前调用
+        await self._trigger_reconnect()
+        return False  # 返回False表示当前不可用，需要等待重连完成
     
     async def _reconnect(self) -> bool:
         """执行重连逻辑"""
@@ -138,8 +144,13 @@ class DialogSession:
             if self.client.ws:
                 try:
                     await self.client.close()
+                    logger.info("旧连接已关闭")
                 except Exception as e:
                     logger.warning(f"关闭旧连接时出错: {e}")
+                
+                # 强制清理WebSocket对象
+                self.client.ws = None
+                logger.info("WebSocket对象已清理")
             
             # 确保旧连接完全关闭后再创建新连接
             await asyncio.sleep(0.1)
@@ -149,6 +160,15 @@ class DialogSession:
             
             # 重新连接
             await self.client.connect()
+
+            # 执行连接握手
+            await self.client.start_connection()
+            if not await self.wait_for_server_response(50):  # ConnectionStarted
+                raise Exception("重连时连接握手失败")
+                
+            await self.client.start_session()
+            if not await self.wait_for_server_response(150):  # SessionStarted
+                raise Exception("重连时会话握手失败")
             
             # 重连成功
             logger.info(f"重连成功，第 {self.reconnect_attempts} 次尝试")
@@ -160,8 +180,15 @@ class DialogSession:
             self.server_chat_response = ""
             self.server_asr_result = None
             
-            # 注意：不需要重新创建接收任务，因为当前的接收循环会继续运行
-            logger.info("重连成功，接收循环将继续运行")
+            # 检查并确保接收任务正常运行
+            if self.server_receive_task and self.server_receive_task.done():
+                logger.warning("检测到接收任务已结束，重新启动...")
+                self.server_receive_task = asyncio.create_task(self._server_receive_loop())
+            elif not self.server_receive_task:
+                logger.warning("接收任务不存在，重新创建...")
+                self.server_receive_task = asyncio.create_task(self._server_receive_loop())
+            else:
+                logger.info("重连成功，接收循环将继续运行")
             
             return True
             
@@ -190,12 +217,66 @@ class DialogSession:
         except Exception as e:
             logger.debug(f"检查连接健康状态时出错: {e}")
             return False
+
+    async def wait_for_server_response(self, expected_event_id: int, timeout: float = 5.0) -> bool:
+        """等待服务端特定响应 - 直接接收模式，避免循环依赖"""
+        try:
+            logger.info(f"等待事件ID {expected_event_id} 的响应...")
+            
+            # 直接循环接收消息，直到收到期望的响应或超时
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                try:
+                    # 直接调用客户端的接收方法
+                    response = await self.client.receive_server_response()
+                    
+                    # 检查是否是期望的响应
+                    if response.get('event') == expected_event_id:
+                        event_id = response.get("event", "unknown")
+                        logger.info(f"📥 收到服务端响应: 事件ID={event_id}")
+                        
+                        status = response.get("status", "unknown")
+                        message = response.get("message", "")
+                        logger.info(f"✅ 事件{expected_event_id} 成功: {status} - {message}")
+                        return True
+                    else:
+                        # 在重连过程中，只记录其他消息但不处理，避免干扰重连流程
+                        if self.is_reconnecting:
+                            logger.debug(f"重连过程中收到其他事件: {response.get('event')}，跳过处理")
+                        else:
+                            # 正常流程中处理其他消息
+                            await self._handle_server_response(response)
+                        
+                except asyncio.TimeoutError:
+                    # 单次接收超时，继续循环
+                    continue
+                except websockets.exceptions.ConnectionClosed as e:
+                    logger.warning(f"WebSocket连接已关闭: {e}")
+                    return False
+                except websockets.exceptions.WebSocketException as e:
+                    logger.warning(f"WebSocket异常: {e}")
+                    await asyncio.sleep(0.1)
+                    continue
+                except Exception as e:
+                    logger.warning(f"接收消息时出错: {e}")
+                    # 短暂暂停后继续
+                    await asyncio.sleep(0.1)
+                    continue
+            
+            # 超时
+            logger.error(f"❌ 等待事件ID {expected_event_id} 响应超时")
+            return False
+                
+        except Exception as e:
+            logger.error(f"❌ 等待服务端响应时出错: {e}")
+            return False
     
     async def _handle_server_response(self, response: Dict[str, Any]) -> None:
         """处理服务器响应"""
         if response == {}:
             return
-        # print(f"ASR服务器响应: {response}")
+        
+        logger.debug(f"处理服务器响应: {response}")
 
         # 处理事件类型响应
         if response.get('event') is not None:
@@ -468,30 +549,20 @@ class DialogSession:
                 return
                 
             self.last_input_time = time.time()
+            logger.info(f"开始发送音频数据: {len(audio_data)} 字节")
             await self.client.task_request(audio_data)
-            # logger.info(f"已发送音频数据: {len(audio_data)} 字节")
-        except websockets.exceptions.ConnectionClosed:
-            logger.error("WebSocket连接已关闭，尝试重连...")
-            if await self.check_connection_and_reconnect():
-                # 重连成功，重试发送
-                try:
-                    await self.client.task_request(audio_data)
-                    logger.info(f"重连后成功发送音频数据: {len(audio_data)} 字节")
-                except Exception as e:
-                    logger.error(f"重连后发送音频数据仍然失败: {e}")
-            else:
-                logger.error("重连失败，无法发送音频数据")
+            logger.info(f"已发送音频数据: {len(audio_data)} 字节")
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.error(f"WebSocket连接已关闭: {e}")
+            # 触发重连
+            await self._trigger_reconnect()
+            logger.info("已触发重连，音频数据将在重连后重试")
         except Exception as e:
             logger.error(f"发送音频数据失败: {e}")
             # 如果是连接相关错误，尝试重连
-            if "connection" in str(e).lower() or "websocket" in str(e).lower():
-                if await self.check_connection_and_reconnect():
-                    # 重连成功，重试发送
-                    try:
-                        await self.client.task_request(audio_data)
-                        logger.info(f"重连后成功发送音频数据: {len(audio_data)} 字节")
-                    except Exception as retry_e:
-                        logger.error(f"重连后发送音频数据仍然失败: {retry_e}")
+            if "connection" in str(e).lower() or "websocket" in str(e).lower() or "ssl" in str(e).lower():
+                await self._trigger_reconnect()
+                logger.info("已触发重连，音频数据将在重连后重试")
     
     async def process_audio_chunk(self, audio_chunk: bytes) -> None:
         """处理音频块（兼容ASR客户端的接口）"""
@@ -577,7 +648,11 @@ class DialogSession:
             "is_reconnecting": self.is_reconnecting,
             "reconnect_attempts": self.reconnect_attempts,
             "max_reconnect_attempts": self.max_reconnect_attempts,
-            "latency_stats": self.latency_stats.copy()
+            "latency_stats": self.latency_stats.copy(),
+            "receive_task_running": self.is_receive_task_running(),
+            "receive_task_exists": self.server_receive_task is not None,
+            "receive_task_done": self.server_receive_task.done() if self.server_receive_task else None,
+            "receive_task_cancelled": self.server_receive_task.cancelled() if self.server_receive_task else None
         }
     
     def is_connected(self) -> bool:
@@ -635,6 +710,23 @@ class DialogSession:
     def is_server_session_active(self) -> bool:
         """检查服务器会话是否活跃"""
         return not self.is_session_finished
+    
+    def is_receive_task_running(self) -> bool:
+        """检查接收任务是否正在运行"""
+        return (self.server_receive_task is not None and 
+                not self.server_receive_task.done() and 
+                not self.server_receive_task.cancelled())
+    
+    async def _trigger_reconnect(self) -> None:
+        """触发重连"""
+        if not self.is_reconnecting:
+            logger.info("检测到连接问题，触发重连...")
+            self.is_reconnecting = True
+            self.reconnect_start_time = time.time()
+            # 异步触发重连，不阻塞当前任务
+            asyncio.create_task(self._reconnect())
+        else:
+            logger.debug("重连已在进行中，跳过重复触发")
 
     async def start(self) -> None:
         """启动对话会话"""
@@ -642,7 +734,16 @@ class DialogSession:
             logger.info(f"启动对话会话: {self.session_id}")
             await self.client.connect()
             
-            # 启动服务器响应接收任务
+            # 执行连接握手
+            await self.client.start_connection()
+            if not await self.wait_for_server_response(50):  # ConnectionStarted
+                raise Exception("连接握手失败")
+                
+            await self.client.start_session()
+            if not await self.wait_for_server_response(150):  # SessionStarted
+                raise Exception("会话握手失败")
+            
+            # 握手完成后启动服务器响应接收任务
             self.server_receive_task = asyncio.create_task(self._server_receive_loop())
             
         except Exception as e:

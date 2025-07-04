@@ -33,13 +33,7 @@ class RealtimeDialogClient:
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
         logger.info(f"WebSocket连接已建立")
-
-        # StartConnection request (事件ID: 1)
-        await self.start_connection()
-
-        # StartSession request (事件ID: 100)
-        await self.start_session()
-
+    
     async def start_connection(self) -> None:
         """StartConnection - 客户端事件ID: 1"""
         start_connection_request = bytearray(protocol.generate_header())
@@ -90,6 +84,24 @@ class RealtimeDialogClient:
 
     async def task_request(self, audio: bytes) -> None:
         """TaskRequest - 客户端事件ID: 200"""
+        # 发送前检查SSL连接状态
+        if self._is_websocket_closed():
+            logger.warning("发送音频数据前检测到SSL连接已关闭")
+            raise websockets.exceptions.ConnectionClosed(None, 1000, "SSL connection is closed")
+        
+        # 详细检查SSL socket状态
+        if hasattr(self.ws, '_socket') and self.ws._socket:
+            try:
+                sock = self.ws._socket
+                if hasattr(sock, 'fileno'):
+                    sock.fileno()
+                if hasattr(sock, 'getpeername'):
+                    sock.getpeername()
+                logger.debug("SSL socket状态检查通过")
+            except (OSError, AttributeError, ConnectionResetError, BrokenPipeError) as e:
+                logger.warning(f"SSL socket状态检查失败: {e}")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection error: {e}")
+        
         task_request = bytearray(
             protocol.generate_header(message_type=protocol.CLIENT_AUDIO_ONLY_REQUEST,
                                      serial_method=protocol.NO_SERIALIZATION))
@@ -140,10 +152,15 @@ class RealtimeDialogClient:
         async def _receive_with_lock():
             async with self.recv_lock:
                 try:
-                    # 检查连接状态
-                    if not self.ws or self._is_websocket_closed():
-                        raise websockets.exceptions.ConnectionClosed(None, 1000, "Connection closed")
-                        
+                    # 详细检查连接状态
+                    if not self.ws:
+                        logger.warning("WebSocket连接对象为空")
+                        raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is None")
+                    
+                    if self._is_websocket_closed():
+                        logger.warning("WebSocket连接已关闭")
+                        raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
+                    
                     response = await self.ws.recv()
                     data = protocol.parse_response(response)
                     return data
@@ -151,7 +168,11 @@ class RealtimeDialogClient:
                     # 重新抛出连接关闭异常
                     raise
                 except Exception as e:
-                    raise Exception(f"接收消息失败: {e}")
+                    if "SSL connection is closed" in str(e):
+                        logger.error(f"SSL连接已关闭: {e}")
+                        raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection is closed: {e}")
+                    else:
+                        raise Exception(f"接收消息失败: {e}")
         
         try:
             # 使用超时机制防止长时间阻塞
@@ -195,5 +216,13 @@ class RealtimeDialogClient:
     async def close(self) -> None:
         """关闭WebSocket连接"""
         if self.ws:
-            logger.info("关闭WebSocket连接...")
-            await self.ws.close()
+            try:
+                logger.info("关闭WebSocket连接...")
+                await self.ws.close()
+                logger.info("WebSocket连接已关闭")
+            except Exception as e:
+                logger.warning(f"关闭WebSocket连接时出错: {e}")
+            finally:
+                # 强制清理连接对象
+                self.ws = None
+                logger.info("WebSocket连接对象已清理")
