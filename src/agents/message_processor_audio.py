@@ -196,10 +196,22 @@ class MessageProcessorAudio:
             # 处理音频输入 - 支持二进制协议和传统base64格式
             audio_data = None
             
-            # 优先处理二进制协议的audio_data
+            # 优先处理二进制协议的audio_data（向后兼容）
             if "audio_data" in message_data and message_data["audio_data"]:
                 audio_data = message_data["audio_data"]
                 logger.debug(f"使用二进制协议音频数据: {len(audio_data)} 字节")
+            # 处理统一协议格式的payload_msg中的音频数据
+            elif "payload_msg" in message_data and message_data["payload_msg"]:
+                payload_msg = message_data["payload_msg"]
+                if isinstance(payload_msg, dict):
+                    # JSON序列化的情况，从字典中提取audio_data
+                    if "audio_data" in payload_msg:
+                        audio_data = payload_msg["audio_data"]
+                        logger.debug(f"使用统一协议音频数据(JSON): {len(audio_data)} 字节")
+                elif isinstance(payload_msg, bytes):
+                    # NO_SERIALIZATION的情况，payload_msg本身就是音频数据
+                    audio_data = payload_msg
+                    logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(audio_data)} 字节")
             
             if audio_data:
                 await self.dialog_session.process_audio_chunk(audio_data)

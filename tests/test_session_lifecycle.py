@@ -108,53 +108,16 @@ class SessionLifecycleClient:
             return b''
 
     async def parse_server_response(self, data: bytes) -> dict:
-        """解析服务端响应"""
+        """解析服务端响应 - 使用统一的协议解析函数"""
         try:
-            if len(data) < 4:
-                return {"error": "消息长度不足"}
-                
-            # 解析协议头
-            header = data[:4]
-            offset = 4
+            # 导入统一的协议解析函数
+            import sys
+            import os
+            sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+            from agents.doubao_client.protocol import parse_response
             
-            # 解析事件ID
-            if len(data) < offset + 4:
-                return {"error": "消息长度不足以包含事件ID"}
-            event_id = int.from_bytes(data[offset:offset+4], 'big')
-            offset += 4
-            
-            # 解析Session ID
-            if len(data) < offset + 4:
-                return {"error": "消息长度不足以包含Session ID长度"}
-            session_len = int.from_bytes(data[offset:offset+4], 'big')
-            offset += 4
-            
-            if len(data) < offset + session_len:
-                return {"error": "消息长度不足以包含Session ID数据"}
-            session_id = data[offset:offset+session_len].decode('utf-8')
-            offset += session_len
-            
-            # 解析Payload
-            if len(data) < offset + 4:
-                return {"error": "消息长度不足以包含Payload长度"}
-            payload_len = int.from_bytes(data[offset:offset+4], 'big')
-            offset += 4
-            
-            if len(data) < offset + payload_len:
-                return {"error": "消息长度不足以包含Payload数据"}
-            payload_bytes = data[offset:offset+payload_len]
-            
-            # 解压缩并解析JSON
-            try:
-                payload_bytes = gzip.decompress(payload_bytes)
-                payload_data = json.loads(payload_bytes.decode('utf-8'))
-                payload_data.update({
-                    "event_id": event_id,
-                    "session_id": session_id
-                })
-                return payload_data
-            except Exception as e:
-                return {"error": f"解析payload失败: {e}"}
+            result = parse_response(data)
+            return result
                 
         except Exception as e:
             return {"error": f"解析失败: {e}"}

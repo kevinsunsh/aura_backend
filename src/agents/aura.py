@@ -206,80 +206,19 @@ class AuraAgent:
             logger.error(f"清理资源时出错: {e}")
     
     def _parse_binary_protocol_message(self, data: bytes) -> Dict[str, Any]:
-        """解析二进制协议消息"""
+        """解析二进制协议消息 - 使用统一的协议解析函数"""
         try:
-            if len(data) < 4:
-                raise ValueError("消息长度不足")
-                
-            # 解析协议头 (4字节)
-            header = data[:4]
-            version = (header[0] >> 4) & 0x0F
-            header_size = header[0] & 0x0F
-            message_type = (header[1] >> 4) & 0x0F
-            flags = header[1] & 0x0F
-            serial_method = (header[2] >> 4) & 0x0F
-            compression = header[2] & 0x0F
+            # 直接调用 protocol.py 中的 parse_response 函数
+            from .doubao_client.protocol import parse_response
             
-            logger.debug(f"协议头解析: version={version}, type={message_type}, serial={serial_method}, compression={compression}")
+            result = parse_response(data)
             
-            offset = 4
+            # 如果解析成功，添加额外的调试信息
+            if 'error' not in result:
+                logger.debug(f"协议解析成功: message_type={result.get('message_type')}, "
+                           f"event={result.get('event')}, session_id={result.get('session_id')}")
             
-            # 解析事件ID (4字节)
-            if len(data) < offset + 4:
-                raise ValueError("消息长度不足以包含事件ID")
-            event_id = int.from_bytes(data[offset:offset+4], 'big')
-            offset += 4
-            
-            # 解析Session ID
-            if len(data) < offset + 4:
-                raise ValueError("消息长度不足以包含Session ID长度")
-            session_len = int.from_bytes(data[offset:offset+4], 'big')
-            offset += 4
-            
-            if len(data) < offset + session_len:
-                raise ValueError("消息长度不足以包含Session ID数据")
-            session_id = data[offset:offset+session_len].decode('utf-8')
-            offset += session_len
-            
-            # 解析Payload
-            if len(data) < offset + 4:
-                raise ValueError("消息长度不足以包含Payload长度")
-            payload_len = int.from_bytes(data[offset:offset+4], 'big')
-            offset += 4
-            
-            if len(data) < offset + payload_len:
-                raise ValueError("消息长度不足以包含Payload数据")
-            payload_bytes = data[offset:offset+payload_len]
-            
-            # 根据序列化方法和压缩方式解析payload
-            if serial_method == protocol.NO_SERIALIZATION:
-                # 音频数据，可能被gzip压缩
-                if compression == protocol.GZIP:
-                    try:
-                        audio_data = gzip.decompress(payload_bytes)
-                        logger.debug(f"解压缩音频数据: {len(payload_bytes)} -> {len(audio_data)} 字节")
-                    except Exception as e:
-                        logger.error(f"解压缩音频数据失败: {e}")
-                        audio_data = payload_bytes
-                else:
-                    audio_data = payload_bytes
-                
-                return {
-                    "event": event_id,
-                    "session_id": session_id,
-                    "audio_data": audio_data
-                }
-            else:
-                # JSON数据
-                if compression == protocol.GZIP:
-                    payload_bytes = gzip.decompress(payload_bytes)
-                
-                payload_data = json.loads(payload_bytes.decode('utf-8'))
-                payload_data.update({
-                    "event": event_id,
-                    "session_id": session_id
-                })
-                return payload_data
+            return result
                 
         except Exception as e:
             logger.error(f"解析二进制协议消息失败: {e}")
@@ -287,15 +226,40 @@ class AuraAgent:
             return {"error": f"解析失败: {str(e)}"}
 
     def _determine_message_type(self, message_data: Dict[str, Any]) -> MessageType:
-        """确定消息类型"""
+        """确定消息类型 - 适配统一的协议解析格式"""
+        # 检查是否有错误
+        if "error" in message_data:
+            return MessageType.UNSUPPORTED
+            
+        # 检查payload_msg中的内容
+        payload_msg = message_data.get("payload_msg")
+        if payload_msg:
+            # 如果是字典类型（JSON序列化），检查其中的字段
+            if isinstance(payload_msg, dict):
+                if "message" in payload_msg and payload_msg["message"]:
+                    return MessageType.TEXT
+                elif "audio" in payload_msg and payload_msg["audio"]:
+                    return MessageType.AUDIO
+                elif "audio_data" in payload_msg and payload_msg["audio_data"]:
+                    return MessageType.AUDIO
+                elif "text" in payload_msg and payload_msg["text"]:
+                    return MessageType.TEXT
+            # 如果是字符串类型（JSON序列化），可能是文本消息
+            elif isinstance(payload_msg, str) and payload_msg.strip():
+                return MessageType.TEXT
+            # 如果是字节类型（NO_SERIALIZATION），是音频数据
+            elif isinstance(payload_msg, bytes) and len(payload_msg) > 0:
+                return MessageType.AUDIO
+                
+        # 检查原始字段（向后兼容）
         if "message" in message_data and message_data["message"]:
             return MessageType.TEXT
         elif "audio" in message_data and message_data["audio"]:
             return MessageType.AUDIO
         elif "audio_data" in message_data and message_data["audio_data"]:
             return MessageType.AUDIO
-        else:
-            return MessageType.UNSUPPORTED
+            
+        return MessageType.UNSUPPORTED
 
     def _is_websocket_closed(self, websocket) -> bool:
         """检查WebSocket是否已关闭，兼容不同版本的websockets库"""

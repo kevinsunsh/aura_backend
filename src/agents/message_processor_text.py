@@ -114,7 +114,29 @@ class MessageProcessorText:
                                 chat_stream: ChatStream) -> Dict[str, Any]:
         """处理文本消息"""
         try:
-            user_input = message_data["message"]
+            # 支持统一协议格式的payload_msg
+            user_input = None
+            if "message" in message_data and message_data["message"]:
+                # 向后兼容：直接message字段
+                user_input = message_data["message"]
+            elif "payload_msg" in message_data and message_data["payload_msg"]:
+                payload_msg = message_data["payload_msg"]
+                if isinstance(payload_msg, dict):
+                    # JSON序列化的情况，从字典中提取文本
+                    if "message" in payload_msg and payload_msg["message"]:
+                        user_input = payload_msg["message"]
+                    elif "text" in payload_msg and payload_msg["text"]:
+                        user_input = payload_msg["text"]
+                elif isinstance(payload_msg, str) and payload_msg.strip():
+                    # JSON序列化的情况，payload_msg本身就是文本
+                    user_input = payload_msg.strip()
+            
+            if not user_input:
+                return {
+                    "success": False,
+                    "error": "消息中没有找到有效的文本内容",
+                    "message_type": "text"
+                }
             
             # 创建消息对象
             message = Message(
