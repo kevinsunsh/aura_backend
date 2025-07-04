@@ -552,17 +552,26 @@ class DialogSession:
             logger.info(f"开始发送音频数据: {len(audio_data)} 字节")
             await self.client.task_request(audio_data)
             logger.info(f"已发送音频数据: {len(audio_data)} 字节")
-        except websockets.exceptions.ConnectionClosed as e:
-            logger.error(f"WebSocket连接已关闭: {e}")
+        except (websockets.exceptions.ConnectionClosed,
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError,
+                ConnectionResetError,
+                BrokenPipeError) as e:
+            logger.error(f"WebSocket连接相关错误: {e}")
             # 触发重连
             await self._trigger_reconnect()
             logger.info("已触发重连，音频数据将在重连后重试")
         except Exception as e:
             logger.error(f"发送音频数据失败: {e}")
             # 如果是连接相关错误，尝试重连
-            if "connection" in str(e).lower() or "websocket" in str(e).lower() or "ssl" in str(e).lower():
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
                 await self._trigger_reconnect()
                 logger.info("已触发重连，音频数据将在重连后重试")
+            else:
+                # 其他类型的错误，记录但不重连
+                logger.error(f"非连接相关错误，不进行重连: {e}")
     
     async def process_audio_chunk(self, audio_chunk: bytes) -> None:
         """处理音频块（兼容ASR客户端的接口）"""
@@ -582,21 +591,27 @@ class DialogSession:
                 
             await self.client.say_hello(content)
             logger.info(f"已发送打招呼消息: {content}")
-        except websockets.exceptions.ConnectionClosed:
-            logger.error("WebSocket连接已关闭，尝试重连...")
+        except (websockets.exceptions.ConnectionClosed,
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError,
+                ConnectionResetError,
+                BrokenPipeError) as e:
+            logger.error(f"WebSocket连接相关错误: {e}")
             if await self.check_connection_and_reconnect():
                 # 重连成功，重试发送
                 try:
                     await self.client.say_hello(content)
                     logger.info(f"重连后成功发送打招呼消息: {content}")
-                except Exception as e:
-                    logger.error(f"重连后发送打招呼消息仍然失败: {e}")
+                except Exception as retry_e:
+                    logger.error(f"重连后发送打招呼消息仍然失败: {retry_e}")
             else:
                 logger.error("重连失败，无法发送打招呼消息")
         except Exception as e:
             logger.error(f"发送打招呼消息失败: {e}")
             # 如果是连接相关错误，尝试重连
-            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
                 if await self.check_connection_and_reconnect():
                     # 重连成功，重试发送
                     try:
@@ -604,6 +619,8 @@ class DialogSession:
                         logger.info(f"重连后成功发送打招呼消息: {content}")
                     except Exception as retry_e:
                         logger.error(f"重连后发送打招呼消息仍然失败: {retry_e}")
+            else:
+                logger.error(f"非连接相关错误，不进行重连: {e}")
     
     async def send_chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
         """发送聊天TTS文本"""
@@ -615,21 +632,27 @@ class DialogSession:
                 
             await self.client.chat_tts_text(content, start, end)
             logger.info(f"已发送TTS文本: {content[:50]}...")
-        except websockets.exceptions.ConnectionClosed:
-            logger.error("WebSocket连接已关闭，尝试重连...")
+        except (websockets.exceptions.ConnectionClosed,
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError,
+                ConnectionResetError,
+                BrokenPipeError) as e:
+            logger.error(f"WebSocket连接相关错误: {e}")
             if await self.check_connection_and_reconnect():
                 # 重连成功，重试发送
                 try:
                     await self.client.chat_tts_text(content, start, end)
                     logger.info(f"重连后成功发送TTS文本: {content[:50]}...")
-                except Exception as e:
-                    logger.error(f"重连后发送TTS文本仍然失败: {e}")
+                except Exception as retry_e:
+                    logger.error(f"重连后发送TTS文本仍然失败: {retry_e}")
             else:
                 logger.error("重连失败，无法发送TTS文本")
         except Exception as e:
             logger.error(f"发送TTS文本失败: {e}")
             # 如果是连接相关错误，尝试重连
-            if "connection" in str(e).lower() or "websocket" in str(e).lower():
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
                 if await self.check_connection_and_reconnect():
                     # 重连成功，重试发送
                     try:
@@ -637,6 +660,8 @@ class DialogSession:
                         logger.info(f"重连后成功发送TTS文本: {content[:50]}...")
                     except Exception as retry_e:
                         logger.error(f"重连后发送TTS文本仍然失败: {retry_e}")
+            else:
+                logger.error(f"非连接相关错误，不进行重连: {e}")
     
     async def get_session_info(self) -> Dict[str, Any]:
         """获取会话信息"""

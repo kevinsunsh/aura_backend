@@ -1154,6 +1154,9 @@ class WebSocketTestSession:
             self.interrupt_audio_send_time = time.time()
             logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
             
+            # 发送1秒静音（使用缓存的静音音频）
+            await self._send_silence_audio()
+
             while True:
                 if self.second_tts_audio_received_time is not None and self.second_asr_info_received_time is not None:
                     break

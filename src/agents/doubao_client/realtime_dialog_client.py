@@ -3,6 +3,7 @@ import gzip
 import json
 import asyncio
 import logging
+import ssl
 
 from typing import Dict, Any
 
@@ -42,8 +43,19 @@ class RealtimeDialogClient:
         payload_bytes = gzip.compress(payload_bytes)
         start_connection_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
         start_connection_request.extend(payload_bytes)
-        await self.ws.send(start_connection_request)
-        logger.info("StartConnection请求已发送")
+        
+        try:
+            await self.ws.send(start_connection_request)
+            logger.info("StartConnection请求已发送")
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            logger.warning(f"发送StartConnection请求时检测到连接问题: {e}")
+            raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
 
     async def start_session(self) -> None:
         """StartSession - 客户端事件ID: 100"""
@@ -56,8 +68,19 @@ class RealtimeDialogClient:
         start_session_request.extend(str.encode(self.session_id))
         start_session_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
         start_session_request.extend(payload_bytes)
-        await self.ws.send(start_session_request)
-        logger.info("StartSession请求已发送")
+        
+        try:
+            await self.ws.send(start_session_request)
+            logger.info("StartSession请求已发送")
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            logger.warning(f"发送StartSession请求时检测到连接问题: {e}")
+            raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
 
     async def finish_session(self) -> None:
         """FinishSession - 客户端事件ID: 102"""
@@ -69,7 +92,19 @@ class RealtimeDialogClient:
         finish_session_request.extend(str.encode(self.session_id))
         finish_session_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
         finish_session_request.extend(payload_bytes)
-        await self.ws.send(finish_session_request)
+        
+        try:
+            await self.ws.send(finish_session_request)
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            logger.warning(f"发送FinishSession请求时检测到连接问题: {e}")
+            # 对于结束会话的请求，我们不需要重新抛出异常，因为连接可能已经关闭
+            logger.info("FinishSession请求发送失败，但这是正常的（连接可能已关闭）")
 
     async def finish_connection(self) -> None:
         """FinishConnection - 客户端事件ID: 2"""
@@ -79,8 +114,20 @@ class RealtimeDialogClient:
         payload_bytes = gzip.compress(payload_bytes)
         finish_connection_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
         finish_connection_request.extend(payload_bytes)
-        await self.ws.send(finish_connection_request)
-        logger.info("FinishConnection请求已发送")
+        
+        try:
+            await self.ws.send(finish_connection_request)
+            logger.info("FinishConnection请求已发送")
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            logger.warning(f"发送FinishConnection请求时检测到连接问题: {e}")
+            # 对于结束连接的请求，我们不需要重新抛出异常，因为连接可能已经关闭
+            logger.info("FinishConnection请求发送失败，但这是正常的（连接可能已关闭）")
 
     async def task_request(self, audio: bytes) -> None:
         """TaskRequest - 客户端事件ID: 200"""
@@ -111,7 +158,24 @@ class RealtimeDialogClient:
         payload_bytes = gzip.compress(audio)
         task_request.extend((len(payload_bytes)).to_bytes(4, 'big'))  # payload size(4 bytes)
         task_request.extend(payload_bytes)
-        await self.ws.send(task_request)
+        
+        try:
+            await self.ws.send(task_request)
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            # 捕获所有可能的连接相关异常
+            error_msg = str(e).lower()
+            if "ssl" in error_msg or "connection" in error_msg:
+                logger.warning(f"发送音频数据时检测到连接问题: {e}")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
+            else:
+                # 重新抛出其他类型的异常
+                raise
 
     async def say_hello(self, content: str) -> None:
         """SayHello - 客户端事件ID: 300"""
@@ -127,7 +191,24 @@ class RealtimeDialogClient:
         say_hello_request.extend(str.encode(self.session_id))
         say_hello_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
         say_hello_request.extend(payload_bytes)
-        await self.ws.send(say_hello_request)
+        
+        try:
+            await self.ws.send(say_hello_request)
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            # 捕获所有可能的连接相关异常
+            error_msg = str(e).lower()
+            if "ssl" in error_msg or "connection" in error_msg:
+                logger.warning(f"发送打招呼消息时检测到连接问题: {e}")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
+            else:
+                # 重新抛出其他类型的异常
+                raise
 
     async def chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
         """ChatTTSText - 客户端事件ID: 500"""
@@ -145,7 +226,24 @@ class RealtimeDialogClient:
         chat_tts_request.extend(str.encode(self.session_id))
         chat_tts_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
         chat_tts_request.extend(payload_bytes)
-        await self.ws.send(chat_tts_request)
+        
+        try:
+            await self.ws.send(chat_tts_request)
+        except (websockets.exceptions.ConnectionClosed, 
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.WebSocketException,
+                OSError, 
+                ConnectionResetError, 
+                BrokenPipeError,
+                ssl.SSLError) as e:
+            # 捕获所有可能的连接相关异常
+            error_msg = str(e).lower()
+            if "ssl" in error_msg or "connection" in error_msg:
+                logger.warning(f"发送TTS文本时检测到连接问题: {e}")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
+            else:
+                # 重新抛出其他类型的异常
+                raise
 
     async def receive_server_response(self) -> Dict[str, Any]:
         """接收服务器响应"""
