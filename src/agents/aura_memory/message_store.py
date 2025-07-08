@@ -1,6 +1,4 @@
 import logging
-import time
-import threading
 from datetime import datetime
 from typing import List, Optional, Dict, Type, Union, Any
 from sqlalchemy import create_engine, Column, String, Integer, JSON, ForeignKey, BigInteger, Index, Boolean, update, Float
@@ -70,7 +68,7 @@ class MessageStore:
             )
             session.add(db_message)
             session.commit()
-            logger.info(f"添加消息成功: {message.msg_id}")
+            # logger.info(f"添加消息成功: {message.msg_id}")
             return True
         except Exception as e:
             session.rollback()
@@ -101,6 +99,76 @@ class MessageStore:
             ) for m in db_messages]
         except Exception as e:
             logger.error(f"获取聊天流 {chat_id} 时间区间直接消息失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+
+    def get_recent_messages(self, user_id: Optional[str] = None, limit: int = 10) -> List[Message]:
+        """获取最近的N条消息记录，可选择指定用户"""
+        session = self.db.get_db()
+        try:
+            query = session.query(MessageModel)
+            
+            # 如果提供了user_id，则按用户过滤
+            if user_id:
+                query = query.filter(MessageModel.user_id == user_id)
+            
+            db_messages = query.order_by(MessageModel.created_at.desc()).limit(limit).all()
+            
+            # 按时间正序返回
+            messages = [Message(
+                msg_id=m.msg_id,
+                chat_id=m.chat_id,
+                user_id=m.user_id,
+                platform=m.platform,
+                m_type=m.m_type,
+                content=m.content,
+                data=m.data,
+                created_at=m.created_at
+            ) for m in db_messages]
+            
+            # 反转列表以保持时间正序
+            messages.reverse()
+            return messages
+        except Exception as e:
+            user_filter = f"用户 {user_id}" if user_id else "所有用户"
+            logger.error(f"获取{user_filter}最近 {limit} 条消息失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+
+    def get_messages_in_recent_time(self, seconds: int, user_id: Optional[str] = None) -> List[Message]:
+        """获取最近指定秒数内的所有消息，可选择指定用户"""
+        session = self.db.get_db()
+        try:
+            # 计算时间范围（转换为毫秒）
+            current_time =int(datetime.now().timestamp() * 1000)
+            start_time = current_time - (seconds * 1000)
+            
+            query = session.query(MessageModel).filter(
+                MessageModel.created_at >= start_time,
+                MessageModel.created_at <= current_time
+            )
+            
+            # 如果提供了user_id，则按用户过滤
+            if user_id:
+                query = query.filter(MessageModel.user_id == user_id)
+            
+            db_messages = query.order_by(MessageModel.created_at).all()
+            
+            return [Message(
+                msg_id=m.msg_id,
+                chat_id=m.chat_id,
+                user_id=m.user_id,
+                platform=m.platform,
+                m_type=m.m_type,
+                content=m.content,
+                data=m.data,
+                created_at=m.created_at
+            ) for m in db_messages]
+        except Exception as e:
+            user_filter = f"用户 {user_id}" if user_id else "所有用户"
+            logger.error(f"获取{user_filter}最近 {seconds} 秒内消息失败: {str(e)}")
             return []
         finally:
             session.close()

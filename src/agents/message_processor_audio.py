@@ -27,6 +27,7 @@ class MessageProcessorAudio:
     
     def __init__(self, 
                  message_store: MessageStore,
+                 chat_stream: ChatStream,
                  chat_stream_manager: ChatStreamManager,
                  db_conn_string: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
@@ -43,11 +44,12 @@ class MessageProcessorAudio:
         self.active_task_lock = asyncio.Lock()  # 激活任务的锁
         
         # 当前处理的 chat_stream
-        self.current_chat_stream: Optional[ChatStream] = None
+        self.current_chat_stream = chat_stream
         
         # 创建文本处理器用于处理ASR结果
         self.text_processor = MessageProcessorText(
             message_store=message_store,
+            chat_stream=chat_stream,
             chat_stream_manager=chat_stream_manager,
             db_conn_string=db_conn_string,
             websocket_send_callback=self._text_processor_callback
@@ -95,7 +97,7 @@ class MessageProcessorAudio:
             })
         if self.total_performance_point_id is None:
             self.total_performance_point_id = start_performance_point("总性能点")
-        await self.text_processor.cleanup()
+        await self.text_processor.user_input_interruption()
     
     async def asr_response_callback(self, asr_text: str, is_interim: bool) -> None:
         """ASR响应回调 - 收到识别结果时调用"""
@@ -111,18 +113,20 @@ class MessageProcessorAudio:
     
     async def asr_end_callback(self, asr_text: str) -> None:
         """ASR结束回调 - 识别完成时调用"""
-        logger.info(f"ASR识别结束")
+        # logger.info(f"ASR识别结束")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "event": ServerEventEnum.ASREnded.value
             })
+        # 如果asr_text为空，则不启动文本处理任务
+        # await self.dialog_session.send_text_chunk("我想想", start=True, end=False)
         # 如果有识别结果，启动文本处理任务
         if asr_text and asr_text.strip():
             await self._handle_asr_result(asr_text, self.current_chat_stream)
     
     async def tts_start_callback(self, text: str) -> None:
         """TTS开始回调 - 开始合成语音时调用"""
-        logger.debug("TTS合成开始")
+        logger.info(f"TTS合成开始 : {text}")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "event": ServerEventEnum.TTSSentenceStart.value,
@@ -151,10 +155,24 @@ class MessageProcessorAudio:
                 "event": ServerEventEnum.TTSSentenceEnd.value
             })
     
+    async def chat_end_callback(self, text: str) -> None:
+        """聊天结束回调 - 聊天结束时调用"""
+        logger.info(f"闲聊结束 : {text}")
+        # await self.message_store.add_message(Message(
+        #     msg_id=str(uuid.uuid4()),
+        #     chat_id=self.current_chat_stream.chat_id,
+        #     user_id="aura",
+        #     platform="default",
+        #     m_type="text",
+        #     content=text,
+        #     data={},
+        #     created_at=int(datetime.now().timestamp() * 1000)
+        # ))
+    
     async def _handle_asr_result(self, asr_text: str, chat_stream: ChatStream = None) -> None:
         """处理ASR识别结果"""
         try:
-            logger.info(f"打断现有的任务，开始处理ASR结果: {asr_text}")
+            logger.info(f"开始处理ASR结果: {asr_text}")
             
             if not chat_stream:
                 logger.warning("没有提供 chat_stream，无法处理 ASR 结果")
@@ -162,8 +180,7 @@ class MessageProcessorAudio:
             
             # 使用文本处理器处理ASR结果
             result = await self.text_processor.handle_text_message(
-                message_data={"message": asr_text},
-                chat_stream=chat_stream
+                message_data={"message": asr_text}
             )
             
             logger.debug(f"ASR结果处理完成: {result}")
@@ -172,25 +189,23 @@ class MessageProcessorAudio:
             logger.error(f"处理ASR结果失败: {e}")
 
     async def handle_audio_message(self, 
-                                  message_data: Dict[str, Any], 
-                                  chat_stream: ChatStream) -> Dict[str, Any]:
+                                  message_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理音频消息并启动异步任务接收ASR相关消息"""
         try:
-            # 设置当前处理的 chat_stream
-            self.current_chat_stream = chat_stream
-            
             # 初始化DialogSession
             if self.dialog_session is None:
                 self.dialog_session = DialogSession(
-                    uid=chat_stream.chat_id,
+                    uid=self.current_chat_stream.chat_id,
                     asr_start_callback=self.asr_start_callback,
                     asr_response_callback=self.asr_response_callback,
                     asr_end_callback=self.asr_end_callback,
                     tts_start_callback=self.tts_start_callback,
                     tts_response_callback=self.tts_response_callback,
-                    tts_end_callback=self.tts_end_callback
+                    tts_end_callback=self.tts_end_callback,
+                    chat_end_callback=self.chat_end_callback
                 )
                 await self.dialog_session.start()
+                await self.text_processor.start()
             
             # 处理音频输入 - 支持二进制协议和传统base64格式
             audio_data = None
@@ -226,7 +241,7 @@ class MessageProcessorAudio:
             return {
                 "success": True,
                 "action": "audio_task_started",
-                "chat_id": chat_stream.chat_id
+                "chat_id": self.current_chat_stream.chat_id
             }
             
         except Exception as e:

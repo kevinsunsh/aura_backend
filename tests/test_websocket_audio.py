@@ -434,7 +434,7 @@ class AudioDeviceManager:
                         
                 except Exception as e:
                     error_msg = str(e)
-                    if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg:
+                    if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg or "Stream not open" in error_msg:
                         logger.warning(f"PortAudio错误，跳过{stream_name}流清理: {error_msg}")
                     else:
                         logger.warning(f"关闭{stream_name}流时出错: {error_msg}")
@@ -442,7 +442,7 @@ class AudioDeviceManager:
         if self.pyaudio:
             try:
                 # 添加延迟确保所有流都已正确关闭
-                time.sleep(0.1)
+                time.sleep(0.2)  # 增加延迟时间
                 self.pyaudio.terminate()
                 logger.debug("✅ PyAudio已终止")
             except Exception as e:
@@ -461,7 +461,7 @@ class AudioDeviceManager:
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
-    def __init__(self, uri: str = "ws://localhost:5876/ws/stream/test_user_123"):
+    def __init__(self, uri: str = "ws://sd1jn2gk3k341ncbl2d5g.apigateway-cn-shanghai.volceapi.com/ws/stream/test_user_123"):
         self.uri = uri
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
@@ -497,6 +497,10 @@ class WebSocketTestSession:
         self.silence_audio_cache = None
         # 异步打断队列
         self.interrupt_queue = None
+        # 重连配置
+        self.max_reconnect_attempts = 3
+        self.reconnect_delay = 2.0
+        self.reconnect_attempts = 0
         # 初始化Opus解码器（24kHz, 单声道）- 匹配服务器音频格式
         # self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
 
@@ -530,14 +534,17 @@ class WebSocketTestSession:
                             time.sleep(0.01)
                     except Exception as audio_error:
                         error_msg = str(audio_error)
-                        if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg:
+                        if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg or "Stream not open" in error_msg:
                             logger.error(f"PortAudio错误: {error_msg}")
                             try:
                                 logger.info("尝试重新初始化音频输出流...")
                                 if self.output_stream:
-                                    if self.output_stream.is_active():
-                                        self.output_stream.stop_stream()
-                                    self.output_stream.close()
+                                    try:
+                                        if self.output_stream.is_active():
+                                            self.output_stream.stop_stream()
+                                        self.output_stream.close()
+                                    except Exception as close_error:
+                                        logger.warning(f"关闭音频流时出错: {close_error}")
                                 self.output_stream = self.audio_device.open_output_stream()
                                 self.output_stream.start_stream()
                                 logger.info("音频输出流重新初始化成功")
@@ -678,9 +685,14 @@ class WebSocketTestSession:
                 try:
                     # 检查WebSocket连接状态
                     if self._is_websocket_closed():
-                        logger.info("WebSocket连接已关闭，停止接收")
-                        self.response_completed = True
-                        break
+                        logger.info("WebSocket连接已关闭，尝试重连...")
+                        if await self._reconnect_websocket():
+                            logger.info("重连成功，继续接收消息")
+                            continue
+                        else:
+                            logger.error("重连失败，停止接收")
+                            self.response_completed = True
+                            break
                     
                     # logger.info("🔍 开始接收消息")
                     # 添加短超时，让循环能定期检查退出条件
@@ -706,13 +718,23 @@ class WebSocketTestSession:
                         break
                     continue
                 except websockets.exceptions.ConnectionClosed:
-                    logger.info("WebSocket连接已关闭")
-                    self.response_completed = True
-                    break
+                    logger.info("WebSocket连接已关闭，尝试重连...")
+                    if await self._reconnect_websocket():
+                        logger.info("重连成功，继续接收消息")
+                        continue
+                    else:
+                        logger.error("重连失败，停止接收")
+                        self.response_completed = True
+                        break
                 except websockets.exceptions.ConnectionClosedError:
-                    logger.info("WebSocket连接异常关闭")
-                    self.response_completed = True
-                    break
+                    logger.info("WebSocket连接异常关闭，尝试重连...")
+                    if await self._reconnect_websocket():
+                        logger.info("重连成功，继续接收消息")
+                        continue
+                    else:
+                        logger.error("重连失败，停止接收")
+                        self.response_completed = True
+                        break
                 except websockets.exceptions.ConnectionClosedOK:
                     logger.info("WebSocket连接正常关闭")
                     self.response_completed = True
@@ -721,10 +743,15 @@ class WebSocketTestSession:
                     logger.error(f"接收消息时发生错误: {str(e)}")
                     # 检查是否是连接相关的错误
                     error_msg = str(e).lower()
-                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
-                        logger.info("检测到连接断开相关错误，停止接收")
-                        self.response_completed = True
-                        break
+                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection", "ping", "timeout"]):
+                        logger.info("检测到连接断开相关错误，尝试重连...")
+                        if await self._reconnect_websocket():
+                            logger.info("重连成功，继续接收消息")
+                            continue
+                        else:
+                            logger.error("重连失败，停止接收")
+                            self.response_completed = True
+                            break
                     # 其他错误则继续尝试
                     await asyncio.sleep(0.1)
                     
@@ -742,7 +769,13 @@ class WebSocketTestSession:
                 try:
                     # 检查退出条件和WebSocket连接状态
                     if not self.is_running or self._is_websocket_closed():
-                        break
+                        logger.info("检测到连接断开，尝试重连...")
+                        if await self._reconnect_websocket():
+                            logger.info("重连成功，继续录制")
+                            continue
+                        else:
+                            logger.error("重连失败，停止录制")
+                            break
                         
                     # 读取麦克风数据
                     audio_chunk = input_stream.read(
@@ -757,18 +790,33 @@ class WebSocketTestSession:
                     await asyncio.sleep(0.001)  # 1ms极低延迟
                     
                 except websockets.exceptions.ConnectionClosed:
-                    logger.info("WebSocket连接关闭，停止麦克风录制")
-                    break
+                    logger.info("WebSocket连接关闭，尝试重连...")
+                    if await self._reconnect_websocket():
+                        logger.info("重连成功，继续录制")
+                        continue
+                    else:
+                        logger.error("重连失败，停止录制")
+                        break
                 except websockets.exceptions.ConnectionClosedError:
-                    logger.info("WebSocket连接异常关闭，停止麦克风录制")
-                    break
+                    logger.info("WebSocket连接异常关闭，尝试重连...")
+                    if await self._reconnect_websocket():
+                        logger.info("重连成功，继续录制")
+                        continue
+                    else:
+                        logger.error("重连失败，停止录制")
+                        break
                 except Exception as e:
                     logger.error(f"读取麦克风数据出错: {e}")
                     # 检查是否是连接相关的错误
                     error_msg = str(e).lower()
-                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
-                        logger.info("检测到连接断开相关错误，停止麦克风录制")
-                        break
+                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection", "ping", "timeout"]):
+                        logger.info("检测到连接断开相关错误，尝试重连...")
+                        if await self._reconnect_websocket():
+                            logger.info("重连成功，继续录制")
+                            continue
+                        else:
+                            logger.error("重连失败，停止录制")
+                            break
                     await asyncio.sleep(0.1)
             
             logger.info("🔇 麦克风录制已停止")
@@ -948,20 +996,48 @@ class WebSocketTestSession:
         """执行结束握手流程"""
         logger.info("👋 开始结束握手流程...")
         
-        # 第一步：结束session
-        if await self.send_control_message("end_session"):
-            await self.wait_for_server_response(152, timeout=3.0)  # ServerEventEnum.SessionFinished.value
-        
-        # 第二步：结束连接
-        if await self.send_control_message("end_connection"):
-            await self.wait_for_server_response(52, timeout=3.0)  # ServerEventEnum.ConnectionFinished.value
+        try:
+            # 检查WebSocket连接状态
+            if self._is_websocket_closed():
+                logger.warning("⚠️ WebSocket连接已关闭，跳过结束握手")
+                return
             
-        logger.info("✅ 结束握手完成！")
+            # 第一步：结束session
+            try:
+                if await self.send_control_message("end_session"):
+                    await self.wait_for_server_response(152, timeout=3.0)  # ServerEventEnum.SessionFinished.value
+                else:
+                    logger.warning("⚠️ 发送end_session消息失败")
+            except Exception as e:
+                logger.warning(f"⚠️ 结束session时出错: {e}")
+            
+            # 第二步：结束连接
+            try:
+                if await self.send_control_message("end_connection"):
+                    await self.wait_for_server_response(52, timeout=3.0)  # ServerEventEnum.ConnectionFinished.value
+                else:
+                    logger.warning("⚠️ 发送end_connection消息失败")
+            except Exception as e:
+                logger.warning(f"⚠️ 结束connection时出错: {e}")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ 结束握手流程时出错: {e}")
+        finally:
+            logger.info("✅ 结束握手完成！")
 
     async def start(self):
         """启动WebSocket测试会话"""
         try:
-            async with websockets.connect(self.uri) as websocket:
+            # 添加WebSocket连接配置，解决ping timeout问题
+            async with websockets.connect(
+                self.uri,
+                ping_interval=30,      # 每30秒发送一次ping（更保守）
+                ping_timeout=15,       # ping超时时间15秒（更宽松）
+                close_timeout=10,      # 关闭超时时间10秒
+                max_size=1000000000,   # 最大消息大小1GB
+                compression=None,      # 禁用压缩避免问题
+                max_queue=32
+            ) as websocket:
                 self.websocket = websocket
                 logger.info("已连接到WebSocket服务器")
                 logger.info("=== 开始麦克风音频测试 ===")
@@ -1262,7 +1338,16 @@ class WebSocketTestSession:
         """启动WebSocket测试会话（文件模式）- 打断测试"""
         self.file_mode = True
         try:
-            async with websockets.connect(self.uri) as websocket:
+            # 添加WebSocket连接配置，解决ping timeout问题
+            async with websockets.connect(
+                self.uri,
+                ping_interval=30,      # 每30秒发送一次ping（更保守）
+                ping_timeout=15,       # ping超时时间15秒（更宽松）
+                close_timeout=10,      # 关闭超时时间10秒
+                max_size=1000000000,   # 最大消息大小1GB
+                compression=None,      # 禁用压缩避免问题
+                max_queue=32
+            ) as websocket:
                 self.websocket = websocket
                 logger.info("已连接到WebSocket服务器")
                 logger.info("=== 开始打断测试模式 ===")
@@ -1374,14 +1459,55 @@ class WebSocketTestSession:
                 await asyncio.sleep(0.1)
         logger.info("🔇 异步打断控制系统已停止")
 
+    async def _reconnect_websocket(self):
+        """重连WebSocket连接"""
+        if self.reconnect_attempts >= self.max_reconnect_attempts:
+            logger.error(f"❌ 重连次数已达上限 ({self.max_reconnect_attempts})，停止重连")
+            return False
+        
+        self.reconnect_attempts += 1
+        logger.info(f"🔄 尝试重连WebSocket (第{self.reconnect_attempts}次)...")
+        
+        try:
+            # 等待一段时间后重连
+            await asyncio.sleep(self.reconnect_delay)
+            
+            # 重新建立连接
+            self.websocket = await websockets.connect(
+                self.uri,
+                ping_interval=30,      # 每30秒发送一次ping（更保守）
+                ping_timeout=15,       # ping超时时间15秒（更宽松）
+                close_timeout=10,      # 关闭超时时间10秒
+                max_size=1000000000,   # 最大消息大小1GB
+                compression=None,      # 禁用压缩避免问题
+                max_queue=32,          # 限制队列大小
+                read_limit=2**16,      # 限制读取缓冲区
+                write_limit=2**16      # 限制写入缓冲区
+            )
+            
+            logger.info("✅ WebSocket重连成功")
+            
+            # 重新执行握手
+            if await self.start_connection_handshake():
+                logger.info("✅ 重连后握手成功")
+                self.reconnect_attempts = 0  # 重置重连计数
+                return True
+            else:
+                logger.error("❌ 重连后握手失败")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ WebSocket重连失败: {e}")
+            return False
+
 async def test_audio_websocket_stream():
     """测试带预处理音频文件的WebSocket流式接口"""
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream/test_user_123")
     await session.start_with_files()
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream/test_user_123")
     await session.start()
 
 if __name__ == "__main__":

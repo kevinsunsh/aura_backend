@@ -14,6 +14,7 @@ class Configuration:
 	"""The configurable fields for the chatbot."""
 	chat_id: str = "default" # User ID
 	thread_id: str = "default" # Thread ID
+	bot_name: str = "aura" # Bot name
 	chat_stream: ChatStream = None
 	message_store: MessageStore = None
 	chat_stream_manager: ChatStreamManager = None
@@ -36,7 +37,7 @@ class Configuration:
 LLMType = Literal["basic", "reasoning", "vision"]
 LLM_MODEL_MAP: dict[str, str] = {
     "basic": "doubao-seed-1-6-flash-250615",
-    "reasoning": "doubao-seed-1-6-flash-250615",
+    "reasoning": "doubao-seed-1-6-250615",
     "vision": "doubao-seed-1-6-flash-250615"
 }
 

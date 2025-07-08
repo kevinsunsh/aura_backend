@@ -217,7 +217,7 @@ class ChatStreamManager:
                 ).fetchone()
                 
                 if result:
-                    logger.info(f"获取聊天流成功: {chat_id}")
+                    # logger.info(f"获取聊天流成功: {chat_id}")
                     return ChatStream(
                         chat_id=result.chat_id,
                         chatstream_checked_at=result.chatstream_checked_at,

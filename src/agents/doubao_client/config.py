@@ -24,7 +24,13 @@ start_session_req = {
         }
     },
     "dialog": {
-        "bot_name": "豆包",
+        "bot_name": "aura",
+        "system_role": "你是Aura，一个智能助手，现在你在参与和朋友的一场QQ聊天，你只负责随口闲聊，避免冷场，但不要有任何实质性回复",
+        "speaking_style": "自然、随意、简短，注意更多口语化表达。不要讲任何实质性内容",
+        "dialog_id": str(uuid.uuid4()),
+        "extra" : {
+            "strict_audit": False
+        }
     }
 }
 

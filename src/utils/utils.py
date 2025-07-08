@@ -9,9 +9,13 @@ import json
 import logging
 import atexit
 import sys
+import random
 
 logger = logging.getLogger(__name__)
 
+def random_10_percent() -> bool:
+    """返回10%概率的随机布尔值"""
+    return random.random() < 0.1
 
 @dataclass
 class PerformancePoint:

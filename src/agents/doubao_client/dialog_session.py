@@ -82,6 +82,7 @@ class DialogSession:
         
         # 任务管理
         self.server_receive_task = None
+        self.is_tts_sentence_start = False
         
     def _update_latency_stats(self, latency: float) -> None:
         """更新延迟统计信息"""
@@ -282,7 +283,7 @@ class DialogSession:
         if response.get('event') is not None:
             event_id = response.get('event')
             payload_msg = response.get('payload_msg', {})
-            logger.info(f"处理服务器事件: {event_id}")
+            logger.debug(f"处理服务器事件: {event_id}")
             await self._handle_server_event(event_id, payload_msg)
             return
     
@@ -303,11 +304,15 @@ class DialogSession:
             await self._on_session_failed(payload_msg)
         # TTS类事件 (350-359)
         elif event_id == 350:  # TTSSentenceStart
-            await self._on_tts_sentence_start(payload_msg)
+            if payload_msg["tts_type"] == "chat_tts_text":
+                await self._on_tts_sentence_start(payload_msg)
+                self.is_tts_sentence_start = True
         elif event_id == 351:  # TTSSentenceEnd
             await self._on_tts_sentence_end(payload_msg)
+            self.is_tts_sentence_start = False
         elif event_id == 352:  # TTSResponse
-            await self._on_tts_response(payload_msg)
+            if self.is_tts_sentence_start:
+                await self._on_tts_response(payload_msg)
         elif event_id == 359:  # TTSEnded
             await self._on_tts_ended(payload_msg)
         # ASR类事件 (450-459)
@@ -318,10 +323,10 @@ class DialogSession:
         elif event_id == 459:  # ASREnded
             await self._on_asr_ended(payload_msg)
         # Chat类事件 (550-559)
-        # elif event_id == 550:  # ChatResponse
-        #     await self._on_chat_response(payload_msg)
-        # elif event_id == 559:  # ChatEnded
-        #     await self._on_chat_ended(payload_msg)
+        elif event_id == 550:  # ChatResponse
+            await self._on_chat_response(payload_msg)
+        elif event_id == 559:  # ChatEnded
+            await self._on_chat_ended(payload_msg)
         else:
             logger.warning(f"未知事件ID: {event_id}")
     
@@ -361,7 +366,7 @@ class DialogSession:
         """TTS句子开始事件回调"""
         tts_type = payload.get("tts_type", "")
         text = payload.get("text", "")
-        logger.info(f"TTS句子开始 - 类型: {tts_type}, 文本: {text[:50]}...")
+        logger.debug(f"TTS句子开始 - 类型: {tts_type}, 文本: {text[:50]}...")
         if self.tts_start_callback:
             try:
                 if asyncio.iscoroutinefunction(self.tts_start_callback):
@@ -373,7 +378,7 @@ class DialogSession:
     
     async def _on_tts_sentence_end(self, payload: Dict[str, Any]) -> None:
         """TTS句子结束事件回调"""
-        logger.info("TTS句子结束")
+        logger.debug("TTS句子结束")
         if self.tts_end_callback:
             try:
                 if asyncio.iscoroutinefunction(self.tts_end_callback):
@@ -387,7 +392,7 @@ class DialogSession:
         """TTS音频响应事件回调"""
         # 这里payload应该是二进制音频数据
         audio_data = payload if isinstance(payload, bytes) else b""
-        logger.info(f"收到TTS音频数据: {len(audio_data)} 字节")
+        logger.debug(f"收到TTS音频数据: {len(audio_data)} 字节")
         if self.tts_response_callback:
             try:
                 if asyncio.iscoroutinefunction(self.tts_response_callback):
@@ -421,7 +426,7 @@ class DialogSession:
             for result in results:
                 text = result.get("text", "")
                 is_interim = result.get("is_interim", False)
-                logger.info(f"ASR识别结果: {text} (临时: {is_interim})")
+                logger.debug(f"ASR识别结果: {text} (临时: {is_interim})")
                 
                 self.server_asr_result = text
                 
@@ -437,7 +442,7 @@ class DialogSession:
     
     async def _on_asr_ended(self, payload: Dict[str, Any]) -> None:
         """ASR结束事件回调"""
-        logger.info("ASR识别结束")
+        logger.info(f"ASR识别结束 : {self.server_asr_result}")
         if self.asr_end_callback:
             try:
                 if asyncio.iscoroutinefunction(self.asr_end_callback):
@@ -450,25 +455,27 @@ class DialogSession:
     # Chat类事件回调方法
     async def _on_chat_response(self, payload: Dict[str, Any]) -> None:
         """聊天响应事件回调"""
-        content = payload.get("content", "")
-        logger.info(f"收到聊天响应: {content[:50]}...")
+        pass
+        # content = payload.get("content", "")
+        # logger.info(f"收到聊天响应: {content[:50]}...")
         
         # 缓冲服务器聊天响应
-        self.server_chat_response += content
+        # self.server_chat_response += content
 
     async def _on_chat_ended(self, payload: Dict[str, Any]) -> None:
         """聊天结束事件回调"""
-        logger.info("聊天响应结束")
-        if self.chat_end_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.chat_end_callback):
-                    await self.chat_end_callback(self.server_chat_response)
-                else:
-                    self.chat_end_callback(self.server_chat_response)
-            except Exception as e:
-                logger.error(f"聊天结束回调执行失败: {e}")
-            # 重置聊天响应缓冲区
-            self.server_chat_response = ""
+        pass
+        # logger.info("聊天响应结束")
+        # if self.chat_end_callback:
+        #     try:
+        #         if asyncio.iscoroutinefunction(self.chat_end_callback):
+        #             await self.chat_end_callback(self.server_chat_response)
+        #         else:
+        #             self.chat_end_callback(self.server_chat_response)
+        #     except Exception as e:
+        #         logger.error(f"聊天结束回调执行失败: {e}")
+        #     # 重置聊天响应缓冲区
+        #     self.server_chat_response = ""
     
     async def _server_receive_loop(self):
         """服务器响应接收循环"""
@@ -549,9 +556,9 @@ class DialogSession:
                 return
                 
             self.last_input_time = time.time()
-            logger.info(f"开始发送音频数据: {len(audio_data)} 字节")
+            logger.debug(f"开始发送音频数据: {len(audio_data)} 字节")
             await self.client.task_request(audio_data)
-            logger.info(f"已发送音频数据: {len(audio_data)} 字节")
+            logger.debug(f"已发送音频数据: {len(audio_data)} 字节")
         except (websockets.exceptions.ConnectionClosed,
                 websockets.exceptions.ConnectionClosedError,
                 websockets.exceptions.WebSocketException,
@@ -631,7 +638,7 @@ class DialogSession:
                 return
                 
             await self.client.chat_tts_text(content, start, end)
-            logger.info(f"已发送TTS文本: {content[:50]}...")
+            # logger.info(f"已发送TTS文本: {content[:50]}...")
         except (websockets.exceptions.ConnectionClosed,
                 websockets.exceptions.ConnectionClosedError,
                 websockets.exceptions.WebSocketException,
@@ -786,7 +793,8 @@ class DialogSession:
                 await self.client.finish_session()
                 while not self.is_session_finished:
                     await asyncio.sleep(0.1)
-            
+
+            self.is_tts_sentence_start = False
             await self.client.finish_connection()
             await asyncio.sleep(0.1)
             await self.client.close()
@@ -794,7 +802,7 @@ class DialogSession:
             logger.info(f"对话会话已清理: {self.session_id}")
             
         except Exception as e:
-            logger.error(f"清理资源时出错: {e}")
+            logger.error(f"DoubaoClient清理资源时出错: {e}")
 
     def print_latency_summary(self) -> None:
         """打印延迟统计摘要"""

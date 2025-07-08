@@ -10,17 +10,11 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str
     OPENAI_PROVIDER: str
     OPENAI_BASE_URL: str
-    ARK_API_KEY: str
-    ALI_PLUS_MODEL: str
-    ALI_TURBO_MODEL: str
-    ALI_API_KEY: str
-    ALI_BASE_URL: str
+
     THINKING_MODEL: str
     GEN_MODEL: str
     LITE_MODEL: str
     VISION_MODEL: str
-    DOUBAO_API_KEY: str
-    DOUBAO_BASE_URL: str
     
     # 服务器配置
     SERVER_PORT: int = 5876
