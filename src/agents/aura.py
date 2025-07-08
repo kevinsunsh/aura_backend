@@ -17,7 +17,6 @@ from config import settings
 from .aura_memory.message_store import MessageStore
 from .aura_memory.chat_stream import ChatStreamManager
 from .message_processor_audio import MessageProcessorAudio
-from .message_processor_text import MessageProcessorText
 from .doubao_client import protocol
 from .configuration import ServerEventEnum, ClientEventEnum
 from .server_protocol import server_parse_request, server_generate_response
@@ -60,7 +59,6 @@ class AuraAgent:
         self.websocket_connection = None  # 存储WebSocket连接
         self.websocket_lock = asyncio.Lock()  # 用于同步访问WebSocket连接
 
-        self.message_processor_text = None
         self.message_processor_audio = None
     
     async def send_websocket_message(self, message: dict):
@@ -170,11 +168,6 @@ class AuraAgent:
 
         # 在锁外进行清理操作，避免死锁
         try:
-            # 清理文本消息处理器
-            if self.message_processor_text:
-                await self.message_processor_text.cleanup()
-                self.message_processor_text = None
-            
             # 清理消息分发器
             if self.message_processor_audio:
                 await self.message_processor_audio.cleanup()
@@ -415,15 +408,6 @@ class AuraAgent:
                         })
                         return False
                 
-                # 初始化流式任务
-                # self.message_processor_text = MessageProcessorText(
-                #     message_store=self.message_store,
-                #     chat_stream=self.chat_stream,
-                #     chat_stream_manager=self.chat_stream_manager,
-                #     db_conn_string=self.db_conn_string,
-                #     websocket_send_callback=self.send_websocket_message
-                # )
-                # await self.message_processor_text.start()
                 self.message_processor_audio = MessageProcessorAudio(
                     message_store=self.message_store,
                     chat_stream=self.chat_stream,
@@ -490,18 +474,8 @@ class AuraAgent:
                     break
                     
                 logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
-
-                message_type = self._determine_message_type(message_data)
+                await self.message_processor_audio.handle_message(message_data)
                 
-                if message_type == MessageType.TEXT:
-                    await self.message_processor_text.handle_text_message(message_data)
-                elif message_type == MessageType.AUDIO:
-                    if "audio_data" in message_data:
-                        logger.debug(f"收到二进制音频消息: len={len(message_data['audio_data'])}")
-                    await self.message_processor_audio.handle_audio_message(message_data)
-                else:
-                    logger.warning(f"不支持的消息类型: {message_type}")
-            
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break

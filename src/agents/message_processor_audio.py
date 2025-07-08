@@ -204,41 +204,27 @@ class MessageProcessorAudio:
         except Exception as e:
             logger.error(f"处理ASR结果失败: {e}")
 
-    async def handle_audio_message(self, 
+    async def handle_message(self,
                                   message_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理音频消息并启动异步任务接收ASR相关消息"""
         try:
-            # 处理音频输入 - 支持二进制协议和传统base64格式
-            audio_data = None
-            
-            # 优先处理二进制协议的audio_data（向后兼容）
-            if "audio_data" in message_data and message_data["audio_data"]:
-                audio_data = message_data["audio_data"]
-                logger.debug(f"使用二进制协议音频数据: {len(audio_data)} 字节")
             # 处理统一协议格式的payload_msg中的音频数据
-            elif "payload_msg" in message_data and message_data["payload_msg"]:
+            if "payload_msg" in message_data and message_data["payload_msg"]:
                 payload_msg = message_data["payload_msg"]
                 if isinstance(payload_msg, dict):
                     # JSON序列化的情况，从字典中提取audio_data
-                    if "audio_data" in payload_msg:
-                        audio_data = payload_msg["audio_data"]
-                        logger.debug(f"使用统一协议音频数据(JSON): {len(audio_data)} 字节")
+                    text_data = payload_msg.get("content", "")
+                    result = await self.text_processor.handle_text_message(
+                        message_data={"message": text_data}
+                    )
+                    
+                    logger.debug(f"文本结果处理完成: {result}")
                 elif isinstance(payload_msg, bytes):
                     # NO_SERIALIZATION的情况，payload_msg本身就是音频数据
-                    audio_data = payload_msg
-                    logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(audio_data)} 字节")
-            
-            if audio_data:
-                await self.dialog_session.process_audio_chunk(audio_data)
-            else:
-                logger.warning("音频消息中没有找到音频数据")
-                return {
-                    "success": False,
-                    "error": "音频消息中缺少音频数据"
-                }
+                    logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(payload_msg)} 字节")
+                    await self.dialog_session.process_audio_chunk(payload_msg)
             
             # logger.info(f"已启动音频消息处理任务: chat_id={chat_stream.chat_id}")
-            
             return {
                 "success": True,
                 "action": "audio_task_started",
