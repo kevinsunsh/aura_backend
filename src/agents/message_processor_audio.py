@@ -58,6 +58,22 @@ class MessageProcessorAudio:
         # ChatStart
         self.is_chat_start = True
     
+    async def start(self):
+        # 初始化DialogSession
+        if self.dialog_session is None:
+            self.dialog_session = DialogSession(
+                uid=self.current_chat_stream.chat_id,
+                asr_start_callback=self.asr_start_callback,
+                asr_response_callback=self.asr_response_callback,
+                asr_end_callback=self.asr_end_callback,
+                tts_start_callback=self.tts_start_callback,
+                tts_response_callback=self.tts_response_callback,
+                tts_end_callback=self.tts_end_callback,
+                chat_end_callback=self.chat_end_callback
+            )
+            await self.dialog_session.start()
+        await self.text_processor.start()
+    
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应并发送到TTS"""
         # 如果是聊天响应，发送到TTS
@@ -192,21 +208,6 @@ class MessageProcessorAudio:
                                   message_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理音频消息并启动异步任务接收ASR相关消息"""
         try:
-            # 初始化DialogSession
-            if self.dialog_session is None:
-                self.dialog_session = DialogSession(
-                    uid=self.current_chat_stream.chat_id,
-                    asr_start_callback=self.asr_start_callback,
-                    asr_response_callback=self.asr_response_callback,
-                    asr_end_callback=self.asr_end_callback,
-                    tts_start_callback=self.tts_start_callback,
-                    tts_response_callback=self.tts_response_callback,
-                    tts_end_callback=self.tts_end_callback,
-                    chat_end_callback=self.chat_end_callback
-                )
-                await self.dialog_session.start()
-                await self.text_processor.start()
-            
             # 处理音频输入 - 支持二进制协议和传统base64格式
             audio_data = None
             

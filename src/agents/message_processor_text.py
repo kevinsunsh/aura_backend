@@ -7,14 +7,15 @@ from datetime import datetime
 from enum import Enum
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from agents.graphs.thinking_graph import builder as background_graph_builder
-from agents.graphs.streaming_graph import builder as streaming_graph_builder
-from agents.task_manager import StreamingActionType, ThinkingActionType
+from agents.graphs.thinking_graph import builder as thinking_graph_builder
+from agents.graphs.observing_graph import builder as observing_graph_builder
+from agents.graphs.replying_graph import builder as replying_graph_builder
+from agents.graphs.speaking_graph import builder as speaking_graph_builder
 from .aura_memory.message_store import MessageStore, Message
 from .aura_memory.chat_stream import ChatStream, ChatStreamManager
 from .configuration import ServerEventEnum
 from utils.utils import performance_point_context
-from .task_manager import TaskManager
+from .task_manager import TaskManager, TaskType, TaskStateType
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +35,32 @@ class MessageProcessorText:
     
     async def start(self):
         TaskManager.initialize(
-            streaming_task_handle=asyncio.create_task(
-                self._streaming_response_task(self.chat_stream)
+            replying_task_handle=asyncio.create_task(
+                self._replying_response_task(self.chat_stream)
+            ),
+            speaking_task_handle=asyncio.create_task(
+                self._speaking_response_task(self.chat_stream)
             ),
             thinking_task_handle=asyncio.create_task(
-                self._background_process_task(self.chat_stream)
+                self._thinking_process_task(self.chat_stream)
+            ),
+            observing_task_handle=asyncio.create_task(
+                self._observing_process_task(self.chat_stream)
             )
         )
-        await TaskManager.get_instance().set_thinking_action(ThinkingActionType.THINKING)
-        await TaskManager.get_instance().set_streaming_action(StreamingActionType.WAITING)
-    
+        await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
+
     async def user_input_interruption(self):
-        await TaskManager.get_instance().set_streaming_action(StreamingActionType.WAITING)
-    
+        await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
+        await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
+
+    async def user_input_resume(self):
+        await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
+
     async def handle_text_message(self, 
                                 message_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理文本消息"""
@@ -89,7 +103,7 @@ class MessageProcessorText:
             
             # 存储到消息存储
             self.message_store.add_message(message)
-            await TaskManager.get_instance().set_streaming_action(StreamingActionType.RESPONSE)
+            await self.user_input_resume()
 
             logger.info(f"文本消息已存储: chat_id={self.chat_stream.chat_id}, content_length={len(user_input)}")
             
@@ -109,19 +123,71 @@ class MessageProcessorText:
                 "message_type": "text"
             }
 
-    async def _streaming_response_task(self, 
+    async def _replying_response_task(self, 
                                  chat_stream: ChatStream):
-        """快速回复任务"""
+        """回复任务"""
         try:
-            logger.info(f"开始快速回复任务: chat_id={chat_stream.chat_id}")
+            logger.info(f"开始回复任务: chat_id={chat_stream.chat_id}")
                         # 处理输入数据
             input_data = {
                 "chat_id": chat_stream.chat_id,
+                "user_id": chat_stream.chat_id,
             }
             thread = {
                 "configurable": {
                     "user_id": chat_stream.chat_id,
-                    "thread_id": chat_stream.chat_id,
+                    "thread_id": f"streaming_{chat_stream.chat_id}",
+                    "message_store": self.message_store,
+                    "chat_stream": chat_stream,
+                    "chat_stream_manager": self.chat_stream_manager,
+                }
+            }
+
+            graph = replying_graph_builder.compile()
+            while True:
+                async for event in graph.astream(input_data, thread, stream_mode=["updates", "messages"]):
+                    # 解析messages事件中的AIMessageChunk内容
+                    type, message_tuple = event
+                    if "messages" == type:
+                        if isinstance(message_tuple, tuple) and len(message_tuple) >= 2:
+                            # 第一个元素是消息类型，第二个元素是消息对象
+                            message_obj, message_meta = message_tuple
+                            if message_obj.content and message_meta["langgraph_node"] == "generate_reply":
+                                if self.websocket_send_callback:
+                                    await self.websocket_send_callback({
+                                        "event": ServerEventEnum.ChatResponse.value,
+                                        "payload_msg": {
+                                            "content": str(message_obj.content)
+                                        }
+                                    })
+                    if "updates" == type:
+                        if "generate_reply" in message_tuple:
+                            if message_tuple["generate_reply"]["replaying_response"] == "finished":
+                                if self.websocket_send_callback:
+                                    await self.websocket_send_callback({
+                                        "event": ServerEventEnum.ChatEnded.value
+                                    })
+        except asyncio.CancelledError:
+            # 只在最外层处理取消，记录日志但不重新抛出
+            logger.info(f"回复任务被取消: chat_id={chat_stream.chat_id}")
+            # 不重新抛出，让任务自然结束
+        except Exception as e:
+            logger.error(f"回复任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+    
+    async def _speaking_response_task(self, 
+                                 chat_stream: ChatStream):
+        """说话任务"""
+        try:
+            logger.info(f"开始说话任务: chat_id={chat_stream.chat_id}")
+                        # 处理输入数据
+            input_data = {
+                "chat_id": chat_stream.chat_id,
+                "user_id": chat_stream.chat_id,
+            }
+            thread = {
+                "configurable": {
+                    "user_id": chat_stream.chat_id,
+                    "thread_id": f"streaming_{chat_stream.chat_id}",
                     "message_store": self.message_store,
                     "chat_stream": chat_stream,
                     "chat_stream_manager": self.chat_stream_manager,
@@ -130,7 +196,7 @@ class MessageProcessorText:
 
             # 使用优化的异步PostgreSQL连接
             async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
-                graph = streaming_graph_builder.compile(checkpointer=checkpointer)
+                graph = speaking_graph_builder.compile(checkpointer=checkpointer)
                 while True:
                     async for event in graph.astream(input_data, thread, stream_mode=["updates", "messages"]):
                         # 解析messages事件中的AIMessageChunk内容
@@ -139,7 +205,7 @@ class MessageProcessorText:
                             if isinstance(message_tuple, tuple) and len(message_tuple) >= 2:
                                 # 第一个元素是消息类型，第二个元素是消息对象
                                 message_obj, message_meta = message_tuple
-                                if message_obj.content and message_meta["langgraph_node"] == "generate_reply":
+                                if message_obj.content and message_meta["langgraph_node"] == "generate_new_message":
                                     if self.websocket_send_callback:
                                         await self.websocket_send_callback({
                                             "event": ServerEventEnum.ChatResponse.value,
@@ -148,37 +214,38 @@ class MessageProcessorText:
                                             }
                                         })
                         if "updates" == type:
-                            if "generate_reply" in message_tuple:
-                                if message_tuple["generate_reply"]["aura_response"] == "finished":
+                            if "generate_new_message" in message_tuple:
+                                if message_tuple["generate_new_message"]["speaking_response"] == "finished":
                                     if self.websocket_send_callback:
                                         await self.websocket_send_callback({
                                             "event": ServerEventEnum.ChatEnded.value
                                         })
                             # if "listen_for_user" in message_tuple:
-                            #     if message_tuple["listen_for_user"]["aura_response"] == "finished":
+                            #     if message_tuple["listen_for_user"]["streaming_response"] == "finished":
                             #         if self.websocket_send_callback:
                             #             await self.websocket_send_callback({
                             #                 "event": ServerEventEnum.ChatEnded.value
                             #             })
         except asyncio.CancelledError:
             # 只在最外层处理取消，记录日志但不重新抛出
-            logger.info(f"流式任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"说话任务被取消: chat_id={chat_stream.chat_id}")
             # 不重新抛出，让任务自然结束
         except Exception as e:
-            logger.error(f"流式任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
-        
-    async def _background_process_task(self, 
+            logger.error(f"说话任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+    
+    async def _thinking_process_task(self, 
                                chat_stream: ChatStream):
-        """异步处理聊天任务，基于原有的_process_text_task函数"""
+        """异步处理思考任务"""
         try:
             # 处理输入数据
             input_data = {
                 "chat_id": chat_stream.chat_id,
+                "user_id": chat_stream.chat_id,
             }
             thread = {
                 "configurable": {
                     "user_id": chat_stream.chat_id,
-                    "thread_id": chat_stream.chat_id,
+                    "thread_id": f"thinking_{chat_stream.chat_id}",
                     "message_store": self.message_store,
                     "chat_stream": chat_stream,
                     "chat_stream_manager": self.chat_stream_manager,
@@ -186,18 +253,52 @@ class MessageProcessorText:
             }
             
             # 使用优化的异步PostgreSQL连接
-            async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
-                graph = background_graph_builder.compile(checkpointer=checkpointer)
-                while True:
-                    async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
-                        type, message_tuple = event
-                        if "updates" == type:
-                            pass
+            # async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
+                # graph = thinking_graph_builder.compile(checkpointer=checkpointer)
+            graph = thinking_graph_builder.compile()
+            while True:
+                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+                    type, message_tuple = event
+                    if "updates" == type:
+                        pass
         except asyncio.CancelledError:
-            logger.info(f"后台任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"思考任务被取消: chat_id={chat_stream.chat_id}")
         except Exception as e:
-            logger.error(f"后台任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+            logger.error(f"思考任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
     
+    async def _observing_process_task(self, 
+                               chat_stream: ChatStream):
+        """异步处理观察任务"""
+        try:
+            # 处理输入数据
+            input_data = {
+                "chat_id": chat_stream.chat_id,
+                "user_id": chat_stream.chat_id,
+            }
+            thread = {
+                "configurable": {
+                    "user_id": chat_stream.chat_id,
+                    "thread_id": f"observing_{chat_stream.chat_id}",
+                    "message_store": self.message_store,
+                    "chat_stream": chat_stream,
+                    "chat_stream_manager": self.chat_stream_manager,
+                }
+            }
+            
+            # 使用优化的异步PostgreSQL连接
+            # async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
+                # graph = observing_graph_builder.compile(checkpointer=checkpointer)
+            graph = observing_graph_builder.compile()
+            while True:
+                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+                    type, message_tuple = event
+                    if "updates" == type:
+                        pass
+        except asyncio.CancelledError:
+            logger.info(f"观察任务被取消: chat_id={chat_stream.chat_id}")
+        except Exception as e:
+            logger.error(f"观察任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+
     async def cleanup(self):
         """清理资源"""
         try:

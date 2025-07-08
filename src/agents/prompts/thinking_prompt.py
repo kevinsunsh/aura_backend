@@ -4,12 +4,14 @@
 THINKING_GOAL_ANALYZER_PROMPT = """{persona_text}现在你在参与一场QQ聊天，请分析以下聊天记录，并根据你的性格特征确定多个明确的对话目标。
 这些目标应该反映出对话的不同方面和意图。
 
-{action_history_text}
 当前对话目标：
 {goals_str}
 
-聊天记录：
-{chat_history_text}
+最近的对话记录(包括你已成功发送的消息 和 新收到的消息)
+已读消息：
+{processed_chat_history_str}
+未读消息：
+{unprocessed_chat_history_str}
 
 请分析当前对话并确定最适合的对话目标。你可以：
 1. 保持现有目标不变

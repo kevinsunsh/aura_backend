@@ -13,10 +13,10 @@ from langgraph.graph import START, END, StateGraph
 from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
-from agents.states.streaming_state import StreamingTaskState
+from agents.states.speaking_state import StreamingTaskState
 from agents.configuration import Configuration, get_chat_model_by_type
 import logging
-from agents.prompts.streaming_prompt import (
+from agents.prompts.replying_prompt import (
     FRONTEND_REPLY_GENERATOR_DIRECT_PROMPT,
     FRONTEND_ACTION_PLANNER_PROMPT,
     FRONTEND_INITIAL_ACTION,

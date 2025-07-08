@@ -416,13 +416,14 @@ class AuraAgent:
                         return False
                 
                 # 初始化流式任务
-                self.message_processor_text = MessageProcessorText(
-                    message_store=self.message_store,
-                    chat_stream=self.chat_stream,
-                    chat_stream_manager=self.chat_stream_manager,
-                    db_conn_string=self.db_conn_string,
-                    websocket_send_callback=self.send_websocket_message
-                )
+                # self.message_processor_text = MessageProcessorText(
+                #     message_store=self.message_store,
+                #     chat_stream=self.chat_stream,
+                #     chat_stream_manager=self.chat_stream_manager,
+                #     db_conn_string=self.db_conn_string,
+                #     websocket_send_callback=self.send_websocket_message
+                # )
+                # await self.message_processor_text.start()
                 self.message_processor_audio = MessageProcessorAudio(
                     message_store=self.message_store,
                     chat_stream=self.chat_stream,
@@ -430,6 +431,7 @@ class AuraAgent:
                     db_conn_string=self.db_conn_string,
                     websocket_send_callback=self.send_websocket_message
                 )
+                await self.message_processor_audio.start()
                 # 发送session确认
                 await self.send_websocket_message({
                     "event": ServerEventEnum.SessionStarted.value,

@@ -15,7 +15,6 @@ from langgraph.graph import START, END, StateGraph
 from langgraph.types import interrupt, Command
 
 from agents.states.thinking_state import ThinkingTaskState
-from agents.task_manager import StreamingActionType, ThinkingActionType
 from agents.configuration import Configuration, get_chat_model_by_type
 import logging
 from agents.prompts.thinking_prompt import (
@@ -32,32 +31,37 @@ from agents.graphs.todo_mock_func import (
     _build_action_history_summary,
     _build_knowledge_info_str
 )
-from agents.task_manager import TaskManager
+from agents.task_manager import TaskManager, TaskType, TaskStateType
 
 logger = logging.getLogger(__name__)
 
 async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
     """分析对话目标"""
     try:
-        if TaskManager.get_instance().get_thinking_action().action_type == ThinkingActionType.WAITING:
+        if TaskManager.get_instance().get_task_state(TaskType.THINKING) == TaskStateType.PAUSED:
             return Command(goto="wait_for_user_message")
 
-        chat_model = get_chat_model_by_type("basic")
+        chat_model = get_chat_model_by_type("reasoning")
         
         # 构建提示词参数
         persona_text = _get_persona_text()
-        goals_str = _build_goals_str(state.get("goals", []))
+        observing_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.OBSERVING)
+        processed_chat_history_str = observing_task_shared_data.get("processed_chat_history_str", "还没有聊天记录。")
+        unprocessed_chat_history_str = observing_task_shared_data.get("unprocessed_chat_history_str", "还没有聊天记录。")
+        logger.info(f"analyze_goals unprocessed_chat_history_str: {unprocessed_chat_history_str}")
+        logger.info(f"analyze_goals processed_chat_history_str: {processed_chat_history_str}")
+
+        thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
+        goals_str = thinking_task_shared_data.get("goals_str", "")
         logger.info(f"analyze_goals begin goals_str: {goals_str}")
-        action_history_text = _build_action_history_summary(state.get("action_history", []))
-        unprocessed_chat_history_text = state.get("unprocessed_chat_history_str", "")
-        processed_chat_history_text = state.get("processed_chat_history_str", "还没有聊天记录。")
+        knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
 
         # 格式化提示词
         prompt = THINKING_GOAL_ANALYZER_PROMPT.format(
             persona_text=persona_text,
-            action_history_text=action_history_text,
             goals_str=goals_str,
-            chat_history_text=processed_chat_history_text + "\n" + unprocessed_chat_history_text,
+            processed_chat_history_str=processed_chat_history_str,
+            unprocessed_chat_history_str=unprocessed_chat_history_str,
             bot_name="aura",
             user_name=state.get("user_id", "")
         )
@@ -105,16 +109,14 @@ async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
                     goals = []
         
         # 更新状态
-        current_goal = goals[0].get("goal", "") if goals else ""
-        logger.info(f"analyze_goals end goals_str: {_build_goals_str(goals)}")
+        goals_str = _build_goals_str(goals)
+        logger.info(f"analyze_goals end goals_str: {goals_str}")
+        await TaskManager.get_instance().set_task_shared_data(TaskType.THINKING, {
+            "goals_str": goals_str,
+            "knowledge_info_str": ""
+        })
         await asyncio.sleep(1)
-        return Command(
-            update={
-                "goals": goals,
-                "current_goal": current_goal
-            },
-            goto=END
-        )
+        return Command(goto=END)
     except Exception as e:
         logger.error(f"分析对话目标时出错: {str(e)}")
         return Command(
