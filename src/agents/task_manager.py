@@ -26,6 +26,7 @@ class AgentTask:
 class TaskType(Enum):
     SPEAKING = "speaking"
     REPLYING = "replying"
+    MUTTERING = "muttering"
     THINKING = "thinking"
     OBSERVING = "observing"
 
@@ -40,10 +41,11 @@ class TaskManager:
     
     def __init__(self, replying_task_handle: asyncio.Task = None,
                     speaking_task_handle: asyncio.Task = None,
+                    muttering_task_handle: asyncio.Task = None,
                     thinking_task_handle: asyncio.Task = None,
                     observing_task_handle: asyncio.Task = None):
         if not self._initialized:
-            if replying_task_handle is None or speaking_task_handle is None or thinking_task_handle is None or observing_task_handle is None:
+            if replying_task_handle is None or speaking_task_handle is None or muttering_task_handle is None or thinking_task_handle is None or observing_task_handle is None:
                 raise ValueError("TaskManager 初始化时需要提供 replying_task_handle, speaking_task_handle, thinking_task_handle, observing_task_handle")
             
             self._task_map: Dict[TaskType, AgentTask] = {}
@@ -52,6 +54,9 @@ class TaskManager:
             )
             self._task_map[TaskType.SPEAKING] = AgentTask(
                 task_handle=speaking_task_handle
+            )
+            self._task_map[TaskType.MUTTERING] = AgentTask(
+                task_handle=muttering_task_handle
             )
             self._task_map[TaskType.THINKING] = AgentTask(
                 task_handle=thinking_task_handle
@@ -71,14 +76,15 @@ class TaskManager:
     @classmethod
     def initialize(cls, replying_task_handle: asyncio.Task,
                     speaking_task_handle: asyncio.Task,
+                    muttering_task_handle: asyncio.Task,
                     thinking_task_handle: asyncio.Task,
                     observing_task_handle: asyncio.Task) -> 'TaskManager':
         """初始化TaskManager单例"""
         if cls._instance is None:
-            cls._instance = cls(replying_task_handle, speaking_task_handle, thinking_task_handle, observing_task_handle)
+            cls._instance = cls(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle)
         elif not cls._initialized:
             # 如果实例存在但未初始化，重新初始化
-            cls._instance.__init__(replying_task_handle, speaking_task_handle, thinking_task_handle, observing_task_handle)
+            cls._instance.__init__(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle)
         return cls._instance
     
     async def set_task_state(self, task_type: TaskType, state: TaskStateType):

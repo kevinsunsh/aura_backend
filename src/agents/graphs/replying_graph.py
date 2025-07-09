@@ -22,11 +22,7 @@ from agents.prompts.replying_prompt import (
 from agents.aura_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
 from agents.graphs.todo_mock_func import (
-    _get_persona_text,
-    _build_chat_history_str,
-    _build_goals_str,
-    _build_knowledge_info_str,
-    _build_action_history_summary
+    _get_persona_text
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
@@ -50,6 +46,10 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
         unprocessed_chat_history_str = observing_task_shared_data.get("unprocessed_chat_history_str", "还没有聊天记录。")
         last_bot_message_time = observing_task_shared_data.get("last_bot_message_time", None)
         last_user_message_time = observing_task_shared_data.get("last_user_message_time", None)
+        if last_bot_message_time is None or last_user_message_time is None:
+            return Command(goto=END, update={
+                "replaying_response": "skipped"
+            })
         if last_bot_message_time > last_user_message_time:
             return Command(goto=END, update={
                 "replaying_response": "skipped"
@@ -80,11 +80,13 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
         extra_body={"thinking": {"type": "disabled"}}):
             if hasattr(chunk, 'content'):
                 end_performance_point(quick_response_point_id)
-                final_response += chunk.content
-                writer({"content": chunk.content})
                 if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
                     logger.info(f"打断流式响应，继续倾听")  
                     break
+                if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.RUNNING:
+                    await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.STOPPED)
+                final_response += chunk.content
+                writer({"content": chunk.content})
         
         configurable.chat_stream_manager.update_chat_stream_checked_at(state["chat_id"])
         # 保存消息到数据库
@@ -98,6 +100,8 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
             data={},
             created_at=int(datetime.now().timestamp() * 1000)
         ))
+        # if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.STOPPED:
+        #     await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
         return Command(goto=END, update={
             "replaying_response": "finished"
         })            

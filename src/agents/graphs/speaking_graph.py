@@ -29,8 +29,7 @@ from agents.graphs.todo_mock_func import (
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
 logger = logging.getLogger(__name__)
-reply_max_latency = 30
-history_check_interval = 60
+reply_max_latency = 30 #s
 
 async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
     """规划下一步行动"""
@@ -49,7 +48,7 @@ async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
         # 构建时间和超时信息
         time_since_last_bot_message_info = ""
         if last_bot_message_time:
-            time_diff = datetime.now().timestamp() - last_bot_message_time / 1000
+            time_diff = (datetime.now().timestamp() - last_bot_message_time) / (1000 * 1000)
             if time_diff < reply_max_latency:
                 time_since_last_bot_message_info = f"提示：你上一条成功发送的消息是在 {time_diff:.1f} 秒前。"
             else:
@@ -58,12 +57,12 @@ async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
         timeout_context = ""
         if last_user_message_time:
             if last_bot_message_time > last_user_message_time:
-                time_diff = datetime.now().timestamp() - last_user_message_time / 1000
+                time_diff = (datetime.now().timestamp() - last_user_message_time) / (1000 * 1000)
                 timeout_context = f"重要提示：对方已经{time_diff:.1f}秒没有回复你的消息了,请基于此情况规划下一步。"
                 if time_diff > reply_max_latency:
                     timeout_context = "重要提示：对方已经长时间没有回复你的消息了（这可能代表对方繁忙/不想回复/没注意到你的消息等情况，或在对方看来本次聊天已告一段落），请基于此情况规划下一步。"
             else:
-                time_diff = datetime.now().timestamp() - last_bot_message_time / 1000
+                time_diff = (datetime.now().timestamp() - last_bot_message_time) / (1000 * 1000)
                 timeout_context = f"重要提示：你已经{time_diff:.1f}秒没有回复对方了，请基于此情况规划下一步。"
                 if time_diff > reply_max_latency:
                     timeout_context = "重要提示：你已经很长时间没有回复对方了，请基于此情况规划下一步。"
@@ -153,9 +152,7 @@ async def _wait_for_user_message(state: SpeakingTaskState, config: RunnableConfi
 
 async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig):
     """发送立即回复"""
-    try:
-        TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.STOPPED)
-        
+    try:  
         configurable = Configuration.from_runnable_config(config)
         # 使用LLM生成立即回复
         chat_model = get_chat_model_by_type("basic")
@@ -187,11 +184,16 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
         extra_body={"thinking": {"type": "disabled"}}):
             if hasattr(chunk, 'content'):
                 end_performance_point(quick_response_point_id)
-                final_response += chunk.content
-                writer({"content": chunk.content})
                 if TaskManager.get_instance().get_task_state(TaskType.SPEAKING) == TaskStateType.PAUSED:
                     logger.info(f"打断流式响应，继续倾听")  
                     break
+                # 停止其他说话任务
+                if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.RUNNING:
+                    await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.STOPPED)
+                if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.RUNNING:
+                    await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.STOPPED)
+                final_response += chunk.content
+                writer({"content": chunk.content})
         
         configurable.chat_stream_manager.update_chat_stream_checked_at(state["chat_id"])
         # 保存消息到数据库
@@ -206,7 +208,9 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
             created_at=int(datetime.now().timestamp() * 1000)
         ))
         if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.STOPPED:
-            TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
+            await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
+        # if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.STOPPED:
+        #     await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
         return Command(goto=END, update={
             "speaking_response": "finished"
         })            

@@ -23,7 +23,7 @@ from agents.graphs.todo_mock_func import _build_chat_history_str
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
 logger = logging.getLogger(__name__)
-history_check_interval = 300
+history_check_interval = 60000 #ms
 # 后台任务节点函数
 async def _observe_conversation(state: ObservingTaskState, config: RunnableConfig):
     """观察对话状态"""

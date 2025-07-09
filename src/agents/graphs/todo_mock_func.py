@@ -60,5 +60,8 @@ def _build_chat_history_str(messages: List[Message]) -> str:
     """构建聊天历史字符串"""
     chat_history_str = ""
     for msg in messages:
-        chat_history_str += f"{msg.user_id}: {msg.content}\n"
+        if msg.user_id == "aura":
+            chat_history_str += f"aura(bot)说: {msg.content}\n"
+        else:
+            chat_history_str += f"{msg.user_id}(user)说: {msg.content}\n"
     return chat_history_str

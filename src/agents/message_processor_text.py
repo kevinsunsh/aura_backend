@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 import json
+import random
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
 from enum import Enum
@@ -11,6 +12,7 @@ from agents.graphs.thinking_graph import builder as thinking_graph_builder
 from agents.graphs.observing_graph import builder as observing_graph_builder
 from agents.graphs.replying_graph import builder as replying_graph_builder
 from agents.graphs.speaking_graph import builder as speaking_graph_builder
+from agents.graphs.muttering_graph import builder as muttering_graph_builder
 from .aura_memory.message_store import MessageStore, Message
 from .aura_memory.chat_stream import ChatStream, ChatStreamManager
 from .configuration import ServerEventEnum
@@ -41,6 +43,9 @@ class MessageProcessorText:
             speaking_task_handle=asyncio.create_task(
                 self._speaking_response_task(self.chat_stream)
             ),
+            muttering_task_handle=asyncio.create_task(
+                self._muttering_process_task(self.chat_stream)
+            ),
             thinking_task_handle=asyncio.create_task(
                 self._thinking_process_task(self.chat_stream)
             ),
@@ -52,14 +57,17 @@ class MessageProcessorText:
         await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
 
     async def user_input_interruption(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
         await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
+        await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.PAUSED)
 
     async def user_input_resume(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
 
     async def handle_text_message(self, 
                                 message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,7 +119,53 @@ class MessageProcessorText:
                 "error": f"处理文本消息失败: {str(e)}",
                 "message_type": "text"
             }
+    
+    async def _muttering_process_task(self, 
+                                 chat_stream: ChatStream):
+        """自言自语任务"""
+        try:
+            logger.info(f"开始自言自语任务: chat_id={chat_stream.chat_id}")
+                        # 处理输入数据
+            input_data = {
+                "chat_id": chat_stream.chat_id,
+                "user_id": chat_stream.chat_id,
+            }
+            thread = {
+                "configurable": {
+                    "user_id": chat_stream.chat_id,
+                    "thread_id": f"streaming_{chat_stream.chat_id}",
+                    "message_store": self.message_store,
+                    "chat_stream": chat_stream,
+                    "chat_stream_manager": self.chat_stream_manager,
+                }
+            }
 
+            graph = muttering_graph_builder.compile()
+            while True:
+                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+                    # 解析messages事件中的AIMessageChunk内容
+                    type, message_tuple = event
+                    if "updates" == type:
+                        if "generate_muttering" in message_tuple:
+                            if message_tuple["generate_muttering"]["muttering_response"] == "finished":
+                                if self.websocket_send_callback:
+                                    await self.websocket_send_callback({
+                                        "event": ServerEventEnum.ChatResponse.value,
+                                        "payload_msg": {
+                                            "content": message_tuple["generate_muttering"]["muttering_content"]
+                                        }
+                                    })
+                                    await self.websocket_send_callback({
+                                        "event": ServerEventEnum.ChatEnded.value
+                                    })
+                                    await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            # 只在最外层处理取消，记录日志但不重新抛出
+            logger.info(f"自言自语任务被取消: chat_id={chat_stream.chat_id}")
+            # 不重新抛出，让任务自然结束
+        except Exception as e:
+            logger.error(f"自言自语任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+    
     async def _replying_response_task(self, 
                                  chat_stream: ChatStream):
         """回复任务"""

@@ -315,7 +315,6 @@ class AuraAgent:
             logger.error(f"WebSocket 连接错误: {str(e)}")
         finally:
             # 清理资源
-            await self.remove_websocket_connection()
             await self.cleanup()
 
     async def _wait_for_connection_start(self, websocket) -> bool:
@@ -323,6 +322,7 @@ class AuraAgent:
         try:
             # 直接尝试接收消息，如果连接有问题会抛出异常
             # 兼容 FastAPI WebSocket (receive) 和标准 websockets (recv)
+            data = None
             if hasattr(websocket, 'receive'):
                 data = await websocket.receive()
                 # FastAPI WebSocket 返回的是字典，需要提取数据
@@ -336,7 +336,10 @@ class AuraAgent:
                         return False
             else:
                 data = await websocket.recv()
-                
+            
+            if data is None:
+                return False
+            
             message_data = self._parse_binary_protocol_message(data)
             
             if "error" in message_data:
@@ -475,7 +478,7 @@ class AuraAgent:
                     
                 logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
                 await self.message_processor_audio.handle_message(message_data)
-                
+
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break

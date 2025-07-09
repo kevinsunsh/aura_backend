@@ -84,7 +84,8 @@ class MessageProcessorAudio:
                     if self.is_chat_start:
                         self.is_chat_start = False
                         await self.dialog_session.send_text_chunk(chunk_content, start=True, end=False)
-                    await self.dialog_session.send_text_chunk(chunk_content)
+                    else:
+                        await self.dialog_session.send_text_chunk(chunk_content)
                     logger.debug(f"已发送TTS文本片段: {chunk_content[:30]}...")
                 except Exception as e:
                     logger.error(f"发送TTS文本片段失败: {e}")
@@ -250,4 +251,5 @@ class MessageProcessorAudio:
             finally:
                 self.dialog_session = None
                 logger.info("DialogSession引用已置空")
+        self.text_processor.cleanup()
         self.current_chat_stream = None
