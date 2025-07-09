@@ -1658,7 +1658,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream/test_user_123")
+    # session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream/test_user_123")
+    session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":
