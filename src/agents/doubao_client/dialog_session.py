@@ -50,7 +50,7 @@ class DialogSession:
         # 重连状态管理
         self.is_reconnecting = False
         self.reconnect_attempts = 0
-        self.max_reconnect_attempts = 3
+        self.max_reconnect_attempts = 99
         self.reconnect_delay = 2.0  # 重连延迟秒数
         self.reconnect_start_time = None  # 重连开始时间
         
