@@ -53,10 +53,14 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
             )
         else:
             recent_processed_messages = []
-
-        last_bot_message_time = configurable.message_store.get_recent_messages(user_id="aura", limit=1)[0].created_at
-        last_user_message_time = configurable.message_store.get_recent_messages(user_id=user_id, limit=1)[0].created_at
-
+        
+        last_bot_message = configurable.message_store.get_recent_messages(user_id="aura", limit=1)[0]
+        last_user_message = configurable.message_store.get_recent_messages(user_id=user_id, limit=1)[0]
+        last_bot_message_time = last_bot_message.created_at if last_bot_message else None
+        last_user_message_time = last_user_message.created_at if last_user_message else None
+        last_bot_message_content = last_bot_message.content if last_bot_message else None
+        last_user_message_content = last_user_message.content if last_user_message else None
+        
         # 更新观察信息
         unprocessed_chat_history_str = _build_chat_history_str(unprocessed_messages)
         logger.info(f"observe_conversation unprocessed_chat_history_str: {unprocessed_chat_history_str}")
@@ -67,7 +71,9 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
             "processed_chat_history_str": processed_chat_history_str,
             "unprocessed_chat_history_str": unprocessed_chat_history_str,
             "last_bot_message_time": last_bot_message_time,
-            "last_user_message_time": last_user_message_time
+            "last_bot_message_content": last_bot_message_content,
+            "last_user_message_time": last_user_message_time,
+            "last_user_message_content": last_user_message_content
         })
 
         return Command(goto=END)

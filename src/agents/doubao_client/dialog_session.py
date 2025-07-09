@@ -304,7 +304,8 @@ class DialogSession:
             await self._on_session_failed(payload_msg)
         # TTS类事件 (350-359)
         elif event_id == 350:  # TTSSentenceStart
-            if payload_msg["tts_type"] == "chat_tts_text":
+            # if payload_msg["tts_type"] in ["chat_tts_text", "default"]:
+            if payload_msg["tts_type"] in ["chat_tts_text"]:
                 await self._on_tts_sentence_start(payload_msg)
                 self.is_tts_sentence_start = True
         elif event_id == 351:  # TTSSentenceEnd

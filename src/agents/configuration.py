@@ -75,3 +75,4 @@ class ServerEventEnum(Enum):
 	ASREnded = 459
 	ChatResponse = 550
 	ChatEnded = 559
+	MutteringResponse = 650

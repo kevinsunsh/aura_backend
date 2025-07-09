@@ -150,13 +150,10 @@ class MessageProcessorText:
                             if message_tuple["generate_muttering"]["muttering_response"] == "finished":
                                 if self.websocket_send_callback:
                                     await self.websocket_send_callback({
-                                        "event": ServerEventEnum.ChatResponse.value,
+                                        "event": ServerEventEnum.MutteringResponse.value,
                                         "payload_msg": {
                                             "content": message_tuple["generate_muttering"]["muttering_content"]
                                         }
-                                    })
-                                    await self.websocket_send_callback({
-                                        "event": ServerEventEnum.ChatEnded.value
                                     })
                                     await asyncio.sleep(1)
         except asyncio.CancelledError:

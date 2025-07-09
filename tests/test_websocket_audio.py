@@ -489,6 +489,10 @@ class WebSocketTestSession:
         self.second_asr_info_received_time = None
         self.interrupt_audio_send_time = None
         self.first_request_send_time = None
+        # ASREnded和TTSSentenceStart之间的延迟统计
+        self.asr_ended_time = None
+        self.tts_sentence_start_time = None
+        self.asr_to_tts_delays = []  # 存储所有ASREnded到TTSSentenceStart的延迟
         # 信号处理
         signal.signal(signal.SIGINT, self._keyboard_signal)
         # 文件发送模式标记
@@ -503,6 +507,83 @@ class WebSocketTestSession:
         self.reconnect_attempts = 0
         # 初始化Opus解码器（24kHz, 单声道）- 匹配服务器音频格式
         # self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
+        
+        # TTS音频录制相关
+        self.is_recording_tts = False
+        self.current_tts_audio_data = bytearray()
+        self.tts_recording_start_time = None
+
+    def _save_tts_audio_file(self):
+        """保存录制的TTS音频文件 - 三个版本测试"""
+        try:
+            if not self.current_tts_audio_data:
+                logger.warning("⚠️ 没有录制的TTS音频数据")
+                return
+            
+            # 生成时间戳
+            timestamp = datetime.fromtimestamp(self.tts_recording_start_time).strftime('%Y%m%d_%H%M%S_%f')[:-3]
+            
+            # 确保输出目录存在
+            output_dir = "audio_output"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 音频参数
+            sample_rate = 24000
+            channels = 1
+            
+            # 版本1: 保存原始Float32二进制数据
+            filename1 = f"tts_audio_{timestamp}_float32.bin"
+            filepath1 = os.path.join(output_dir, filename1)
+            with open(filepath1, 'wb') as bin_file:
+                bin_file.write(self.current_tts_audio_data)
+            logger.info(f"💾 版本1 - Float32二进制: {filepath1}")
+            
+            # 版本2: 转换为Int16并保存为WAV
+            filename2 = f"tts_audio_{timestamp}_int16.wav"
+            filepath2 = os.path.join(output_dir, filename2)
+            
+            # 将Float32转换为Int16
+            import struct
+            float32_data = self.current_tts_audio_data
+            int16_data = bytearray()
+            
+            for i in range(0, len(float32_data), 4):
+                if i + 4 <= len(float32_data):
+                    float_val = struct.unpack('f', float32_data[i:i+4])[0]
+                    # 将Float32转换为Int16，范围限制在-32768到32767
+                    int16_val = max(-32768, min(32767, int(float_val * 32767)))
+                    int16_data.extend(struct.pack('h', int16_val))
+            
+            # 保存Int16 WAV文件
+            with wave.open(filepath2, 'wb') as wav_file:
+                wav_file.setnchannels(channels)
+                wav_file.setsampwidth(2)  # Int16 = 2字节
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(int16_data)
+            logger.info(f"💾 版本2 - Int16 WAV: {filepath2}")
+            
+            # 版本3: 保存Int16二进制数据
+            filename3 = f"tts_audio_{timestamp}_int16.bin"
+            filepath3 = os.path.join(output_dir, filename3)
+            with open(filepath3, 'wb') as bin_file:
+                bin_file.write(int16_data)
+            logger.info(f"💾 版本3 - Int16二进制: {filepath3}")
+            
+            # 计算音频时长
+            total_bytes = len(self.current_tts_audio_data)
+            sample_width = 4  # Float32 = 4字节
+            total_samples = total_bytes // sample_width
+            duration_seconds = total_samples / sample_rate
+            
+            logger.info(f"📊 音频信息: {total_bytes} 字节, {duration_seconds:.3f} 秒, {sample_rate}Hz, {channels}声道")
+            logger.info(f"📊 转换后Int16: {len(int16_data)} 字节")
+            
+            # 清空录制数据
+            self.current_tts_audio_data = bytearray()
+            self.tts_recording_start_time = None
+            
+        except Exception as e:
+            logger.error(f"❌ 保存TTS音频文件失败: {e}")
 
     def _keyboard_signal(self, sig, frame):
         """处理键盘中断信号"""
@@ -595,17 +676,47 @@ class WebSocketTestSession:
             event_id = data["event"]
             payload_msg = data.get("payload_msg", {})
             if event_id == 450:  # ASRInfo
-                logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
+                logger.debug("🎤 收到ASRInfo事件(450)，触发AI播报打断")
                 self.asr_info_received_time = time.time()
                 self._clear_audio_buffers()
-                logger.info("⏸️ 播放已暂停")
+                logger.debug("⏸️ 播放已暂停")
             elif event_id == 451:  # ASRResponse
                 self.chunk_count += 1
                 content = payload_msg.get("text", "")
                 self.full_response += content
-                logger.info(f"收到第{self.chunk_count}个内容片段: '{content}'")
+                logger.debug(f"收到第{self.chunk_count}个内容片段: '{content}'")
+            elif event_id == 459:  # ASREnded
+                logger.debug("🎤 ASR结束")
+                self.asr_ended_time = time.time()
+                logger.debug(f"⏱️ ASREnded时间戳: {self.asr_ended_time}")
             elif event_id == 350:  # TTSSentenceStart
                 logger.info("🎵 TTS语音合成开始...")
+                # 记录TTSSentenceStart时间戳
+                self.tts_sentence_start_time = time.time()
+                # logger.info(f"⏱️ TTSSentenceStart时间戳: {self.tts_sentence_start_time}")
+                
+                # 计算ASREnded到TTSSentenceStart的延迟（只计算第一个TTSSentenceStart）
+                if self.asr_ended_time is not None:
+                    delay = self.tts_sentence_start_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个TTSSentenceStart延迟: {delay:.3f}秒")
+                    
+                    # 清除asr_ended_time，避免后续TTSSentenceStart重复计算
+                    self.asr_ended_time = None
+                    
+                    # 输出延迟统计信息
+                    if len(self.asr_to_tts_delays) > 1:
+                        avg_delay = sum(self.asr_to_tts_delays) / len(self.asr_to_tts_delays)
+                        min_delay = min(self.asr_to_tts_delays)
+                        max_delay = max(self.asr_to_tts_delays)
+                        logger.info(f"📊 延迟统计 (共{len(self.asr_to_tts_delays)}次): 平均={avg_delay:.3f}s, 最小={min_delay:.3f}s, 最大={max_delay:.3f}s")
+                
+                # 开始录制TTS音频
+                self.is_recording_tts = False
+                self.current_tts_audio_data = bytearray()
+                self.tts_recording_start_time = time.time()
+                logger.debug(f"🎙️ 开始录制TTS音频，时间戳: {datetime.fromtimestamp(self.tts_recording_start_time).strftime('%Y%m%d_%H%M%S_%f')[:-3]}")
+                
                 if self.first_tts_audio_received_time is None:
                     self.first_tts_audio_received_time = time.time()
                     self.first_asr_info_received_time = self.asr_info_received_time
@@ -614,11 +725,20 @@ class WebSocketTestSession:
                         self.second_tts_audio_received_time = time.time()
                         self.second_asr_info_received_time = self.asr_info_received_time
             elif event_id == 351:  # TTSSentenceEnd
-                logger.info("当前句子TTS语音合成完成")
+                logger.debug("当前句子TTS语音合成完成")
+                # 结束录制并保存文件
+                if self.is_recording_tts and self.tts_recording_start_time is not None:
+                    self.is_recording_tts = False
+                    self._save_tts_audio_file()
             elif event_id == 352:  # TTSResponse
                 # 处理TTS音频数据 - 可能是PCM格式，不是Opus
                 audio_data = payload_msg
                 logger.debug(f"🎵 收到TTS音频数据: {len(audio_data)} 字节")
+                
+                # 如果正在录制，保存音频数据
+                if self.is_recording_tts:
+                    self.current_tts_audio_data.extend(audio_data)
+                    logger.debug(f"🎙️ 录制TTS音频数据: {len(audio_data)} 字节 (累计: {len(self.current_tts_audio_data)} 字节)")
                 
                 # 尝试多种音频格式处理
                 try:
@@ -705,7 +825,7 @@ class WebSocketTestSession:
                         if "error" in data:
                             logger.error(f"解析二进制协议失败: {data['error']}")
                             continue
-                        logger.info(f"收到二进制协议响应: 事件ID={data.get('event', 'unknown')}")
+                        # logger.info(f"收到二进制协议响应: 事件ID={data.get('event', 'unknown')}")
                     else:
                         # 文本格式，尝试JSON解析
                         data = json.loads(response_data)
@@ -1084,6 +1204,22 @@ class WebSocketTestSession:
                 
                 print(f"\n=== 麦克风音频会话结束，总共收到 {self.chunk_count} 个内容片段 ===")
                 logger.info(f"完整响应内容: {self.full_response}")
+                
+                # 输出ASREnded到第一个TTSSentenceStart延迟统计总结
+                if self.asr_to_tts_delays:
+                    print("\n" + "="*50)
+                    print("🎯 ASREnded到第一个TTSSentenceStart延迟统计总结")
+                    print("="*50)
+                    print(f"📊 总延迟次数: {len(self.asr_to_tts_delays)}")
+                    print(f"⏱️ 平均延迟: {sum(self.asr_to_tts_delays) / len(self.asr_to_tts_delays):.3f}秒")
+                    print(f"⚡ 最小延迟: {min(self.asr_to_tts_delays):.3f}秒")
+                    print(f"🐌 最大延迟: {max(self.asr_to_tts_delays):.3f}秒")
+                    print("📈 详细延迟列表:")
+                    for i, delay in enumerate(self.asr_to_tts_delays, 1):
+                        print(f"  第{i}次: {delay:.3f}秒")
+                    print("="*50)
+                else:
+                    print("\n⚠️ 未检测到ASREnded到第一个TTSSentenceStart的延迟数据")
 
                 # 执行结束握手
                 await self.end_session_handshake()
@@ -1389,6 +1525,22 @@ class WebSocketTestSession:
                 print(f"\n=== 打断测试完成，总共收到 {self.chunk_count} 个内容片段 ===")
                 logger.info(f"完整响应内容: {self.full_response}")
                 
+                # 输出ASREnded到第一个TTSSentenceStart延迟统计总结
+                if self.asr_to_tts_delays:
+                    print("\n" + "="*50)
+                    print("🎯 ASREnded到第一个TTSSentenceStart延迟统计总结")
+                    print("="*50)
+                    print(f"📊 总延迟次数: {len(self.asr_to_tts_delays)}")
+                    print(f"⏱️ 平均延迟: {sum(self.asr_to_tts_delays) / len(self.asr_to_tts_delays):.3f}秒")
+                    print(f"⚡ 最小延迟: {min(self.asr_to_tts_delays):.3f}秒")
+                    print(f"🐌 最大延迟: {max(self.asr_to_tts_delays):.3f}秒")
+                    print("📈 详细延迟列表:")
+                    for i, delay in enumerate(self.asr_to_tts_delays, 1):
+                        print(f"  第{i}次: {delay:.3f}秒")
+                    print("="*50)
+                else:
+                    print("\n⚠️ 未检测到ASREnded到第一个TTSSentenceStart的延迟数据")
+                
                 # 输出打断测试的延迟统计结果
                 print("\n" + "="*50)
                 print("🎯 打断测试延迟统计结果")
@@ -1481,7 +1633,6 @@ class WebSocketTestSession:
                 max_size=1000000000,   # 最大消息大小1GB
                 compression=None,      # 禁用压缩避免问题
                 max_queue=32,          # 限制队列大小
-                read_limit=2**16,      # 限制读取缓冲区
                 write_limit=2**16      # 限制写入缓冲区
             )
             

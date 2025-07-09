@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import uuid
@@ -6,14 +7,18 @@ import json
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
 from enum import Enum
+from abc import ABC, abstractmethod
 
 from .aura_memory.message_store import MessageStore, Message
 from .aura_memory.chat_stream import ChatStream, ChatStreamManager
 from .doubao_client.dialog_session import DialogSession
+from .doubao_client.asr_client import AsrClient
+from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
 from .doubao_client.config import ws_connect_config
 from .configuration import ServerEventEnum
 from utils.utils import start_performance_point, end_performance_point
+from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,209 @@ class AudioTaskType(Enum):
     """音频任务类型枚举"""
     PROCESS = "process"  # 正常处理任务
     QUICK_RESPONSE = "quick_response"  # 快速回复任务
+
+class AudioClientType(Enum):
+    """音频客户端类型枚举"""
+    DIALOG_SESSION = "dialog_session"  # 使用DialogSession
+    SEPARATE_CLIENTS = "separate_clients"  # 使用单独的ASR和TTS客户端
+
+class IAudioClient(ABC):
+    """音频客户端抽象接口"""
+    
+    @abstractmethod
+    async def start(self) -> None:
+        """启动客户端"""
+        pass
+    
+    @abstractmethod
+    async def cleanup(self) -> None:
+        """清理资源"""
+        pass
+    
+    @abstractmethod
+    async def process_audio_chunk(self, audio_chunk: bytes) -> None:
+        """处理音频块"""
+        pass
+    
+    @abstractmethod
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
+        """发送文本块"""
+        pass
+    
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """检查连接状态"""
+        pass
+
+class DialogSessionClient(IAudioClient):
+    """DialogSession客户端包装器"""
+    
+    def __init__(self, 
+                 uid: str,
+                 asr_start_callback: Callable[[], None],
+                 asr_response_callback: Callable[[str, bool], None],
+                 asr_end_callback: Callable[[str], None],
+                 tts_start_callback: Callable[[str], None],
+                 tts_response_callback: Callable[[bytes], None],
+                 tts_end_callback: Callable[[], None],
+                 chat_end_callback: Callable[[str], None]):
+        self.dialog_session = DialogSession(
+            uid=uid,
+            asr_start_callback=asr_start_callback,
+            asr_response_callback=asr_response_callback,
+            asr_end_callback=asr_end_callback,
+            tts_start_callback=tts_start_callback,
+            tts_response_callback=tts_response_callback,
+            tts_end_callback=tts_end_callback,
+            chat_end_callback=chat_end_callback
+        )
+    
+    async def start(self) -> None:
+        await self.dialog_session.start()
+    
+    async def cleanup(self) -> None:
+        await self.dialog_session.cleanup()
+    
+    async def process_audio_chunk(self, audio_chunk: bytes) -> None:
+        await self.dialog_session.process_audio_chunk(audio_chunk)
+    
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
+        await self.dialog_session.send_text_chunk(text, start, end)
+    
+    def is_connected(self) -> bool:
+        return self.dialog_session.is_connected()
+
+class SeparateClientsClient(IAudioClient):
+    """单独的ASR和TTS客户端包装器"""
+    
+    def __init__(self,
+                 uid: str,
+                 asr_start_callback: Callable[[], None],
+                 asr_response_callback: Callable[[str, bool], None],
+                 asr_end_callback: Callable[[str], None],
+                 tts_start_callback: Callable[[str], None],
+                 tts_response_callback: Callable[[bytes], None],
+                 tts_end_callback: Callable[[], None],
+                 chat_end_callback: Callable[[str], None]):
+        self.uid = uid
+        
+        # 存储回调函数
+        self._asr_start_callback = asr_start_callback
+        self._asr_response_callback = asr_response_callback
+        self._asr_end_callback = asr_end_callback
+        self._tts_start_callback = tts_start_callback
+        self._tts_response_callback = tts_response_callback
+        self._tts_end_callback = tts_end_callback
+        self._chat_end_callback = chat_end_callback
+        
+        # 存储最终ASR结果
+        self.final_asr_text = ""
+        self.last_asr_text = ""
+        
+        # 创建ASR客户端
+        self.asr_client = AsrClient(
+            uid=uid,
+            asr_start_callback=self._asr_start_wrapper,
+            asr_response_callback=self._asr_response_wrapper,
+            asr_end_callback=self._asr_end_wrapper
+        )
+        
+        # 创建TTS客户端
+        self.tts_client = TtsClient(
+            uid=uid,
+            tts_start_callback=self._tts_start_wrapper,
+            tts_response_callback=self._tts_response_wrapper,
+            tts_end_callback=self._tts_end_wrapper
+        )
+    
+    def _asr_start_wrapper(self) -> None:
+        """ASR开始包装器"""
+        if self._asr_start_callback:
+            self._asr_start_callback()
+    
+    def _asr_response_wrapper(self, text: str) -> None:
+        """ASR响应包装器"""
+        self.last_asr_text = text
+        if self._asr_response_callback:
+            self._asr_response_callback(text, False)  # ASR客户端不支持interim参数
+    
+    def _asr_end_wrapper(self) -> None:
+        """ASR结束包装器，存储最终文本"""
+        self.final_asr_text = self.last_asr_text
+        if self._asr_end_callback:
+            self._asr_end_callback(self.final_asr_text)
+    
+    def _tts_start_wrapper(self, text: str) -> None:
+        """TTS开始包装器"""
+        if self._tts_start_callback:
+            self._tts_start_callback(text)
+    
+    def _tts_response_wrapper(self, audio_data: bytes) -> None:
+        """TTS响应包装器"""
+        if self._tts_response_callback:
+            self._tts_response_callback(audio_data)
+    
+    def _tts_end_wrapper(self) -> None:
+        """TTS结束包装器"""
+        if self._tts_end_callback:
+            self._tts_end_callback()
+    
+    async def start(self) -> None:
+        await self.asr_client.start()
+        await self.tts_client.start()
+    
+    async def cleanup(self) -> None:
+        await self.asr_client.cleanup()
+        await self.tts_client.cleanup()
+    
+    async def process_audio_chunk(self, audio_chunk: bytes) -> None:
+        await self.asr_client.process_audio_chunk(audio_chunk)
+    
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
+        if text.strip():  # 只发送非空文本
+            await self.tts_client.send_text_chunk(text)
+    
+    def is_connected(self) -> bool:
+        return self.asr_client.is_connected() and self.tts_client.is_connected()
+
+class AudioClientFactory:
+    """音频客户端工厂"""
+    
+    @staticmethod
+    def create_client(client_type: AudioClientType,
+                     uid: str,
+                     asr_start_callback: Callable[[], None],
+                     asr_response_callback: Callable[[str, bool], None],
+                     asr_end_callback: Callable[[str], None],
+                     tts_start_callback: Callable[[str], None],
+                     tts_response_callback: Callable[[bytes], None],
+                     tts_end_callback: Callable[[], None],
+                     chat_end_callback: Callable[[str], None]) -> IAudioClient:
+        """创建音频客户端"""
+        if client_type == AudioClientType.DIALOG_SESSION:
+            return DialogSessionClient(
+                uid=uid,
+                asr_start_callback=asr_start_callback,
+                asr_response_callback=asr_response_callback,
+                asr_end_callback=asr_end_callback,
+                tts_start_callback=tts_start_callback,
+                tts_response_callback=tts_response_callback,
+                tts_end_callback=tts_end_callback,
+                chat_end_callback=chat_end_callback
+            )
+        elif client_type == AudioClientType.SEPARATE_CLIENTS:
+            return SeparateClientsClient(
+                uid=uid,
+                asr_start_callback=asr_start_callback,
+                asr_response_callback=asr_response_callback,
+                asr_end_callback=asr_end_callback,
+                tts_start_callback=tts_start_callback,
+                tts_response_callback=tts_response_callback,
+                tts_end_callback=tts_end_callback,
+                chat_end_callback=chat_end_callback
+            )
+        else:
+            raise ValueError(f"不支持的客户端类型: {client_type}")
 
 class MessageProcessorAudio:
     """音频消息处理器，负责处理音频消息并启动ASR相关任务"""
@@ -30,14 +238,18 @@ class MessageProcessorAudio:
                  chat_stream: ChatStream,
                  chat_stream_manager: ChatStreamManager,
                  db_conn_string: str,
-                 websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
+                 websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
+                 client_type: AudioClientType = AudioClientType.DIALOG_SESSION):
         self.message_store = message_store
         self.chat_stream_manager = chat_stream_manager
-        self.dialog_session = None  # 使用DialogSession替代单独的ASR和TTS客户端
         self.db_conn_string = db_conn_string
         self.websocket_send_callback = websocket_send_callback
         self.task_lock = asyncio.Lock()
         self.is_running = True
+        
+        # 音频客户端相关
+        self.client_type = client_type
+        self.audio_client: Optional[IAudioClient] = None
         
         # 激活任务相关
         self.active_task: Optional[AudioTaskType] = None  # 当前激活的任务类型
@@ -59,47 +271,76 @@ class MessageProcessorAudio:
         self.is_chat_start = True
     
     async def start(self):
-        # 初始化DialogSession
-        if self.dialog_session is None:
-            self.dialog_session = DialogSession(
-                uid=self.current_chat_stream.chat_id,
-                asr_start_callback=self.asr_start_callback,
-                asr_response_callback=self.asr_response_callback,
-                asr_end_callback=self.asr_end_callback,
-                tts_start_callback=self.tts_start_callback,
-                tts_response_callback=self.tts_response_callback,
-                tts_end_callback=self.tts_end_callback,
-                chat_end_callback=self.chat_end_callback
-            )
-            await self.dialog_session.start()
+        # 创建音频客户端
+        self.audio_client = AudioClientFactory.create_client(
+            client_type=self.client_type,
+            uid=self.current_chat_stream.chat_id,
+            asr_start_callback=self.asr_start_callback,
+            asr_response_callback=self.asr_response_callback,
+            asr_end_callback=self.asr_end_callback,
+            tts_start_callback=self.tts_start_callback,
+            tts_response_callback=self.tts_response_callback,
+            tts_end_callback=self.tts_end_callback,
+            chat_end_callback=self.chat_end_callback
+        )
+        await self.audio_client.start()
         await self.text_processor.start()
+    
+    def get_current_client_type(self) -> AudioClientType:
+        """获取当前客户端类型"""
+        return self.client_type
     
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应并发送到TTS"""
         # 如果是聊天响应，发送到TTS
         if message.get("event") == ServerEventEnum.ChatResponse.value:
             chunk_content = message.get("payload_msg", {}).get("content", "")
-            if chunk_content and self.dialog_session and self.dialog_session.is_connected():
+            if chunk_content and self.audio_client and self.audio_client.is_connected():
                 try:
                     if self.is_chat_start:
                         self.is_chat_start = False
-                        await self.dialog_session.send_text_chunk(chunk_content, start=True, end=False)
+                        await self.audio_client.send_text_chunk(chunk_content, start=True, end=False)
                     else:
-                        await self.dialog_session.send_text_chunk(chunk_content)
+                        await self.audio_client.send_text_chunk(chunk_content)
                     logger.debug(f"已发送TTS文本片段: {chunk_content[:30]}...")
                 except Exception as e:
                     logger.error(f"发送TTS文本片段失败: {e}")
                     
         elif message.get("event") == ServerEventEnum.ChatEnded.value:
             # 结束TTS合成
-            if self.dialog_session and self.dialog_session.is_connected():
+            if self.audio_client and self.audio_client.is_connected():
                 try:
                     self.is_chat_start = True
-                    await self.dialog_session.send_text_chunk("", start=False, end=True)
+                    await self.audio_client.send_text_chunk("", start=False, end=True)
                     logger.info("TTS流式合成结束")
                 except Exception as e:
                     logger.error(f"结束TTS合成失败: {e}")
-        
+        elif message.get("event") == ServerEventEnum.MutteringResponse.value:
+            # 读取muttering_data里的bin文件内容，并用TTSResponse事件发给客户端
+            try:
+                chunk_content = message.get("payload_msg", {}).get("content", "")
+                file_path = get_muttering_file_path(MutteringType(chunk_content))
+                with open(file_path, "rb") as f:
+                    audio_data = f.read()
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEventEnum.TTSSentenceStart.value,
+                        "payload_msg": {
+                            "text": "我想想。"
+                        }
+                    })
+                    await self.websocket_send_callback({
+                        "event": ServerEventEnum.TTSResponse.value,
+                        "payload_msg": {
+                            "audio_data": audio_data
+                        }
+                    })
+                    await self.websocket_send_callback({
+                        "event": ServerEventEnum.TTSSentenceEnd.value
+                    })
+            except Exception as e:
+                logger.error(f"读取muttering_data bin文件失败: {e}")
+
         # 转发消息到websocket
         if self.websocket_send_callback:
             await self.websocket_send_callback(message)
@@ -136,7 +377,12 @@ class MessageProcessorAudio:
                 "event": ServerEventEnum.ASREnded.value
             })
         # 如果asr_text为空，则不启动文本处理任务
-        # await self.dialog_session.send_text_chunk("我想想", start=True, end=False)
+        # await asyncio.sleep(1)
+        # await self.audio_client.send_text_chunk("", start=True, end=False)
+        # await asyncio.sleep(1)
+        # await self.audio_client.send_text_chunk(asr_text)
+        # await asyncio.sleep(1)
+        # await self.audio_client.send_text_chunk("", start=False, end=True)
         # 如果有识别结果，启动文本处理任务
         if asr_text and asr_text.strip():
             await self._handle_asr_result(asr_text, self.current_chat_stream)
@@ -223,7 +469,8 @@ class MessageProcessorAudio:
                 elif isinstance(payload_msg, bytes):
                     # NO_SERIALIZATION的情况，payload_msg本身就是音频数据
                     logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(payload_msg)} 字节")
-                    await self.dialog_session.process_audio_chunk(payload_msg)
+                    if self.audio_client:
+                        await self.audio_client.process_audio_chunk(payload_msg)
             
             # logger.info(f"已启动音频消息处理任务: chat_id={chat_stream.chat_id}")
             return {
@@ -241,15 +488,15 @@ class MessageProcessorAudio:
     
     async def cleanup(self) -> None:
         """清理资源"""
-        if self.dialog_session:
+        if self.audio_client:
             try:
-                logger.info("清理DialogSession资源...")
-                await self.dialog_session.cleanup()
-                logger.info("DialogSession资源清理完成")
+                logger.info("清理音频客户端资源...")
+                await self.audio_client.cleanup()
+                logger.info("音频客户端资源清理完成")
             except Exception as e:
-                logger.warning(f"清理DialogSession时出错: {e}")
+                logger.warning(f"清理音频客户端时出错: {e}")
             finally:
-                self.dialog_session = None
-                logger.info("DialogSession引用已置空")
+                self.audio_client = None
+                logger.info("音频客户端引用已置空")
         self.text_processor.cleanup()
         self.current_chat_stream = None
