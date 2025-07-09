@@ -364,8 +364,12 @@ class MessageProcessorAudio:
             await self.websocket_send_callback({
                 "event": ServerEventEnum.ASRResponse.value,
                 "payload_msg": {
-                    "text": asr_text,
-                    "is_interim": is_interim
+                    "results":[
+                        {
+                            "text": asr_text,
+                            "is_interim": is_interim
+                        }
+                    ]
                 }
             })
     
