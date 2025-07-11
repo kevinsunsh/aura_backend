@@ -14,13 +14,14 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from agents.states.speaking_state import SpeakingTaskState
-from agents.configuration import Configuration, get_chat_model_by_type
+from agents.configuration.config import GraphConfiguration, get_chat_model_by_type
 import logging
 from agents.prompts.speaking_prompt import (
     SPEAKING_ACTION_PLANNER_PROMPT,
     SPEAKING_GENERATOR_FOLLOW_UP_PROMPT
 )
-from agents.aura_memory.message_store import Message
+from agents.aura_memory.message_store import MessageStore, Message
+from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
 from agents.graphs.todo_mock_func import (
     _get_persona_text,
@@ -34,7 +35,7 @@ reply_max_latency = 30 #s
 async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
     """规划下一步行动"""
     try:
-        chat_model = get_chat_model_by_type("basic")
+        chat_model = get_chat_model_by_type("pfc_action_planner")
         
         # 构建提示词参数
         persona_text = _get_persona_text()
@@ -153,9 +154,8 @@ async def _wait_for_user_message(state: SpeakingTaskState, config: RunnableConfi
 async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig):
     """发送立即回复"""
     try:  
-        configurable = Configuration.from_runnable_config(config)
         # 使用LLM生成立即回复
-        chat_model = get_chat_model_by_type("basic")
+        chat_model = get_chat_model_by_type("pfc_chat")
         
         persona_text = _get_persona_text()
         
@@ -195,9 +195,9 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
                 final_response += chunk.content
                 writer({"content": chunk.content})
         
-        configurable.chat_stream_manager.update_chat_stream_checked_at(state["chat_id"])
+        ChatStreamManager.get_instance().update_chat_stream_checked_at(state["chat_id"])
         # 保存消息到数据库
-        configurable.message_store.add_message(Message(
+        MessageStore.get_instance().add_message(Message(
             msg_id=str(uuid.uuid4()),
             chat_id=state["chat_id"],
             user_id="aura",
@@ -221,7 +221,7 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
         })            
 
 # 创建前台状态机图
-builder = StateGraph(SpeakingTaskState, config_schema=Configuration)
+builder = StateGraph(SpeakingTaskState, config_schema=GraphConfiguration)
 
 # 添加节点
 builder.add_node("plan_action", _plan_action)

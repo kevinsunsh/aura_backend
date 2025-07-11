@@ -62,29 +62,72 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
 # 导入protocol模块和枚举
 try:
     from agents.doubao_client import protocol
-    from agents.configuration import ClientEventEnum, ServerEventEnum
 except ImportError:
     print("⚠️ 无法导入protocol模块，将使用内置协议定义")
     # 内置协议定义作为备选
-    class protocol:
-        PROTOCOL_VERSION = 0b0001
-        CLIENT_AUDIO_ONLY_REQUEST = 0b0010
-        CLIENT_FULL_REQUEST = 0b0001
-        NO_SERIALIZATION = 0b0000
-        JSON = 0b0001
-        GZIP = 0b0001
-        NO_COMPRESSION = 0b0000
-        MSG_WITH_EVENT = 0b0100
-        
-        @staticmethod
-        def generate_header(message_type=0b0010, serial_method=0b0000):
-            header = bytearray()
-            header_size = 1
-            header.append((0b0001 << 4) | header_size)  # version + header_size
-            header.append((message_type << 4) | 0b0100)  # message_type + MSG_WITH_EVENT
-            header.append((serial_method << 4) | 0b0001)  # serial_method + GZIP
-            header.append(0x00)  # reserved
-            return header
+
+    PROTOCOL_VERSION = 0b0001
+    DEFAULT_HEADER_SIZE = 0b0001
+
+    PROTOCOL_VERSION_BITS = 4
+    HEADER_BITS = 4
+    MESSAGE_TYPE_BITS = 4
+    MESSAGE_TYPE_SPECIFIC_FLAGS_BITS = 4
+    MESSAGE_SERIALIZATION_BITS = 4
+    MESSAGE_COMPRESSION_BITS = 4
+    RESERVED_BITS = 8
+
+    # Message Type:
+    CLIENT_FULL_REQUEST = 0b0001
+    CLIENT_AUDIO_ONLY_REQUEST = 0b0010
+
+    SERVER_FULL_RESPONSE = 0b1001
+    SERVER_ACK = 0b1011
+    SERVER_ERROR_RESPONSE = 0b1111
+
+    # Message Type Specific Flags
+    NO_SEQUENCE = 0b0000  # no check sequence
+    POS_SEQUENCE = 0b0001
+    NEG_SEQUENCE = 0b0010
+    NEG_SEQUENCE_1 = 0b0011
+
+    MSG_WITH_EVENT = 0b0100
+
+    # Message Serialization
+    NO_SERIALIZATION = 0b0000
+    JSON = 0b0001
+    THRIFT = 0b0011
+    CUSTOM_TYPE = 0b1111
+
+    # Message Compression
+    NO_COMPRESSION = 0b0000
+    GZIP = 0b0001
+    CUSTOM_COMPRESSION = 0b1111
+
+    def generate_header(
+            version=PROTOCOL_VERSION,
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            reserved_data=0x00,
+            extension_header=bytes()
+    ):
+        """
+        protocol_version(4 bits), header_size(4 bits),
+        message_type(4 bits), message_type_specific_flags(4 bits)
+        serialization_method(4 bits) message_compression(4 bits)
+        reserved （8bits) 保留字段
+        header_extensions 扩展头(大小等于 8 * 4 * (header_size - 1) )
+        """
+        header = bytearray()
+        header_size = int(len(extension_header) / 4) + 1
+        header.append((version << 4) | header_size)
+        header.append((message_type << 4) | message_type_specific_flags)
+        header.append((serial_method << 4) | compression_type)
+        header.append(reserved_data)
+        header.extend(extension_header)
+        return header
     
     # 内置枚举定义作为备选
     class ClientEventEnum:
@@ -1666,7 +1709,7 @@ if __name__ == "__main__":
     import sys
     
     # 检查命令行参数选择测试模式
-    mode = "file"  # 默认文件模式
+    mode = "mic"  # 默认文件模式
     if len(sys.argv) > 1:
         if sys.argv[1].lower() in ["mic", "microphone", "麦克风"]:
             mode = "microphone"

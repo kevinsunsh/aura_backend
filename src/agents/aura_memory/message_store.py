@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from pydantic import BaseModel
 from .database.database import Database, Base
 from utils.utils import performance_point_context
-
+from agents.configuration.config import get_db_conn_string
 logger = logging.getLogger(__name__)
 
 class MessageModel(Base):
@@ -42,16 +42,16 @@ class Message(BaseModel):
 
 class MessageStore:
     instance = None
-    def __new__(cls, *args, **kwargs):
+    def __init__(self):
+        with performance_point_context("初始化消息存储"):
+            self.db = Database(get_db_conn_string())
+    
+    @classmethod
+    def get_instance(cls):
         if cls.instance is None:
-            cls.instance = super().__new__(cls)
+            cls.instance = cls()
         return cls.instance
     
-    def __init__(self, db_conn_string: str = None):
-        with performance_point_context("初始化消息存储"):
-            self.db = Database(db_conn_string)
-            # self.db.initialize_database()
-
     def add_message(self, message: Message) -> bool:
         """添加消息到第一层"""
         session = self.db.get_db()

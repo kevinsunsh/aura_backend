@@ -15,7 +15,7 @@ from langgraph.graph import START, END, StateGraph
 from langgraph.types import interrupt, Command
 
 from agents.states.thinking_state import ThinkingTaskState
-from agents.configuration import Configuration, get_chat_model_by_type
+from agents.configuration.config import GraphConfiguration, get_chat_model_by_type
 import logging
 from agents.prompts.thinking_prompt import (
     THINKING_GOAL_ANALYZER_PROMPT,
@@ -40,8 +40,8 @@ async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
     try:
         if TaskManager.get_instance().get_task_state(TaskType.THINKING) == TaskStateType.PAUSED:
             return Command(goto="wait_for_user_message")
-
-        chat_model = get_chat_model_by_type("reasoning")
+        
+        chat_model = get_chat_model_by_type("pfc_action_planner")
         
         # 构建提示词参数
         persona_text = _get_persona_text()
@@ -123,138 +123,11 @@ async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
             goto=END
         )
 
-async def _plan_action(state: ThinkingTaskState, config: RunnableConfig):
-    """规划下一步行动"""
-    try:
-        configurable = Configuration.from_runnable_config(config)
-        chat_model = get_chat_model_by_type("reasoning")
-        
-        # 构建提示词参数
-        persona_text = _get_persona_text()
-        goals_str = _build_goals_str(state.get("goals", []))
-        knowledge_info_str = _build_knowledge_info_str(state.get("knowledge_list", []))
-        action_history_summary = _build_action_history_summary(state.get("action_history", []))
-
-        processed_chat_history_text = state.get("processed_chat_history_str", "")
-        unprocessed_chat_history_text = state.get("unprocessed_chat_history_str", "还没有聊天记录。")
-
-        # 格式化提示词
-        prompt = THINKING_ACTION_PLANNER_PROMPT.format(
-            persona_text=persona_text,
-            goals_str=goals_str,
-            knowledge_info_str=knowledge_info_str,
-            action_history_summary=action_history_summary,
-            chat_history_text=processed_chat_history_text + "\n" + unprocessed_chat_history_text,
-            action_str = THINKING_ACTION
-        )
-        
-        # 调用LLM规划行动
-        response = ""
-        async for chunk in chat_model.astream([SystemMessage(content=prompt)]):
-            if hasattr(chunk, 'content'):
-                response += chunk.content
-        
-        # 解析JSON响应
-        try:
-            action_data = json.loads(response)
-            action = action_data.get("action", "wait")
-            reason = action_data.get("reason", "")
-        except json.JSONDecodeError:
-            logger.warning("行动规划响应不是有效的JSON格式")
-            action = "wait"
-            reason = "解析响应失败，默认等待"
-        
-        # 更新状态
-        return Command(
-            update={
-                "thinking_current_action": action,
-                "thinking_action_reason": reason
-            },
-            goto="execute_action"
-        )
-    except Exception as e:
-        logger.error(f"规划行动时出错: {str(e)}")
-        return Command(
-            goto=END
-        )
-
-async def _execute_action(state: ThinkingTaskState, config: RunnableConfig):
-    """执行规划的行动"""
-    try:
-        action = state.get("thinking_current_action")
-        if not action:
-            return Command(goto="wait_for_user_message")
-        
-        # 根据行动类型执行不同的逻辑
-        if action == "fetch_knowledge":
-            return Command(goto="fetch_knowledge")
-        elif action == "wait":
-            return Command(goto="wait_for_user_message")
-        elif action == "rethink_goal":
-            return Command(goto="analyze_goals")
-        else:
-            # 默认等待
-            return Command(goto="wait_for_user_message")
-    except Exception as e:
-        logger.error(f"执行行动时出错: {str(e)}")
-        return Command(goto=END)
-
-async def _fetch_knowledge(state: ThinkingTaskState, config: RunnableConfig):
-    """获取知识"""
-    try:
-        chat_model = get_chat_model_by_type("basic")
-        
-        # 构建提示词参数
-        chat_history_text = state.get("chat_history_str", "")
-        goals_str = _build_goals_str(state.get("goals", []))
-        
-        # 这里可以扩展为从实际知识库获取信息
-        # 目前使用模拟的知识获取
-        knowledge_item = {
-            "query": "用户查询",
-            "knowledge": "这是从知识库获取的相关信息",
-            "source": "知识库"
-        }
-        
-        knowledge_list = state.get("knowledge_list", [])
-        knowledge_list.append(knowledge_item)
-        
-        return Command(
-            update={
-                "knowledge_list": knowledge_list
-            },
-            goto=END
-        )
-    except Exception as e:
-        logger.error(f"获取知识时出错: {str(e)}")
-        return Command(
-            goto=END
-        )
-
-async def _wait_for_user_message(state: ThinkingTaskState, config: RunnableConfig):
-    """等待用户消息"""
-    try:
-        # 等待一段时间后重新观察
-        await asyncio.sleep(3)
-        
-        return Command(
-            goto=END
-        )
-    except Exception as e:
-        logger.error(f"等待用户消息时出错: {str(e)}")
-        return Command(
-            goto=END
-        )
-
 # 创建StateGraph
-builder = StateGraph(ThinkingTaskState, config_schema=Configuration)
+builder = StateGraph(ThinkingTaskState, config_schema=GraphConfiguration)
 
 # 添加后台任务节点
 builder.add_node("analyze_goals", _analyze_goals)
-builder.add_node("plan_action", _plan_action)
-builder.add_node("execute_action", _execute_action)
-builder.add_node("fetch_knowledge", _fetch_knowledge)
-builder.add_node("wait_for_user_message", _wait_for_user_message)
 
 # 添加边
 builder.add_edge(START, "analyze_goals")

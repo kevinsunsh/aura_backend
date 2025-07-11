@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy import text
 from utils.utils import performance_point_context
+from agents.configuration.config import get_db_conn_string
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +51,15 @@ class ChatStream(BaseModel):
 
 class ChatStreamManager:
     instance = None
-    def __new__(cls, *args, **kwargs):
+    @classmethod
+    def get_instance(cls):
         if cls.instance is None:
-            cls.instance = super().__new__(cls)
+            cls.instance = cls()
         return cls.instance
     
-    def __init__(self, db_conn_string: str = None):
+    def __init__(self):
         with performance_point_context("初始化聊天流管理器"):
-            self.db = Database(db_conn_string)
-            # self.db.initialize_database()
+            self.db = Database(get_db_conn_string())
 
             # 心跳相关属性
             self.current_locked_chat_id = None  # 当前进程持有的处理器锁（最多一个）

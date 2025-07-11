@@ -13,51 +13,51 @@ from agents.graphs.observing_graph import builder as observing_graph_builder
 from agents.graphs.replying_graph import builder as replying_graph_builder
 from agents.graphs.speaking_graph import builder as speaking_graph_builder
 from agents.graphs.muttering_graph import builder as muttering_graph_builder
-from .aura_memory.message_store import MessageStore, Message
-from .aura_memory.chat_stream import ChatStream, ChatStreamManager
-from .configuration import ServerEventEnum
+from agents.graphs.recalling_graph import builder as recalling_graph_builder
+from agents.graphs.memorizing_graph import builder as memorizing_graph_builder
+from .aura_memory.message_store import Message
+from .configuration.config import ServerEventEnum
 from utils.utils import performance_point_context
 from .task_manager import TaskManager, TaskType, TaskStateType
+from agents.configuration.config import get_db_conn_string
 
 logger = logging.getLogger(__name__)
 
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
     def __init__(self, 
-                 message_store: MessageStore,
-                 chat_stream: ChatStream,
-                 chat_stream_manager: ChatStreamManager,
-                 db_conn_string: str,
+                 chat_id: str,
+                 user_id: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
-        self.message_store = message_store
-        self.chat_stream = chat_stream
-        self.chat_stream_manager = chat_stream_manager
-        self.db_conn_string = db_conn_string
+        self.chat_id = chat_id
+        self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
     
     async def start(self):
         TaskManager.initialize(
             replying_task_handle=asyncio.create_task(
-                self._replying_response_task(self.chat_stream)
+                self._replying_response_task()
             ),
             speaking_task_handle=asyncio.create_task(
-                self._speaking_response_task(self.chat_stream)
+                self._speaking_response_task()
             ),
             muttering_task_handle=asyncio.create_task(
-                self._muttering_process_task(self.chat_stream)
+                self._muttering_process_task()
             ),
             thinking_task_handle=asyncio.create_task(
-                self._thinking_process_task(self.chat_stream)
+                self._thinking_process_task()
             ),
             observing_task_handle=asyncio.create_task(
-                self._observing_process_task(self.chat_stream)
+                self._observing_process_task()
             )
         )
         await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.RECALLING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.MEMORIZING, TaskStateType.RUNNING)
 
     async def user_input_interruption(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
@@ -89,8 +89,8 @@ class MessageProcessorText:
             # 创建消息对象
             message = Message(
                 msg_id=str(uuid.uuid4()),
-                chat_id=self.chat_stream.chat_id,
-                user_id=self.chat_stream.chat_id,
+                chat_id=self.chat_id,
+                user_id=self.user_id,
                 platform="default",
                 m_type="text",
                 content=user_input,
@@ -102,7 +102,7 @@ class MessageProcessorText:
             self.message_store.add_message(message)
             await self.user_input_resume()
 
-            logger.info(f"文本消息已存储: chat_id={self.chat_stream.chat_id}, content_length={len(user_input)}")
+            logger.info(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
             
             return {
                 "success": True,
@@ -120,23 +120,18 @@ class MessageProcessorText:
                 "message_type": "text"
             }
     
-    async def _muttering_process_task(self, 
-                                 chat_stream: ChatStream):
+    async def _muttering_process_task(self):
         """自言自语任务"""
         try:
-            logger.info(f"开始自言自语任务: chat_id={chat_stream.chat_id}")
+            logger.info(f"开始自言自语任务: chat_id={self.chat_id}")
                         # 处理输入数据
             input_data = {
-                "chat_id": chat_stream.chat_id,
-                "user_id": chat_stream.chat_id,
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
             }
             thread = {
                 "configurable": {
-                    "user_id": chat_stream.chat_id,
-                    "thread_id": f"streaming_{chat_stream.chat_id}",
-                    "message_store": self.message_store,
-                    "chat_stream": chat_stream,
-                    "chat_stream_manager": self.chat_stream_manager,
+                    "thread_id": f"streaming_{self.chat_id}"
                 }
             }
 
@@ -158,28 +153,23 @@ class MessageProcessorText:
                                     await asyncio.sleep(1)
         except asyncio.CancelledError:
             # 只在最外层处理取消，记录日志但不重新抛出
-            logger.info(f"自言自语任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"自言自语任务被取消: chat_id={self.chat_id}")
             # 不重新抛出，让任务自然结束
         except Exception as e:
-            logger.error(f"自言自语任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+            logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _replying_response_task(self, 
-                                 chat_stream: ChatStream):
+    async def _replying_response_task(self):
         """回复任务"""
         try:
-            logger.info(f"开始回复任务: chat_id={chat_stream.chat_id}")
+            logger.info(f"开始回复任务: chat_id={self.chat_id}")
                         # 处理输入数据
             input_data = {
-                "chat_id": chat_stream.chat_id,
-                "user_id": chat_stream.chat_id,
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
             }
             thread = {
                 "configurable": {
-                    "user_id": chat_stream.chat_id,
-                    "thread_id": f"streaming_{chat_stream.chat_id}",
-                    "message_store": self.message_store,
-                    "chat_stream": chat_stream,
-                    "chat_stream_manager": self.chat_stream_manager,
+                    "thread_id": f"streaming_{self.chat_id}"
                 }
             }
 
@@ -209,33 +199,28 @@ class MessageProcessorText:
                                     })
         except asyncio.CancelledError:
             # 只在最外层处理取消，记录日志但不重新抛出
-            logger.info(f"回复任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"回复任务被取消: chat_id={self.chat_id}")
             # 不重新抛出，让任务自然结束
         except Exception as e:
-            logger.error(f"回复任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+            logger.error(f"回复任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _speaking_response_task(self, 
-                                 chat_stream: ChatStream):
+    async def _speaking_response_task(self):
         """说话任务"""
         try:
-            logger.info(f"开始说话任务: chat_id={chat_stream.chat_id}")
+            logger.info(f"开始说话任务: chat_id={self.chat_id}")
                         # 处理输入数据
             input_data = {
-                "chat_id": chat_stream.chat_id,
-                "user_id": chat_stream.chat_id,
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
             }
             thread = {
                 "configurable": {
-                    "user_id": chat_stream.chat_id,
-                    "thread_id": f"streaming_{chat_stream.chat_id}",
-                    "message_store": self.message_store,
-                    "chat_stream": chat_stream,
-                    "chat_stream_manager": self.chat_stream_manager,
+                    "thread_id": f"streaming_{self.chat_id}"
                 }
             }
 
             # 使用优化的异步PostgreSQL连接
-            async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
+            async with AsyncPostgresSaver.from_conn_string(get_db_conn_string()) as checkpointer:
                 graph = speaking_graph_builder.compile(checkpointer=checkpointer)
                 while True:
                     async for event in graph.astream(input_data, thread, stream_mode=["updates", "messages"]):
@@ -268,27 +253,22 @@ class MessageProcessorText:
                             #             })
         except asyncio.CancelledError:
             # 只在最外层处理取消，记录日志但不重新抛出
-            logger.info(f"说话任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"说话任务被取消: chat_id={self.chat_id}")
             # 不重新抛出，让任务自然结束
         except Exception as e:
-            logger.error(f"说话任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+            logger.error(f"说话任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _thinking_process_task(self, 
-                               chat_stream: ChatStream):
+    async def _thinking_process_task(self):
         """异步处理思考任务"""
         try:
             # 处理输入数据
             input_data = {
-                "chat_id": chat_stream.chat_id,
-                "user_id": chat_stream.chat_id,
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
             }
             thread = {
                 "configurable": {
-                    "user_id": chat_stream.chat_id,
-                    "thread_id": f"thinking_{chat_stream.chat_id}",
-                    "message_store": self.message_store,
-                    "chat_stream": chat_stream,
-                    "chat_stream_manager": self.chat_stream_manager,
+                    "thread_id": f"thinking_{self.chat_id}"
                 }
             }
             
@@ -302,26 +282,21 @@ class MessageProcessorText:
                     if "updates" == type:
                         pass
         except asyncio.CancelledError:
-            logger.info(f"思考任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"思考任务被取消: chat_id={self.chat_id}")
         except Exception as e:
-            logger.error(f"思考任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+            logger.error(f"思考任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _observing_process_task(self, 
-                               chat_stream: ChatStream):
+    async def _observing_process_task(self):
         """异步处理观察任务"""
         try:
             # 处理输入数据
             input_data = {
-                "chat_id": chat_stream.chat_id,
-                "user_id": chat_stream.chat_id,
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
             }
             thread = {
                 "configurable": {
-                    "user_id": chat_stream.chat_id,
-                    "thread_id": f"observing_{chat_stream.chat_id}",
-                    "message_store": self.message_store,
-                    "chat_stream": chat_stream,
-                    "chat_stream_manager": self.chat_stream_manager,
+                    "thread_id": f"observing_{self.chat_id}",
                 }
             }
             
@@ -335,9 +310,55 @@ class MessageProcessorText:
                     if "updates" == type:
                         pass
         except asyncio.CancelledError:
-            logger.info(f"观察任务被取消: chat_id={chat_stream.chat_id}")
+            logger.info(f"观察任务被取消: chat_id={self.chat_id}")
         except Exception as e:
-            logger.error(f"观察任务处理失败: chat_id={chat_stream.chat_id}, error={str(e)}")
+            logger.error(f"观察任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+
+    async def _recalling_process_task(self):
+        """异步处理回忆任务"""
+        try:
+            input_data = {
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
+            }
+            thread = {
+                "configurable": {
+                    "thread_id": f"recalling_{self.chat_id}"
+                }
+            }
+            graph = recalling_graph_builder.compile()
+            while True:
+                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+                    type, message_tuple = event
+                    if "updates" == type:
+                        pass
+        except asyncio.CancelledError:
+            logger.info(f"回忆任务被取消: chat_id={self.chat_id}")
+        except Exception as e:
+            logger.error(f"回忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+
+    async def _memorizing_process_task(self):
+        """异步处理记忆任务"""
+        try:
+            input_data = {
+                "chat_id": self.chat_id,
+                "user_id": self.user_id,
+            }
+            thread = {
+                "configurable": {
+                    "thread_id": f"memorizing_{self.chat_id}"
+                }
+            }
+            graph = memorizing_graph_builder.compile()
+            while True:
+                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+                    type, message_tuple = event
+                    if "updates" == type:
+                        pass
+        except asyncio.CancelledError:
+            logger.info(f"记忆任务被取消: chat_id={self.chat_id}")
+        except Exception as e:
+            logger.error(f"记忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
     async def cleanup(self):
         """清理资源"""

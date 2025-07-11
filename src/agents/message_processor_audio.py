@@ -9,14 +9,11 @@ from datetime import datetime
 from enum import Enum
 from abc import ABC, abstractmethod
 
-from .aura_memory.message_store import MessageStore, Message
-from .aura_memory.chat_stream import ChatStream, ChatStreamManager
 from .doubao_client.dialog_session import DialogSession
 from .doubao_client.asr_client import AsrClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
-from .doubao_client.config import ws_connect_config
-from .configuration import ServerEventEnum
+from .configuration.config import ServerEventEnum
 from utils.utils import start_performance_point, end_performance_point
 from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 
@@ -234,15 +231,10 @@ class MessageProcessorAudio:
     """音频消息处理器，负责处理音频消息并启动ASR相关任务"""
     
     def __init__(self, 
-                 message_store: MessageStore,
-                 chat_stream: ChatStream,
-                 chat_stream_manager: ChatStreamManager,
-                 db_conn_string: str,
+                 chat_id: str,
+                 user_id: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
                  client_type: AudioClientType = AudioClientType.DIALOG_SESSION):
-        self.message_store = message_store
-        self.chat_stream_manager = chat_stream_manager
-        self.db_conn_string = db_conn_string
         self.websocket_send_callback = websocket_send_callback
         self.task_lock = asyncio.Lock()
         self.is_running = True
@@ -256,14 +248,13 @@ class MessageProcessorAudio:
         self.active_task_lock = asyncio.Lock()  # 激活任务的锁
         
         # 当前处理的 chat_stream
-        self.current_chat_stream = chat_stream
+        self.chat_id = chat_id
+        self.user_id = user_id
         
         # 创建文本处理器用于处理ASR结果
         self.text_processor = MessageProcessorText(
-            message_store=message_store,
-            chat_stream=chat_stream,
-            chat_stream_manager=chat_stream_manager,
-            db_conn_string=db_conn_string,
+            chat_id=chat_id,
+            user_id=user_id,
             websocket_send_callback=self._text_processor_callback
         )
         self.total_performance_point_id = None
@@ -274,7 +265,7 @@ class MessageProcessorAudio:
         # 创建音频客户端
         self.audio_client = AudioClientFactory.create_client(
             client_type=self.client_type,
-            uid=self.current_chat_stream.chat_id,
+            uid=self.user_id,
             asr_start_callback=self.asr_start_callback,
             asr_response_callback=self.asr_response_callback,
             asr_end_callback=self.asr_end_callback,
@@ -389,7 +380,7 @@ class MessageProcessorAudio:
         # await self.audio_client.send_text_chunk("", start=False, end=True)
         # 如果有识别结果，启动文本处理任务
         if asr_text and asr_text.strip():
-            await self._handle_asr_result(asr_text, self.current_chat_stream)
+            await self._handle_asr_result(asr_text)
     
     async def tts_start_callback(self, text: str) -> None:
         """TTS开始回调 - 开始合成语音时调用"""
@@ -425,25 +416,11 @@ class MessageProcessorAudio:
     async def chat_end_callback(self, text: str) -> None:
         """聊天结束回调 - 聊天结束时调用"""
         logger.info(f"闲聊结束 : {text}")
-        # await self.message_store.add_message(Message(
-        #     msg_id=str(uuid.uuid4()),
-        #     chat_id=self.current_chat_stream.chat_id,
-        #     user_id="aura",
-        #     platform="default",
-        #     m_type="text",
-        #     content=text,
-        #     data={},
-        #     created_at=int(datetime.now().timestamp() * 1000)
-        # ))
     
-    async def _handle_asr_result(self, asr_text: str, chat_stream: ChatStream = None) -> None:
+    async def _handle_asr_result(self, asr_text: str) -> None:
         """处理ASR识别结果"""
         try:
             logger.info(f"开始处理ASR结果: {asr_text}")
-            
-            if not chat_stream:
-                logger.warning("没有提供 chat_stream，无法处理 ASR 结果")
-                return
             
             # 使用文本处理器处理ASR结果
             result = await self.text_processor.handle_text_message(
@@ -480,7 +457,7 @@ class MessageProcessorAudio:
             return {
                 "success": True,
                 "action": "audio_task_started",
-                "chat_id": self.current_chat_stream.chat_id
+                "chat_id": self.chat_id
             }
             
         except Exception as e:
@@ -503,4 +480,3 @@ class MessageProcessorAudio:
                 self.audio_client = None
                 logger.info("音频客户端引用已置空")
         self.text_processor.cleanup()
-        self.current_chat_stream = None

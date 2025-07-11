@@ -14,10 +14,12 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from agents.states.observing_state import ObservingTaskState
-from agents.configuration import Configuration, get_chat_model_by_type
+from agents.configuration.config import GraphConfiguration
 import logging
 
-from agents.aura_memory.message_store import Message
+from agents.aura_memory.chat_stream import ChatStream, ChatStreamManager
+from agents.aura_memory.message_store import MessageStore, Message
+
 from utils.utils import start_performance_point, end_performance_point
 from agents.graphs.todo_mock_func import _build_chat_history_str
 from agents.task_manager import TaskManager, TaskType, TaskStateType
@@ -32,21 +34,19 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
         if TaskManager.get_instance().get_task_state(TaskType.OBSERVING) == TaskStateType.PAUSED:
             return Command(goto=END)
         
-        configurable = Configuration.from_runnable_config(config)
-
         chat_id = state["chat_id"]
         user_id = state["user_id"]
         
         # 获取新消息
         now_timestamp = int(datetime.now().timestamp() * 1000)
-        chat_stream = configurable.chat_stream_manager.get_or_create_chat_stream(chat_id)
-        unprocessed_messages = configurable.message_store.get_messages_by_time_range(
+        chat_stream = ChatStreamManager.get_instance().get_or_create_chat_stream(chat_id)
+        unprocessed_messages = MessageStore.get_instance().get_messages_by_time_range(
             chat_id, 
             chat_stream.chatstream_checked_at, 
             now_timestamp
         )
         if chat_stream.chatstream_checked_at > now_timestamp - history_check_interval:
-            recent_processed_messages = configurable.message_store.get_messages_by_time_range(
+            recent_processed_messages = MessageStore.get_instance().get_messages_by_time_range(
                 chat_id, 
                 now_timestamp - history_check_interval, 
                 chat_stream.chatstream_checked_at
@@ -54,8 +54,8 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
         else:
             recent_processed_messages = []
         
-        last_bot_message = configurable.message_store.get_recent_messages(user_id="aura", limit=1)[0]
-        last_user_message = configurable.message_store.get_recent_messages(user_id=user_id, limit=1)[0]
+        last_bot_message = MessageStore.get_instance().get_recent_messages(user_id="aura", limit=1)[0]
+        last_user_message = MessageStore.get_instance().get_recent_messages(user_id=user_id, limit=1)[0]
         last_bot_message_time = last_bot_message.created_at if last_bot_message else None
         last_user_message_time = last_user_message.created_at if last_user_message else None
         last_bot_message_content = last_bot_message.content if last_bot_message else None
@@ -84,7 +84,7 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
         )
 
 # 创建StateGraph
-builder = StateGraph(ObservingTaskState, config_schema=Configuration)
+builder = StateGraph(ObservingTaskState, config_schema=GraphConfiguration)
 
 # 添加后台任务节点
 builder.add_node("observe_conversation", _observe_conversation)

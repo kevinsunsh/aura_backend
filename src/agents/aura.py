@@ -14,11 +14,10 @@ from fastapi import WebSocketDisconnect
 # 配置相关
 from config import settings
 
-from .aura_memory.message_store import MessageStore
 from .aura_memory.chat_stream import ChatStreamManager
 from .message_processor_audio import MessageProcessorAudio
 from .doubao_client import protocol
-from .configuration import ServerEventEnum, ClientEventEnum
+from .configuration.config import ServerEventEnum, ClientEventEnum
 from .server_protocol import server_parse_request, server_generate_response
 from utils.utils import performance_point_context
 
@@ -44,17 +43,6 @@ class AuraAgent:
     def __init__(self):
         self.chat_stream = None
         
-        # 统一使用postgresql驱动，禁用SSL以提高连接速度
-        self.db_conn_string = (
-            f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
-            f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
-            "?sslmode=disable"  # 禁用SSL以提高连接速度
-        )
-        
-        # 初始化数据库组件
-        self.message_store = MessageStore(self.db_conn_string)
-        self.chat_stream_manager = ChatStreamManager(self.db_conn_string)
-
         # WebSocket相关
         self.websocket_connection = None  # 存储WebSocket连接
         self.websocket_lock = asyncio.Lock()  # 用于同步访问WebSocket连接
@@ -176,7 +164,7 @@ class AuraAgent:
             # 释放聊天流锁
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
-                    self.chat_stream_manager.release_lock(self.chat_stream.chat_id)
+                    ChatStreamManager.get_instance().release_lock(self.chat_stream.chat_id)
                     logger.info(f"已释放聊天流锁: {self.chat_stream.chat_id}")
                 except Exception as e:
                     logger.error(f"释放聊天流锁时出错: {e}")
@@ -200,43 +188,7 @@ class AuraAgent:
             logger.error(f"解析二进制协议消息失败: {e}")
             # 降级处理，返回空消息
             return {"error": f"解析失败: {str(e)}"}
-
-    def _determine_message_type(self, message_data: Dict[str, Any]) -> MessageType:
-        """确定消息类型 - 适配统一的协议解析格式"""
-        # 检查是否有错误
-        if "error" in message_data:
-            return MessageType.UNSUPPORTED
-            
-        # 检查payload_msg中的内容
-        payload_msg = message_data.get("payload_msg")
-        if payload_msg:
-            # 如果是字典类型（JSON序列化），检查其中的字段
-            if isinstance(payload_msg, dict):
-                if "message" in payload_msg and payload_msg["message"]:
-                    return MessageType.TEXT
-                elif "audio" in payload_msg and payload_msg["audio"]:
-                    return MessageType.AUDIO
-                elif "audio_data" in payload_msg and payload_msg["audio_data"]:
-                    return MessageType.AUDIO
-                elif "text" in payload_msg and payload_msg["text"]:
-                    return MessageType.TEXT
-            # 如果是字符串类型（JSON序列化），可能是文本消息
-            elif isinstance(payload_msg, str) and payload_msg.strip():
-                return MessageType.TEXT
-            # 如果是字节类型（NO_SERIALIZATION），是音频数据
-            elif isinstance(payload_msg, bytes) and len(payload_msg) > 0:
-                return MessageType.AUDIO
-                
-        # 检查原始字段（向后兼容）
-        if "message" in message_data and message_data["message"]:
-            return MessageType.TEXT
-        elif "audio" in message_data and message_data["audio"]:
-            return MessageType.AUDIO
-        elif "audio_data" in message_data and message_data["audio_data"]:
-            return MessageType.AUDIO
-            
-        return MessageType.UNSUPPORTED
-
+    
     def _is_websocket_closed(self, websocket) -> bool:
         """检查WebSocket是否已关闭，兼容不同版本的websockets库"""
         try:
@@ -286,7 +238,7 @@ class AuraAgent:
             logger.debug(f"检查WebSocket关闭状态时出错: {e}")
             return True  # 出错时假设连接已关闭
 
-    async def handle_websocket_connection(self, websocket, chat_id: str):
+    async def handle_websocket_connection(self, websocket):
         """处理WebSocket连接，包括连接和session生命周期管理"""
         await websocket.accept()
         await self.set_websocket_connection(websocket)
@@ -300,12 +252,12 @@ class AuraAgent:
             
             # 第二步：等待客户端发送开始session消息
             logger.info("等待客户端发送开始session消息...")
-            if not await self._wait_for_session_start(websocket, chat_id):
+            if not await self._wait_for_session_start(websocket):
                 logger.error("未收到有效的开始session消息，关闭连接")
                 return
             
             # 第三步：进入正常的消息处理循环
-            logger.info(f"开始处理session消息: chat_id={chat_id}")
+            logger.info(f"开始处理session消息")
             await self._message_processing_loop(websocket)
             
             # 第四步：等待客户端发送session结束和连接结束消息
@@ -369,7 +321,7 @@ class AuraAgent:
             logger.error(f"等待连接开始消息时出错: {e}")
             return False
 
-    async def _wait_for_session_start(self, websocket, chat_id: str) -> bool:
+    async def _wait_for_session_start(self, websocket) -> bool:
         """等待客户端发送开始session消息并初始化session"""
         try:
             # 直接尝试接收消息，如果连接有问题会抛出异常
@@ -396,13 +348,19 @@ class AuraAgent:
                 
             # 检查是否是开始session消息
             if message_data.get("event") == ClientEventEnum.StartSession.value:
+                chat_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("chat_id", None)
+                user_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("user_id", None)
+                if chat_id is None or user_id is None:
+                    logger.error(f"开始session消息中没有chat_id或user_id")
+                    return False
+                
                 logger.info(f"收到开始session消息: chat_id={chat_id}")
                 
                 # 初始化聊天流和锁
                 with performance_point_context("获取聊天流"):
-                    self.chat_stream = self.chat_stream_manager.get_or_create_chat_stream(chat_id)
+                    self.chat_stream = ChatStreamManager.get_instance().get_or_create_chat_stream(chat_id)
                 with performance_point_context("聊天流加锁"):
-                    locked = self.chat_stream_manager.acquire_lock(chat_id)
+                    locked = ChatStreamManager.get_instance().acquire_lock(chat_id)
                     if not locked:
                         logger.warning(f"加锁失败: chat_id={chat_id}")
                         await self.send_websocket_message({
@@ -412,10 +370,8 @@ class AuraAgent:
                         return False
                 
                 self.message_processor_audio = MessageProcessorAudio(
-                    message_store=self.message_store,
-                    chat_stream=self.chat_stream,
-                    chat_stream_manager=self.chat_stream_manager,
-                    db_conn_string=self.db_conn_string,
+                    chat_id=chat_id,
+                    user_id=user_id,
                     websocket_send_callback=self.send_websocket_message
                 )
                 await self.message_processor_audio.start()

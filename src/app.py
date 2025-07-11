@@ -27,10 +27,10 @@ app.add_middleware(
 async def health_check():
     return {"status": "healthy"}
 
-@app.websocket("/ws/stream/{chat_id}")
-async def websocket_stream_endpoint(websocket: WebSocket, chat_id: str):
+@app.websocket("/ws/stream")
+async def websocket_stream_endpoint(websocket: WebSocket):
     """WebSocket 流式聊天端点，实时流式返回响应内容，支持文本和音频输入"""
-    await AuraAgent.get_instance().handle_websocket_connection(websocket, chat_id)
+    await AuraAgent.get_instance().handle_websocket_connection(websocket)
 
 if __name__ == "__main__":
     uvicorn.run(

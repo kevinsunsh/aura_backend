@@ -14,7 +14,7 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from agents.states.muttering_state import MutteringTaskState
-from agents.configuration import Configuration, get_chat_model_by_type
+from agents.configuration.config import get_chat_model_by_type, GraphConfiguration
 import logging
 from agents.prompts.muttering_prompt import (
     MUTTERING_CHOOSER_PROMPT
@@ -25,11 +25,8 @@ from agents.graphs.todo_mock_func import (
     _get_persona_text
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
-# from sentence_transformers import SentenceTransformer
-# from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
-# sentence_transformer_model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
 
 async def _generate_muttering(state: MutteringTaskState, config: RunnableConfig):
     """发送立即回复"""
@@ -42,9 +39,7 @@ async def _generate_muttering(state: MutteringTaskState, config: RunnableConfig)
             return Command(goto=END, update={
                 "muttering_response": "paused"
             })
-        # return Command(goto=END, update={
-        #     "muttering_response": "paused"
-        # })
+        
         observing_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.OBSERVING)
         last_bot_message_time = observing_task_shared_data.get("last_bot_message_time", None)
         last_user_message_time = observing_task_shared_data.get("last_user_message_time", None)
@@ -58,7 +53,7 @@ async def _generate_muttering(state: MutteringTaskState, config: RunnableConfig)
             return Command(goto=END, update={
                 "muttering_response": "skipped"
             })
-        chat_model = get_chat_model_by_type("basic")
+        chat_model = get_chat_model_by_type("pfc_action_planner")
         prompt = MUTTERING_CHOOSER_PROMPT.format(
             user_input=last_user_message_content
         )
@@ -114,7 +109,7 @@ async def _generate_muttering(state: MutteringTaskState, config: RunnableConfig)
         })            
 
 # 创建前台状态机图
-builder = StateGraph(MutteringTaskState, config_schema=Configuration)
+builder = StateGraph(MutteringTaskState, config_schema=GraphConfiguration)
 
 # 添加节点
 builder.add_node("generate_muttering", _generate_muttering)

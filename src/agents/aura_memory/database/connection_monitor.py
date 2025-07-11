@@ -1,7 +1,7 @@
 import asyncio
 import time
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -198,4 +198,54 @@ global_monitor = DatabaseConnectionMonitor()
 
 def get_global_monitor() -> DatabaseConnectionMonitor:
     """获取全局监控器"""
-    return global_monitor 
+    return global_monitor
+
+def check_database_health(db_conn_string: str) -> Dict[str, Any]:
+    """
+    检查数据库连接健康状态
+    
+    Args:
+        db_conn_string: 数据库连接字符串
+        
+    Returns:
+        健康状态报告
+    """
+    health_checker = DatabaseHealthChecker(db_conn_string)
+    
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # 如果事件循环正在运行，创建新的事件循环
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, health_checker.get_optimization_report())
+                return future.result()
+        else:
+            return loop.run_until_complete(health_checker.get_optimization_report())
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+def get_connection_pool_info(db_conn_string: str) -> Dict[str, Any]:
+    """
+    获取连接池信息
+    
+    Args:
+        db_conn_string: 数据库连接字符串
+        
+    Returns:
+        连接池信息
+    """
+    try:
+        from .database import Database
+        db = Database(db_conn_string)
+        return db.get_connection_info()
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        } 

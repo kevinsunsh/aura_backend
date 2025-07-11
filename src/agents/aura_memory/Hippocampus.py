@@ -11,19 +11,16 @@ import jieba
 import networkx as nx
 import numpy as np
 from collections import Counter
-from logger import get_logger
-from memory_system.sample_distribution import MemoryBuildScheduler  # 分布生成器
-from message.message_store import MessageStore
-from utils.chat_message_builder import (
-    build_readable_messages,
-)  # 导入 build_readable_messages
-from utils.utils import translate_timestamp_to_human_readable
-from rich.traceback import install
+from .sample_distribution import MemoryBuildScheduler  # 分布生成器
+from .message_store import MessageStore
+from sqlalchemy import Column, String, Integer, BigInteger, Index, PrimaryKeyConstraint
+from sqlalchemy.ext.declarative import declarative_base
+from .database.database import Database, Base
+from logging import getLogger
+from agents.configuration.config import get_chat_model_by_type, global_config, Config
+from agents.graphs.todo_mock_func import build_readable_messages
 
-from aura_common.config.config import global_config
-from aura_common.database.database_model import Messages, GraphNodes, GraphEdges  # Peewee Models导入
-
-install(extra_lines=3)
+logger = getLogger(__name__)
 
 def calculate_information_content(text):
     """计算文本的信息量（熵）"""
@@ -38,7 +35,6 @@ def calculate_information_content(text):
 
     return entropy
 
-
 def cosine_similarity(v1, v2):
     """计算余弦相似度"""
     dot_product = np.dot(v1, v2)
@@ -48,9 +44,43 @@ def cosine_similarity(v1, v2):
         return 0
     return dot_product / (norm1 * norm2)
 
+class GraphNodes(Base):
+    """记忆图节点数据库模型"""
+    __tablename__ = 'graph_nodes'
+    
+    concept = Column(String, primary_key=True)  # 节点概念
+    memory_items = Column(String, nullable=False)  # JSON格式存储的记忆列表
+    hash = Column(String, nullable=False)  # 节点哈希值
+    created_time = Column(BigInteger, nullable=False)  # 创建时间戳
+    last_modified = Column(BigInteger, nullable=False)  # 最后修改时间戳
+    
+    # 更新索引
+    __table_args__ = (
+        Index('idx_graph_nodes_created_time', 'created_time'),
+        Index('idx_graph_nodes_hash', 'hash'),
+        Index('idx_graph_nodes_last_modified', 'last_modified'),
+    )
 
-logger = get_logger("memory")
-
+class GraphEdges(Base):
+    """记忆图边数据库模型"""
+    __tablename__ = 'graph_edges'
+    
+    source = Column(String, nullable=False)  # 源节点
+    target = Column(String, nullable=False)  # 目标节点
+    strength = Column(Integer, nullable=False)  # 连接强度
+    hash = Column(String, nullable=False)  # 边哈希值
+    created_time = Column(BigInteger, nullable=False)  # 创建时间戳
+    last_modified = Column(BigInteger, nullable=False)  # 最后修改时间戳
+    
+    # 复合主键
+    __table_args__ = (
+        PrimaryKeyConstraint('source', 'target'),
+        Index('idx_graph_edges_source', 'source'),
+        Index('idx_graph_edges_target', 'target'),
+        Index('idx_graph_edges_hash', 'hash'),
+        Index('idx_graph_edges_created_time', 'created_time'),
+        Index('idx_graph_edges_last_modified', 'last_modified'),
+    )
 
 class MemoryGraph:
     def __init__(self):
@@ -186,7 +216,6 @@ class MemoryGraph:
 
         return None
 
-
 # 海马体
 class Hippocampus:
     def __init__(self):
@@ -202,7 +231,7 @@ class Hippocampus:
         # 从数据库加载记忆图
         self.entorhinal_cortex.sync_memory_from_db()
         # TODO: API-Adapter修改标记
-        self.model_summary = LLMRequest(global_config.model.memory_summary, request_type="memory")
+        self.model_summary = get_chat_model_by_type("memory_summary")
 
     def get_all_node_names(self) -> list:
         """获取记忆图中所有节点的名字列表"""
@@ -801,28 +830,28 @@ class EntorhinalCortex:
         """从数据库获取记忆样本"""
         # 硬编码：每条消息最大记忆次数
         max_memorized_time_per_msg = 2
-
+        config: Config = global_config
         # 创建双峰分布的记忆调度器
         sample_scheduler = MemoryBuildScheduler(
-            n_hours1=global_config.memory.memory_build_distribution[0],
-            std_hours1=global_config.memory.memory_build_distribution[1],
-            weight1=global_config.memory.memory_build_distribution[2],
-            n_hours2=global_config.memory.memory_build_distribution[3],
-            std_hours2=global_config.memory.memory_build_distribution[4],
-            weight2=global_config.memory.memory_build_distribution[5],
-            total_samples=global_config.memory.memory_build_sample_num,
+            n_hours1=config.memory.memory_build_distribution[0],
+            std_hours1=config.memory.memory_build_distribution[1],
+            weight1=config.memory.memory_build_distribution[2],
+            n_hours2=config.memory.memory_build_distribution[3],
+            std_hours2=config.memory.memory_build_distribution[4],
+            weight2=config.memory.memory_build_distribution[5],
+            total_samples=config.memory.memory_build_sample_num,
         )
 
         timestamps = sample_scheduler.get_timestamp_array()
         # 使用 translate_timestamp_to_human_readable 并指定 mode="normal"
-        readable_timestamps = [translate_timestamp_to_human_readable(ts, mode="normal") for ts in timestamps]
-        for _, readable_timestamp in zip(timestamps, readable_timestamps):
-            logger.debug(f"回忆往事: {readable_timestamp}")
+        # readable_timestamps = [translate_timestamp_to_human_readable(ts, mode="normal") for ts in timestamps]
+        # for _, readable_timestamp in zip(timestamps, readable_timestamps):
+        #     logger.debug(f"回忆往事: {readable_timestamp}")
         chat_samples = []
         for timestamp in timestamps:
             # 调用修改后的 random_get_msg_snippet
             messages = self.random_get_msg_snippet(
-                timestamp, global_config.memory.memory_build_sample_length, max_memorized_time_per_msg
+                timestamp, config.memory.memory_build_sample_length, max_memorized_time_per_msg
             )
             if messages:
                 time_diff = (datetime.datetime.now().timestamp() - timestamp) / 3600
@@ -835,7 +864,7 @@ class EntorhinalCortex:
 
     @staticmethod
     def random_get_msg_snippet(target_timestamp: float, chat_size: int, max_memorized_time_per_msg: int) -> list | None:
-        """从数据库中随机获取指定时间戳附近的消息片段 (使用 chat_message_builder)"""
+        """从数据库中随机获取指定时间戳附近的消息片段"""
         try_count = 0
         time_window_seconds = random.randint(300, 1800)  # 随机时间窗口，5到30分钟
 
@@ -844,40 +873,72 @@ class EntorhinalCortex:
             timestamp_start = target_timestamp
             timestamp_end = target_timestamp + time_window_seconds
 
-            chosen_message = MessageStore.get_instance().message_api.get_messages_by_time_range(
-                timestamp_start=timestamp_start, timestamp_end=timestamp_end, limit=1, limit_mode="earliest"
-            )
+            # 使用上下文管理器管理数据库会话
+            with MessageStore.get_instance().db.get_session() as session:
+                try:
+                    from agents.aura_memory.message_store import MessageModel
+                    
+                    # 获取时间范围内的消息
+                    db_messages = session.query(MessageModel).filter(
+                        MessageModel.created_at >= timestamp_start,
+                        MessageModel.created_at <= timestamp_end
+                    ).order_by(MessageModel.created_at).limit(chat_size).all()
+                    
+                    if db_messages:
+                        # 获取chat_id（使用第一条消息的chat_id）
+                        chat_id = db_messages[0].chat_id
+                        
+                        # 获取同一chat_id的消息
+                        chat_messages = session.query(MessageModel).filter(
+                            MessageModel.chat_id == chat_id,
+                            MessageModel.created_at >= timestamp_start,
+                            MessageModel.created_at <= timestamp_end
+                        ).order_by(MessageModel.created_at).limit(chat_size).all()
+                        
+                        if chat_messages:
+                            # 检查获取到的所有消息是否都未达到最大记忆次数
+                            all_valid = True
+                            for message in chat_messages:
+                                # 从data字段中获取记忆次数，默认为0
+                                data = message.data
+                                if not isinstance(data, dict):
+                                    data = {}
+                                memorized_times = data.get("memorized_times", 0)
+                                
+                                if memorized_times >= max_memorized_time_per_msg:
+                                    all_valid = False
+                                    break
 
-            if chosen_message:
-                chat_id = chosen_message[0].get("chat_id")
-
-                messages = get_raw_msg_by_timestamp_with_chat(
-                    timestamp_start=timestamp_start,
-                    timestamp_end=timestamp_end,
-                    limit=chat_size,
-                    limit_mode="earliest",
-                    chat_id=chat_id,
-                )
-
-                if messages:
-                    # 检查获取到的所有消息是否都未达到最大记忆次数
-                    all_valid = True
-                    for message in messages:
-                        if message.get("memorized_times", 0) >= max_memorized_time_per_msg:
-                            all_valid = False
-                            break
-
-                    # 如果所有消息都有效
-                    if all_valid:
-                        # 更新数据库中的记忆次数
-                        for message in messages:
-                            # 确保在更新前获取最新的 memorized_times
-                            current_memorized_times = message.get("memorized_times", 0)
-                            # 使用 Peewee 更新记录
-                            Messages.update(memorized_times=current_memorized_times + 1).where(
-                                Messages.message_id == message["message_id"]
-                            ).execute()
-                        return messages  # 直接返回原始的消息列表
+                            # 如果所有消息都有效
+                            if all_valid:
+                                # 更新数据库中的记忆次数到data字段
+                                for message in chat_messages:
+                                    # 获取当前的data字段
+                                    data = message.data
+                                    if not isinstance(data, dict):
+                                        data = {}
+                                    
+                                    # 更新记忆次数
+                                    current_memorized_times = data.get("memorized_times", 0)
+                                    data["memorized_times"] = current_memorized_times + 1
+                                    
+                                    # 更新数据库
+                                    message.data = data
+                                
+                                # 转换为字典格式返回，保持与原代码兼容
+                                return [{
+                                    "msg_id": m.msg_id,
+                                    "chat_id": m.chat_id,
+                                    "user_id": m.user_id,
+                                    "platform": m.platform,
+                                    "m_type": m.m_type,
+                                    "content": m.content,
+                                    "data": m.data,
+                                    "created_at": m.created_at
+                                } for m in chat_messages]
+                    
+                except Exception as e:
+                    logger.error(f"获取消息片段失败: {e}")
 
             # 如果获取失败或消息无效，增加尝试次数
             try_count += 1
@@ -891,156 +952,164 @@ class EntorhinalCortex:
         start_time = time.time()
         current_time = datetime.datetime.now().timestamp()
 
-        # 获取数据库中所有节点和内存中所有节点
-        db_nodes = {node.concept: node for node in GraphNodes.select()}
-        memory_nodes = list(self.memory_graph.G.nodes(data=True))
-
-        # 批量准备节点数据
-        nodes_to_create = []
-        nodes_to_update = []
-        nodes_to_delete = set()
-
-        # 处理节点
-        for concept, data in memory_nodes:
-            if not concept or not isinstance(concept, str):
-                self.memory_graph.G.remove_node(concept)
-                continue
-
-            memory_items = data.get("memory_items", [])
-            if not isinstance(memory_items, list):
-                memory_items = [memory_items] if memory_items else []
-
-            if not memory_items:
-                self.memory_graph.G.remove_node(concept)
-                continue
-
-            # 计算内存中节点的特征值
-            memory_hash = self.hippocampus.calculate_node_hash(concept, memory_items)
-            created_time = data.get("created_time", current_time)
-            last_modified = data.get("last_modified", current_time)
-
-            # 将memory_items转换为JSON字符串
+        # 使用上下文管理器管理数据库会话
+        with MessageStore.get_instance().db.get_session() as session:
             try:
-                memory_items = [str(item) for item in memory_items]
-                memory_items_json = json.dumps(memory_items, ensure_ascii=False)
-                if not memory_items_json:
-                    continue
-            except Exception:
-                self.memory_graph.G.remove_node(concept)
-                continue
+                # 获取数据库中所有节点和内存中所有节点
+                db_nodes = {node.concept: node for node in session.query(GraphNodes).all()}
+                memory_nodes = list(self.memory_graph.G.nodes(data=True))
 
-            if concept not in db_nodes:
-                nodes_to_create.append(
-                    {
-                        "concept": concept,
-                        "memory_items": memory_items_json,
-                        "hash": memory_hash,
-                        "created_time": created_time,
-                        "last_modified": last_modified,
-                    }
-                )
-            else:
-                db_node = db_nodes[concept]
-                if db_node.hash != memory_hash:
-                    nodes_to_update.append(
-                        {
-                            "concept": concept,
-                            "memory_items": memory_items_json,
-                            "hash": memory_hash,
-                            "last_modified": last_modified,
-                        }
-                    )
+                # 批量准备节点数据
+                nodes_to_create = []
+                nodes_to_update = []
+                nodes_to_delete = set()
 
-        # 计算需要删除的节点
-        memory_concepts = {concept for concept, _ in memory_nodes}
-        nodes_to_delete = set(db_nodes.keys()) - memory_concepts
+                # 处理节点
+                for concept, data in memory_nodes:
+                    if not concept or not isinstance(concept, str):
+                        self.memory_graph.G.remove_node(concept)
+                        continue
 
-        # 批量处理节点
-        if nodes_to_create:
-            batch_size = 100
-            for i in range(0, len(nodes_to_create), batch_size):
-                batch = nodes_to_create[i : i + batch_size]
-                GraphNodes.insert_many(batch).execute()
+                    memory_items = data.get("memory_items", [])
+                    if not isinstance(memory_items, list):
+                        memory_items = [memory_items] if memory_items else []
 
-        if nodes_to_update:
-            batch_size = 100
-            for i in range(0, len(nodes_to_update), batch_size):
-                batch = nodes_to_update[i : i + batch_size]
-                for node_data in batch:
-                    GraphNodes.update(**{k: v for k, v in node_data.items() if k != "concept"}).where(
-                        GraphNodes.concept == node_data["concept"]
-                    ).execute()
+                    if not memory_items:
+                        self.memory_graph.G.remove_node(concept)
+                        continue
 
-        if nodes_to_delete:
-            GraphNodes.delete().where(GraphNodes.concept.in_(nodes_to_delete)).execute()
+                    # 计算内存中节点的特征值
+                    memory_hash = self.hippocampus.calculate_node_hash(concept, memory_items)
+                    created_time = data.get("created_time", current_time)
+                    last_modified = data.get("last_modified", current_time)
 
-        # 处理边的信息
-        db_edges = list(GraphEdges.select())
-        memory_edges = list(self.memory_graph.G.edges(data=True))
+                    # 将memory_items转换为JSON字符串
+                    try:
+                        memory_items = [str(item) for item in memory_items]
+                        memory_items_json = json.dumps(memory_items, ensure_ascii=False)
+                        if not memory_items_json:
+                            continue
+                    except Exception:
+                        self.memory_graph.G.remove_node(concept)
+                        continue
 
-        # 创建边的哈希值字典
-        db_edge_dict = {}
-        for edge in db_edges:
-            edge_hash = self.hippocampus.calculate_edge_hash(edge.source, edge.target)
-            db_edge_dict[(edge.source, edge.target)] = {"hash": edge_hash, "strength": edge.strength}
+                    if concept not in db_nodes:
+                        nodes_to_create.append(
+                            GraphNodes(
+                                concept=concept,
+                                memory_items=memory_items_json,
+                                hash=memory_hash,
+                                created_time=created_time,
+                                last_modified=last_modified,
+                            )
+                        )
+                    else:
+                        db_node = db_nodes[concept]
+                        if db_node.hash != memory_hash:
+                            nodes_to_update.append(
+                                {
+                                    "concept": concept,
+                                    "memory_items": memory_items_json,
+                                    "hash": memory_hash,
+                                    "last_modified": last_modified,
+                                }
+                            )
 
-        # 批量准备边数据
-        edges_to_create = []
-        edges_to_update = []
+                # 计算需要删除的节点
+                memory_concepts = {concept for concept, _ in memory_nodes}
+                nodes_to_delete = set(db_nodes.keys()) - memory_concepts
 
-        # 处理边
-        for source, target, data in memory_edges:
-            edge_hash = self.hippocampus.calculate_edge_hash(source, target)
-            edge_key = (source, target)
-            strength = data.get("strength", 1)
-            created_time = data.get("created_time", current_time)
-            last_modified = data.get("last_modified", current_time)
+                # 批量处理节点
+                if nodes_to_create:
+                    session.add_all(nodes_to_create)
 
-            if edge_key not in db_edge_dict:
-                edges_to_create.append(
-                    {
-                        "source": source,
-                        "target": target,
-                        "strength": strength,
-                        "hash": edge_hash,
-                        "created_time": created_time,
-                        "last_modified": last_modified,
-                    }
-                )
-            elif db_edge_dict[edge_key]["hash"] != edge_hash:
-                edges_to_update.append(
-                    {
-                        "source": source,
-                        "target": target,
-                        "strength": strength,
-                        "hash": edge_hash,
-                        "last_modified": last_modified,
-                    }
-                )
+                if nodes_to_update:
+                    for node_data in nodes_to_update:
+                        session.query(GraphNodes).filter(
+                            GraphNodes.concept == node_data["concept"]
+                        ).update({
+                            "memory_items": node_data["memory_items"],
+                            "hash": node_data["hash"],
+                            "last_modified": node_data["last_modified"]
+                        })
 
-        # 计算需要删除的边
-        memory_edge_keys = {(source, target) for source, target, _ in memory_edges}
-        edges_to_delete = set(db_edge_dict.keys()) - memory_edge_keys
+                if nodes_to_delete:
+                    session.query(GraphNodes).filter(
+                        GraphNodes.concept.in_(nodes_to_delete)
+                    ).delete(synchronize_session=False)
 
-        # 批量处理边
-        if edges_to_create:
-            batch_size = 100
-            for i in range(0, len(edges_to_create), batch_size):
-                batch = edges_to_create[i : i + batch_size]
-                GraphEdges.insert_many(batch).execute()
+                # 处理边的信息
+                db_edges = session.query(GraphEdges).all()
+                memory_edges = list(self.memory_graph.G.edges(data=True))
 
-        if edges_to_update:
-            batch_size = 100
-            for i in range(0, len(edges_to_update), batch_size):
-                batch = edges_to_update[i : i + batch_size]
-                for edge_data in batch:
-                    GraphEdges.update(**{k: v for k, v in edge_data.items() if k not in ["source", "target"]}).where(
-                        (GraphEdges.source == edge_data["source"]) & (GraphEdges.target == edge_data["target"])
-                    ).execute()
+                # 创建边的哈希值字典
+                db_edge_dict = {}
+                for edge in db_edges:
+                    edge_hash = self.hippocampus.calculate_edge_hash(edge.source, edge.target)
+                    db_edge_dict[(edge.source, edge.target)] = {"hash": edge_hash, "strength": edge.strength}
 
-        if edges_to_delete:
-            for source, target in edges_to_delete:
-                GraphEdges.delete().where((GraphEdges.source == source) & (GraphEdges.target == target)).execute()
+                # 批量准备边数据
+                edges_to_create = []
+                edges_to_update = []
+
+                # 处理边
+                for source, target, data in memory_edges:
+                    edge_hash = self.hippocampus.calculate_edge_hash(source, target)
+                    edge_key = (source, target)
+                    strength = data.get("strength", 1)
+                    created_time = data.get("created_time", current_time)
+                    last_modified = data.get("last_modified", current_time)
+
+                    if edge_key not in db_edge_dict:
+                        edges_to_create.append(
+                            GraphEdges(
+                                source=source,
+                                target=target,
+                                strength=strength,
+                                hash=edge_hash,
+                                created_time=created_time,
+                                last_modified=last_modified,
+                            )
+                        )
+                    elif db_edge_dict[edge_key]["hash"] != edge_hash:
+                        edges_to_update.append(
+                            {
+                                "source": source,
+                                "target": target,
+                                "strength": strength,
+                                "hash": edge_hash,
+                                "last_modified": last_modified,
+                            }
+                        )
+
+                # 计算需要删除的边
+                memory_edge_keys = {(source, target) for source, target, _ in memory_edges}
+                edges_to_delete = set(db_edge_dict.keys()) - memory_edge_keys
+
+                # 批量处理边
+                if edges_to_create:
+                    session.add_all(edges_to_create)
+
+                if edges_to_update:
+                    for edge_data in edges_to_update:
+                        session.query(GraphEdges).filter(
+                            (GraphEdges.source == edge_data["source"]) & 
+                            (GraphEdges.target == edge_data["target"])
+                        ).update({
+                            "strength": edge_data["strength"],
+                            "hash": edge_data["hash"],
+                            "last_modified": edge_data["last_modified"]
+                        })
+
+                if edges_to_delete:
+                    for source, target in edges_to_delete:
+                        session.query(GraphEdges).filter(
+                            (GraphEdges.source == source) & (GraphEdges.target == target)
+                        ).delete(synchronize_session=False)
+
+            except Exception as e:
+                logger.error(f"同步记忆到数据库失败: {e}")
+                raise
 
         end_time = time.time()
         logger.info(f"[同步] 总耗时: {end_time - start_time:.2f}秒")
@@ -1053,8 +1122,14 @@ class EntorhinalCortex:
 
         # 清空数据库
         clear_start = time.time()
-        GraphNodes.delete().execute()
-        GraphEdges.delete().execute()
+        with MessageStore.get_instance().db.get_session() as session:
+            try:
+                session.query(GraphNodes).delete()
+                session.query(GraphEdges).delete()
+            except Exception as e:
+                logger.error(f"清空数据库失败: {e}")
+                raise
+        
         clear_end = time.time()
         logger.info(f"[数据库] 清空数据库耗时: {clear_end - clear_start:.2f}秒")
 
@@ -1077,16 +1152,16 @@ class EntorhinalCortex:
                     continue
 
                 nodes_data.append(
-                    {
-                        "concept": concept,
-                        "memory_items": memory_items_json,
-                        "hash": self.hippocampus.calculate_node_hash(concept, memory_items),
-                        "created_time": data.get("created_time", current_time),
-                        "last_modified": data.get("last_modified", current_time),
-                    }
+                    GraphNodes(
+                        concept=concept,
+                        memory_items=memory_items_json,
+                        hash=self.hippocampus.calculate_node_hash(concept, memory_items),
+                        created_time=data.get("created_time", current_time),
+                        last_modified=data.get("last_modified", current_time),
+                    )
                 )
             except Exception as e:
-                logger.error(f"准备节点 {concept} 数据时发生错误: {e}")
+                logger.error(f"处理节点 {concept} 时发生错误: {e}")
                 continue
 
         # 批量准备边数据
@@ -1094,44 +1169,40 @@ class EntorhinalCortex:
         for source, target, data in memory_edges:
             try:
                 edges_data.append(
-                    {
-                        "source": source,
-                        "target": target,
-                        "strength": data.get("strength", 1),
-                        "hash": self.hippocampus.calculate_edge_hash(source, target),
-                        "created_time": data.get("created_time", current_time),
-                        "last_modified": data.get("last_modified", current_time),
-                    }
+                    GraphEdges(
+                        source=source,
+                        target=target,
+                        strength=data.get("strength", 1),
+                        hash=self.hippocampus.calculate_edge_hash(source, target),
+                        created_time=data.get("created_time", current_time),
+                        last_modified=data.get("last_modified", current_time),
+                    )
                 )
             except Exception as e:
-                logger.error(f"准备边 {source}-{target} 数据时发生错误: {e}")
+                logger.error(f"处理边 {source} -> {target} 时发生错误: {e}")
                 continue
 
-        # 使用事务批量写入节点
-        node_start = time.time()
-        if nodes_data:
-            batch_size = 500  # 增加批量大小
-            with GraphNodes._meta.database.atomic():
-                for i in range(0, len(nodes_data), batch_size):
-                    batch = nodes_data[i : i + batch_size]
-                    GraphNodes.insert_many(batch).execute()
-        node_end = time.time()
-        logger.info(f"[数据库] 写入 {len(nodes_data)} 个节点耗时: {node_end - node_start:.2f}秒")
+        # 批量插入数据
+        insert_start = time.time()
+        with MessageStore.get_instance().db.get_session() as session:
+            try:
+                if nodes_data:
+                    session.add_all(nodes_data)
+                    logger.info(f"[数据库] 插入了 {len(nodes_data)} 个节点")
 
-        # 使用事务批量写入边
-        edge_start = time.time()
-        if edges_data:
-            batch_size = 500  # 增加批量大小
-            with GraphEdges._meta.database.atomic():
-                for i in range(0, len(edges_data), batch_size):
-                    batch = edges_data[i : i + batch_size]
-                    GraphEdges.insert_many(batch).execute()
-        edge_end = time.time()
-        logger.info(f"[数据库] 写入 {len(edges_data)} 条边耗时: {edge_end - edge_start:.2f}秒")
+                if edges_data:
+                    session.add_all(edges_data)
+                    logger.info(f"[数据库] 插入了 {len(edges_data)} 条边")
+
+            except Exception as e:
+                logger.error(f"插入数据失败: {e}")
+                raise
+
+        insert_end = time.time()
+        logger.info(f"[数据库] 插入数据耗时: {insert_end - insert_start:.2f}秒")
 
         end_time = time.time()
         logger.info(f"[数据库] 重新同步完成，总耗时: {end_time - start_time:.2f}秒")
-        logger.info(f"[数据库] 同步了 {len(nodes_data)} 个节点和 {len(edges_data)} 条边")
 
     def sync_memory_from_db(self):
         """从数据库同步数据到内存中的图结构"""
@@ -1142,72 +1213,79 @@ class EntorhinalCortex:
         self.memory_graph.G.clear()
 
         # 从数据库加载所有节点
-        nodes = list(GraphNodes.select())
-        for node in nodes:
-            concept = node.concept
+        with MessageStore.get_instance().db.get_session() as session:
             try:
-                memory_items = json.loads(node.memory_items)
-                if not isinstance(memory_items, list):
-                    memory_items = [memory_items] if memory_items else []
+                nodes = session.query(GraphNodes).all()
+                for node in nodes:
+                    concept = node.concept
+                    try:
+                        memory_items = json.loads(node.memory_items)
+                        if not isinstance(memory_items, list):
+                            memory_items = [memory_items] if memory_items else []
 
-                # 检查时间字段是否存在
-                if not node.created_time or not node.last_modified:
-                    need_update = True
-                    # 更新数据库中的节点
-                    update_data = {}
-                    if not node.created_time:
-                        update_data["created_time"] = current_time
-                    if not node.last_modified:
-                        update_data["last_modified"] = current_time
+                        # 检查时间字段是否存在
+                        if not node.created_time or not node.last_modified:
+                            need_update = True
+                            # 更新数据库中的节点
+                            update_data = {}
+                            if not node.created_time:
+                                update_data["created_time"] = current_time
+                            if not node.last_modified:
+                                update_data["last_modified"] = current_time
 
-                    GraphNodes.update(**update_data).where(GraphNodes.concept == concept).execute()
+                            session.query(GraphNodes).filter(
+                                GraphNodes.concept == concept
+                            ).update(update_data)
 
-                # 获取时间信息(如果不存在则使用当前时间)
-                created_time = node.created_time or current_time
-                last_modified = node.last_modified or current_time
+                        # 获取时间信息(如果不存在则使用当前时间)
+                        created_time = node.created_time or current_time
+                        last_modified = node.last_modified or current_time
 
-                # 添加节点到图中
-                self.memory_graph.G.add_node(
-                    concept, memory_items=memory_items, created_time=created_time, last_modified=last_modified
-                )
+                        # 添加节点到图中
+                        self.memory_graph.G.add_node(
+                            concept, memory_items=memory_items, created_time=created_time, last_modified=last_modified
+                        )
+                    except Exception as e:
+                        logger.error(f"加载节点 {concept} 时发生错误: {e}")
+                        continue
+
+                # 从数据库加载所有边
+                edges = session.query(GraphEdges).all()
+                for edge in edges:
+                    source = edge.source
+                    target = edge.target
+                    strength = edge.strength
+
+                    # 检查时间字段是否存在
+                    if not edge.created_time or not edge.last_modified:
+                        need_update = True
+                        # 更新数据库中的边
+                        update_data = {}
+                        if not edge.created_time:
+                            update_data["created_time"] = current_time
+                        if not edge.last_modified:
+                            update_data["last_modified"] = current_time
+
+                        session.query(GraphEdges).filter(
+                            (GraphEdges.source == source) & (GraphEdges.target == target)
+                        ).update(update_data)
+
+                    # 获取时间信息(如果不存在则使用当前时间)
+                    created_time = edge.created_time or current_time
+                    last_modified = edge.last_modified or current_time
+
+                    # 只有当源节点和目标节点都存在时才添加边
+                    if source in self.memory_graph.G and target in self.memory_graph.G:
+                        self.memory_graph.G.add_edge(
+                            source, target, strength=strength, created_time=created_time, last_modified=last_modified
+                        )
+
             except Exception as e:
-                logger.error(f"加载节点 {concept} 时发生错误: {e}")
-                continue
-
-        # 从数据库加载所有边
-        edges = list(GraphEdges.select())
-        for edge in edges:
-            source = edge.source
-            target = edge.target
-            strength = edge.strength
-
-            # 检查时间字段是否存在
-            if not edge.created_time or not edge.last_modified:
-                need_update = True
-                # 更新数据库中的边
-                update_data = {}
-                if not edge.created_time:
-                    update_data["created_time"] = current_time
-                if not edge.last_modified:
-                    update_data["last_modified"] = current_time
-
-                GraphEdges.update(**update_data).where(
-                    (GraphEdges.source == source) & (GraphEdges.target == target)
-                ).execute()
-
-            # 获取时间信息(如果不存在则使用当前时间)
-            created_time = edge.created_time or current_time
-            last_modified = edge.last_modified or current_time
-
-            # 只有当源节点和目标节点都存在时才添加边
-            if source in self.memory_graph.G and target in self.memory_graph.G:
-                self.memory_graph.G.add_edge(
-                    source, target, strength=strength, created_time=created_time, last_modified=last_modified
-                )
+                logger.error(f"从数据库同步记忆失败: {e}")
+                raise
 
         if need_update:
             logger.info("[数据库] 已为缺失的时间字段进行补充")
-
 
 # 负责整合，遗忘，合并记忆
 class ParahippocampalGyrus:

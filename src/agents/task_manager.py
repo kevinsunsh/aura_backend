@@ -29,6 +29,8 @@ class TaskType(Enum):
     MUTTERING = "muttering"
     THINKING = "thinking"
     OBSERVING = "observing"
+    RECALLING = "recalling"
+    MEMORIZING = "memorizing"
 
 class TaskManager:
     _instance = None
@@ -43,10 +45,12 @@ class TaskManager:
                     speaking_task_handle: asyncio.Task = None,
                     muttering_task_handle: asyncio.Task = None,
                     thinking_task_handle: asyncio.Task = None,
-                    observing_task_handle: asyncio.Task = None):
+                    observing_task_handle: asyncio.Task = None,
+                    recalling_task_handle: asyncio.Task = None,
+                    memorizing_task_handle: asyncio.Task = None):
         if not self._initialized:
-            if replying_task_handle is None or speaking_task_handle is None or muttering_task_handle is None or thinking_task_handle is None or observing_task_handle is None:
-                raise ValueError("TaskManager 初始化时需要提供 replying_task_handle, speaking_task_handle, thinking_task_handle, observing_task_handle")
+            if replying_task_handle is None or speaking_task_handle is None or muttering_task_handle is None or thinking_task_handle is None or observing_task_handle is None or recalling_task_handle is None or memorizing_task_handle is None:
+                raise ValueError("TaskManager 初始化时需要提供 replying_task_handle, speaking_task_handle, thinking_task_handle, observing_task_handle, recalling_task_handle, memorizing_task_handle")
             
             self._task_map: Dict[TaskType, AgentTask] = {}
             self._task_map[TaskType.REPLYING] = AgentTask(
@@ -64,6 +68,12 @@ class TaskManager:
             self._task_map[TaskType.OBSERVING] = AgentTask(
                 task_handle=observing_task_handle
             )
+            self._task_map[TaskType.RECALLING] = AgentTask(
+                task_handle=recalling_task_handle
+            )
+            self._task_map[TaskType.MEMORIZING] = AgentTask(
+                task_handle=memorizing_task_handle
+            )
             self._initialized = True
     
     @classmethod
@@ -78,13 +88,15 @@ class TaskManager:
                     speaking_task_handle: asyncio.Task,
                     muttering_task_handle: asyncio.Task,
                     thinking_task_handle: asyncio.Task,
-                    observing_task_handle: asyncio.Task) -> 'TaskManager':
+                    observing_task_handle: asyncio.Task,
+                    recalling_task_handle: asyncio.Task,
+                    memorizing_task_handle: asyncio.Task) -> 'TaskManager':
         """初始化TaskManager单例"""
         if cls._instance is None:
-            cls._instance = cls(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle)
+            cls._instance = cls(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle, recalling_task_handle, memorizing_task_handle)
         elif not cls._initialized:
             # 如果实例存在但未初始化，重新初始化
-            cls._instance.__init__(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle)
+            cls._instance.__init__(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle, recalling_task_handle, memorizing_task_handle)
         return cls._instance
     
     async def set_task_state(self, task_type: TaskType, state: TaskStateType):
