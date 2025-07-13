@@ -624,11 +624,7 @@ class AsrClient:
             except Exception as e:
                 logger.debug(f"关闭ASR WebSocket时出错: {e}")
             self.ws = None
-            
-        # 重置会话相关状态
-        self.session_started = False
-        # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
-
+    
     async def process_audio_chunk(self, audio_chunk: bytes):
         """处理音频块"""
         if not self.is_running or not self.ws:
@@ -682,8 +678,7 @@ class AsrClient:
             "is_reconnecting": self.is_reconnecting,
             "reconnect_attempts": self.reconnect_attempts,
             "current_reconnect_interval": self.current_reconnect_interval,
-            "should_reconnect": self.should_reconnect,
-            "session_started": self.session_started
+            "should_reconnect": self.should_reconnect
         }
             
     async def cleanup(self):
@@ -715,4 +710,7 @@ class AsrClient:
         self.connection_lost = False
         
         logger.info("ASR客户端已清理")
-        
+    
+    def is_connected(self) -> bool:
+        """检查连接状态"""
+        return self.is_running and self.ws is not None

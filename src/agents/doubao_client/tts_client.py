@@ -207,21 +207,10 @@ class TtsClient:
         self._receive_task = None
         self._send_task = None  # 新增：发送任务
         
-        # 音频缓冲
-        self.audio_buffer = bytearray()
-        
         # TTS会话状态
         self._tts_session_active = False
         
-        # 待发送文本队列（用于重连后恢复）
-        self.pending_texts = []
-        self.text_queue_lock = asyncio.Lock()
-        
-        # 发送队列和自动保活配置
-        self.send_queue = asyncio.Queue(maxsize=100)  # 发送消息队列
-        self.keepalive_interval = kwargs.get("keepalive_interval", 30.0)  # 自动保活间隔（秒）
-        self.last_send_time = 0  # 最后发送时间
-        self.keepalive_enabled = kwargs.get("keepalive_enabled", True)  # 是否启用自动保活
+        # 性能指标
         self.tts_service_performance_point_id = None
         
     def _gen_log_id(self):
@@ -318,8 +307,7 @@ class TtsClient:
                 "speaker": speaker,
                 "audio_params": {
                     "format": self.audio_format,
-                    "sample_rate": self.audio_sample_rate,
-                    "enable_timestamp": True,
+                    "sample_rate": self.audio_sample_rate
                 }
             }
         }))
@@ -442,7 +430,6 @@ class TtsClient:
         
         # 启动接收和发送任务
         self._receive_task = asyncio.create_task(self._receive_loop())
-        self._send_task = asyncio.create_task(self._send_loop())
         
         # 初始化最后发送时间
         self.last_send_time = time.time()
@@ -538,84 +525,6 @@ class TtsClient:
             if self.is_running:
                 self.is_running = False
 
-    async def _send_loop(self):
-        """发送消息循环，自动保活"""
-        try:
-            logger.debug("TTS发送循环开始（自动保活模式）")
-            while self.is_running and self.ws:
-                try:
-                    # 使用较短的超时时间，确保定期检查保活
-                    check_interval = min(5.0, self.keepalive_interval / 3) if self.keepalive_enabled else None
-                    
-                    try:
-                        message = await asyncio.wait_for(
-                            self.send_queue.get(), 
-                            timeout=check_interval
-                        )
-                        
-                        # 处理接收到的消息
-                        if message.message_type == SendMessageType.TEXT:
-                            # 发送文本消息
-                            await self._send_text_internal(message.content)
-                            logger.debug(f"已发送文本: {message.content[:50]}...")
-                        # 注意：KEEPALIVE 消息现在完全自动处理，不再通过队列
-                        
-                        # 更新最后发送时间
-                        self.last_send_time = time.time()
-                        
-                        # 标记队列任务完成（asyncio.Queue标准用法）
-                        self.send_queue.task_done()
-                        
-                    except asyncio.TimeoutError:
-                        # 定期检查，无论是否有消息都要检查保活
-                        pass  # 继续到下面的保活检查
-                    
-                    # 无论是否有消息，都检查是否需要发送保活
-                    if self.keepalive_enabled and self._should_send_keepalive():
-                        await self._send_keepalive()
-                        self.last_send_time = time.time()
-                        logger.debug("🔄 自动发送保活消息")
-                            
-                except websockets.exceptions.ConnectionClosed:
-                    logger.warning("TTS发送循环: WebSocket连接已关闭")
-                    break
-                except websockets.exceptions.ConnectionClosedError:
-                    logger.warning("TTS发送循环: WebSocket连接异常关闭")
-                    break
-                except Exception as e:
-                    logger.error(f"发送TTS消息失败: {e}")
-                    break
-                    
-        except asyncio.CancelledError:
-            logger.info("TTS发送任务已取消")
-        except Exception as e:
-            logger.error(f"TTS发送循环出现错误: {e}")
-        finally:
-            logger.debug("TTS发送循环结束")
-
-    def _should_send_keepalive(self) -> bool:
-        """检查是否应该发送保活消息"""
-        if not self.keepalive_enabled:
-            return False
-        
-        current_time = time.time()
-        time_since_last = current_time - self.last_send_time
-        should_send = time_since_last >= self.keepalive_interval
-        
-        if should_send:
-            logger.debug(f"⏰ 需要发送保活: 距离上次发送 {time_since_last:.1f}秒 >= {self.keepalive_interval}秒")
-        
-        return should_send
-
-    async def _send_keepalive(self):
-        """发送保活消息（空文本）"""
-        try:
-            # 发送一个空的文本消息作为保活
-            await self._tts_send_text(self.ws, self.speaker, "", self.session_id)
-        except Exception as e:
-            logger.error(f"发送保活消息失败: {e}")
-            raise
-
     def _mark_disconnected(self):
         """标记连接已断开（同步方法，避免在接收循环中创建新任务）"""
         if self.is_running:
@@ -680,9 +589,6 @@ class TtsClient:
                 # 尝试重连
                 await self._connect()
                 
-                # 重连成功，处理待发送的文本
-                await self._process_pending_texts()
-                
                 logger.info("TTS重连成功")
                 return
                 
@@ -714,26 +620,6 @@ class TtsClient:
                 logger.error(f"等待TTS接收任务结束时出错: {e}")
         self._receive_task = None
         
-        # 取消并等待发送任务完成
-        if self._send_task and not self._send_task.done():
-            logger.debug("取消TTS发送任务...")
-            self._send_task.cancel()
-            try:
-                await self._send_task
-            except asyncio.CancelledError:
-                logger.debug("TTS发送任务已取消")
-            except Exception as e:
-                logger.error(f"等待TTS发送任务结束时出错: {e}")
-        self._send_task = None
-        
-        # 清空发送队列
-        while not self.send_queue.empty():
-            try:
-                self.send_queue.get_nowait()
-                self.send_queue.task_done()  # 标记任务完成
-            except asyncio.QueueEmpty:
-                break
-        
         # 关闭WebSocket连接
         if self.ws:
             try:
@@ -758,34 +644,6 @@ class TtsClient:
         self.session_id = None
         self.connection_id = None
         # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
-
-    async def _process_pending_texts(self):
-        """处理待发送的文本队列（使用新的发送队列）"""
-        texts_to_send = []
-        async with self.text_queue_lock:
-            if self.pending_texts:
-                logger.info(f"处理 {len(self.pending_texts)} 个待发送的文本")
-                texts_to_send = self.pending_texts.copy()
-                self.pending_texts.clear()
-        
-        for text in texts_to_send:
-            try:
-                # 创建发送消息并放入发送队列
-                message = SendMessage(
-                    message_type=SendMessageType.TEXT,
-                    content=text,
-                    timestamp=time.time()
-                )
-                
-                # 等待发送队列有空间（重连后应该是空的）
-                await self.send_queue.put(message)
-                logger.debug(f"重连后发送文本: {text[:50]}...")
-                
-            except Exception as e:
-                logger.error(f"重连后发送待处理文本失败: {e}")
-                # 重新加入待处理队列
-                # self.pending_texts.append(text)
-                break
     
     async def send_text_chunk(self, text: str):
         """
@@ -795,26 +653,11 @@ class TtsClient:
             text: 文本片段
         """
         if not self.is_running or not self.ws:
-            if self.is_reconnecting:
-                logger.debug("TTS正在重连中，将文本加入待发送队列")
-                async with self.text_queue_lock:
-                    self.pending_texts.append(text)
-                return
-            else:
-                logger.warning("TTS连接未建立，无法发送文本")
-                return
+            return
             
         try:
-            # 创建发送消息并放入队列
-            message = SendMessage(
-                message_type=SendMessageType.TEXT,
-                content=text,
-                timestamp=time.time()
-            )
-            
             # 非阻塞方式放入队列，如果队列满了就记录警告
             try:
-                # self.send_queue.put_nowait(message)
                 await self._send_text_internal(text)
                 logger.debug(f"文本已加入发送队列: {text[:50]}...")
             except asyncio.QueueFull:
@@ -822,9 +665,6 @@ class TtsClient:
                 
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
-            # 如果加入队列失败，加入重连队列
-            async with self.text_queue_lock:
-                self.pending_texts.append(text)
             if self.is_running:
                 await self._handle_disconnect()
 
@@ -847,12 +687,7 @@ class TtsClient:
             "reconnect_attempts": self.reconnect_attempts,
             "should_reconnect": self.should_reconnect,
             "session_active": self._tts_session_active,
-            "has_connection": self.ws is not None,
-            "pending_texts_count": len(self.pending_texts),
-            "send_queue_size": self.send_queue.qsize(),
-            "keepalive_enabled": self.keepalive_enabled,
-            "last_send_time": self.last_send_time,
-            "time_since_last_send": time.time() - self.last_send_time
+            "has_connection": self.ws is not None
         }
 
     async def cleanup(self):
@@ -872,24 +707,11 @@ class TtsClient:
             # 清理连接
             await self._cleanup_connection()
             
-            # 清理待发送文本队列
-            async with self.text_queue_lock:
-                self.pending_texts.clear()
-                
-            # 清空发送队列
-            while not self.send_queue.empty():
-                try:
-                    self.send_queue.get_nowait()
-                    self.send_queue.task_done()  # 标记任务完成
-                except asyncio.QueueEmpty:
-                    break
-            
             # 重置所有状态
             self.is_reconnecting = False
             self.reconnect_attempts = 0
             self.current_reconnect_interval = self.reconnect_interval
             self.connection_lost = False
-            self.last_send_time = 0
                 
             logger.info("TTS客户端已清理")
         except Exception as e:

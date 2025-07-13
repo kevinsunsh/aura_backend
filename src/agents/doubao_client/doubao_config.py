@@ -55,8 +55,8 @@ asr_config = {
 # TTS API配置
 tts_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
-    "app_id": "4522921771",  # 需要配置实际的app_id
-    "token": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",   # 需要配置实际的token
+    "app_id": "4427555468",  # 需要配置实际的app_id
+    "token": "wo4mooD0lf3nNJlfNoYsnHzrx7Dl5jrl",   # 需要配置实际的token
     "speaker": "zh_female_shuangkuaisisi_moon_bigtts",  # 默认说话人
     "audio": {
         "format": "pcm",

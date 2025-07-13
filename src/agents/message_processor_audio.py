@@ -133,25 +133,10 @@ class SeparateClientsClient(IAudioClient):
         # 创建TTS客户端
         self.tts_client = TtsClient(
             uid=uid,
-            tts_start_callback=self._tts_start_wrapper,
-            tts_response_callback=self._tts_response_wrapper,
-            tts_end_callback=self._tts_end_wrapper
+            tts_start_callback=self._tts_start_callback,
+            tts_response_callback=self._tts_response_callback,
+            tts_end_callback=self._tts_end_callback
         )
-    
-    def _tts_start_wrapper(self, text: str) -> None:
-        """TTS开始包装器"""
-        if self._tts_start_callback:
-            self._tts_start_callback(text)
-    
-    def _tts_response_wrapper(self, audio_data: bytes) -> None:
-        """TTS响应包装器"""
-        if self._tts_response_callback:
-            self._tts_response_callback(audio_data)
-    
-    def _tts_end_wrapper(self) -> None:
-        """TTS结束包装器"""
-        if self._tts_end_callback:
-            self._tts_end_callback()
     
     async def start(self) -> None:
         await self.asr_client.start()
@@ -217,7 +202,7 @@ class MessageProcessorAudio:
                  chat_id: str,
                  user_id: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
-                 client_type: AudioClientType = AudioClientType.DIALOG_SESSION):
+                 client_type: AudioClientType = AudioClientType.SEPARATE_CLIENTS):
         self.websocket_send_callback = websocket_send_callback
         self.task_lock = asyncio.Lock()
         self.is_running = True
@@ -461,4 +446,4 @@ class MessageProcessorAudio:
             finally:
                 self.audio_client = None
                 logger.info("音频客户端引用已置空")
-        self.text_processor.cleanup()
+        await self.text_processor.cleanup()
