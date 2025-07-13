@@ -15,11 +15,11 @@ from agents.graphs.speaking_graph import builder as speaking_graph_builder
 from agents.graphs.muttering_graph import builder as muttering_graph_builder
 from agents.graphs.recalling_graph import builder as recalling_graph_builder
 from agents.graphs.memorizing_graph import builder as memorizing_graph_builder
-from .aura_memory.message_store import Message
-from .configuration.config import ServerEventEnum
+from .aura_memory.message_store import MessageStore, Message
 from utils.utils import performance_point_context
 from .task_manager import TaskManager, TaskType, TaskStateType
-from agents.configuration.config import get_db_conn_string
+from configuration import get_db_conn_string
+from api_protocol.constant import *
 
 logger = logging.getLogger(__name__)
 
@@ -49,25 +49,31 @@ class MessageProcessorText:
             ),
             observing_task_handle=asyncio.create_task(
                 self._observing_process_task()
+            ),
+            recalling_task_handle=asyncio.create_task(
+                self._recalling_process_task()
+            ),
+            memorizing_task_handle=asyncio.create_task(
+                self._memorizing_process_task()
             )
         )
-        await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
-        await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
-        await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
-        await TaskManager.get_instance().set_task_state(TaskType.RECALLING, TaskStateType.RUNNING)
-        await TaskManager.get_instance().set_task_state(TaskType.MEMORIZING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.RECALLING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.MEMORIZING, TaskStateType.RUNNING)
 
     async def user_input_interruption(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
-        await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
-        await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.PAUSED)
+        # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
+        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.PAUSED)
 
     async def user_input_resume(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
-        await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
-        await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
+        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
 
     async def handle_text_message(self, 
                                 message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,7 +105,7 @@ class MessageProcessorText:
             )
             
             # 存储到消息存储
-            self.message_store.add_message(message)
+            MessageStore.get_instance().add_message(message)
             await self.user_input_resume()
 
             logger.info(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
@@ -145,7 +151,7 @@ class MessageProcessorText:
                             if message_tuple["generate_muttering"]["muttering_response"] == "finished":
                                 if self.websocket_send_callback:
                                     await self.websocket_send_callback({
-                                        "event": ServerEventEnum.MutteringResponse.value,
+                                        "event": ServerEvent.MutteringResponse,
                                         "payload_msg": {
                                             "content": message_tuple["generate_muttering"]["muttering_content"]
                                         }
@@ -185,7 +191,7 @@ class MessageProcessorText:
                             if message_obj.content and message_meta["langgraph_node"] == "generate_reply":
                                 if self.websocket_send_callback:
                                     await self.websocket_send_callback({
-                                        "event": ServerEventEnum.ChatResponse.value,
+                                        "event": ServerEvent.ChatResponse,
                                         "payload_msg": {
                                             "content": str(message_obj.content)
                                         }
@@ -195,7 +201,7 @@ class MessageProcessorText:
                             if message_tuple["generate_reply"]["replaying_response"] == "finished":
                                 if self.websocket_send_callback:
                                     await self.websocket_send_callback({
-                                        "event": ServerEventEnum.ChatEnded.value
+                                        "event": ServerEvent.ChatEnded,
                                     })
         except asyncio.CancelledError:
             # 只在最外层处理取消，记录日志但不重新抛出
@@ -233,7 +239,7 @@ class MessageProcessorText:
                                 if message_obj.content and message_meta["langgraph_node"] == "generate_new_message":
                                     if self.websocket_send_callback:
                                         await self.websocket_send_callback({
-                                            "event": ServerEventEnum.ChatResponse.value,
+                                            "event": ServerEvent.ChatResponse,
                                             "payload_msg": {
                                                 "content": str(message_obj.content)
                                             }
@@ -243,13 +249,13 @@ class MessageProcessorText:
                                 if message_tuple["generate_new_message"]["speaking_response"] == "finished":
                                     if self.websocket_send_callback:
                                         await self.websocket_send_callback({
-                                            "event": ServerEventEnum.ChatEnded.value
+                                            "event": ServerEvent.ChatEnded,
                                         })
                             # if "listen_for_user" in message_tuple:
                             #     if message_tuple["listen_for_user"]["streaming_response"] == "finished":
                             #         if self.websocket_send_callback:
                             #             await self.websocket_send_callback({
-                            #                 "event": ServerEventEnum.ChatEnded.value
+                            #                 "event": ServerEvent.ChatEnded,
                             #             })
         except asyncio.CancelledError:
             # 只在最外层处理取消，记录日志但不重新抛出

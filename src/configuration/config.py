@@ -10,7 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 
 # 导入新的数据库配置系统
-from .config_loader import load_config, load_specific_config, get_config_loader
+from .config_loader import load_config, load_specific_config, get_config_loader, Config
 
 # 模型缓存
 _model_cache: Dict[str, BaseChatModel] = {}
@@ -69,8 +69,8 @@ def get_chat_model_by_type(
     
     # 检查缓存
     if use_cache:
-        if llm_type.value in _model_cache:
-            return _model_cache[llm_type.value]
+        if llm_type in _model_cache:
+            return _model_cache[llm_type]
 
     # 从数据库加载ModelConfig
     try:
@@ -80,7 +80,7 @@ def get_chat_model_by_type(
             raise ValueError(f"ModelConfig not found in database for environment: {environment}")
         
         # 从ModelConfig获取配置
-        configurable = getattr(global_config.model, llm_type.value, {})
+        configurable = getattr(global_config.model, llm_type, {})
         
         # 如果没有特定配置，使用默认配置
         if not configurable:
@@ -103,7 +103,7 @@ def get_chat_model_by_type(
         
         # 缓存模型实例
         if use_cache:
-            _model_cache[llm_type.value] = model_instance
+            _model_cache[llm_type] = model_instance
         
         return model_instance
         
@@ -118,33 +118,6 @@ def get_chat_model_by_type(
                 "api_base": "https://ark.cn-beijing.volces.com/api/v3"
             }
         )
-
-class ClientEventEnum(Enum):
-	StartConnection = 1
-	FinishConnection = 2
-	StartSession = 100
-	FinishSession = 102
-	TaskRequest = 200
-	SayHello = 300
-	ChatTTSText = 500
-
-class ServerEventEnum(Enum):
-	ConnectionStarted = 50
-	ConnectionFailed = 51
-	ConnectionFinished = 52
-	SessionStarted = 150
-	SessionFinished = 152
-	SessionFailed = 153
-	TTSSentenceStart = 350
-	TTSSentenceEnd = 351
-	TTSResponse = 352
-	TTSEnded = 359
-	ASRInfo = 450
-	ASRResponse = 451
-	ASREnded = 459
-	ChatResponse = 550
-	ChatEnded = 559
-	MutteringResponse = 650
 
 # 数据库配置相关函数
 def get_db_conn_string() -> str:

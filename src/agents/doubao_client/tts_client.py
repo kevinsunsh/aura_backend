@@ -10,7 +10,7 @@ import websockets
 import aiofiles
 import fastrand
 from utils.utils import start_performance_point, end_performance_point
-from .config import tts_config
+from .doubao_config import tts_config
 
 logger = logging.getLogger(__name__)
 

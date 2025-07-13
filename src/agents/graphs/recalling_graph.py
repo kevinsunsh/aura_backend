@@ -12,18 +12,21 @@ from langgraph.graph import START, END, StateGraph
 from langgraph.types import Command
 
 from agents.states.recalling_state import RecallingTaskState
-from agents.configuration.config import Configuration, global_config, get_chat_model_by_type, Config
+from configuration import GraphConfiguration, global_config, get_chat_model_by_type
 import logging
 from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.Hippocampus import hippocampus_manager
 from agents.aura_memory.memory_monitor import monitor_memory_operation, get_memory_monitor
-from agents.task_manager import TaskManager, TaskType
+from agents.task_manager import TaskManager, TaskType, TaskStateType
 logger = logging.getLogger(__name__)
 
-@monitor_memory_operation("recall")
 async def _recall_knowledge(state: RecallingTaskState, config: RunnableConfig):
     """从海马体记忆系统中检索相关记忆"""
     try:
+        await asyncio.sleep(1)
+        if TaskManager.get_instance().get_task_state(TaskType.RECALLING) == TaskStateType.PAUSED:
+            return Command(goto=END)
+        
         # 确保海马体管理器已初始化
         if not hippocampus_manager._initialized:
             hippocampus_manager.initialize()
@@ -52,11 +55,10 @@ async def _recall_knowledge(state: RecallingTaskState, config: RunnableConfig):
         logger.info(f"开始从海马体记忆系统检索记忆")
         
         # 获取配置信息
-        config: Config = global_config
-        max_memory_num = config.memory.recall_max_memory_num
-        max_memory_length = config.memory.recall_max_memory_length
-        max_depth = config.memory.recall_max_depth
-        fast_retrieval = config.memory.recall_fast_retrieval
+        max_memory_num = global_config.memory.recall_max_memory_num
+        max_memory_length = global_config.memory.recall_max_memory_length
+        max_depth = global_config.memory.recall_max_depth
+        fast_retrieval = global_config.memory.recall_fast_retrieval
         
         # 使用海马体组件进行记忆检索
         try:
@@ -227,7 +229,7 @@ def _calculate_recall_confidence(memories: list, search_text: str) -> float:
         return 0.5
 
 # 创建StateGraph
-builder = StateGraph(RecallingTaskState, config_schema=Configuration)
+builder = StateGraph(RecallingTaskState, config_schema=GraphConfiguration)
 
 # 添加记忆检索节点
 builder.add_node("recall_knowledge", _recall_knowledge)

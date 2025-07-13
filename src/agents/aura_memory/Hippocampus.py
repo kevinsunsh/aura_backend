@@ -17,8 +17,8 @@ from sqlalchemy import Column, String, Integer, BigInteger, Index, PrimaryKeyCon
 from sqlalchemy.ext.declarative import declarative_base
 from .database.database import Database, Base
 from logging import getLogger
-from agents.configuration.config import get_chat_model_by_type, global_config, Config
-from agents.graphs.todo_mock_func import build_readable_messages
+from configuration import get_chat_model_by_type, global_config, Config
+from utils.todo_mock_func import build_readable_messages
 
 logger = getLogger(__name__)
 

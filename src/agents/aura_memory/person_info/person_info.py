@@ -1,11 +1,12 @@
+import logging
+
+from agents.aura_memory.person_info.person_store import PersonInfoModel, PersonInfo, PersonStore
 import copy
 import hashlib
-import asyncio
-import logging
+from typing import Any, Callable, Dict, List
 import datetime
-from typing import Any, Callable, Dict
-from agents.aura_memory.person_info.person_store import PersonInfo  # 新增导入
-from configuration.config import global_config, get_chat_model_by_type
+import asyncio
+from configuration import global_config, get_chat_model_by_type
 
 import json  # 新增导入
 from json_repair import repair_json
@@ -38,8 +39,6 @@ person_info_default = {
     "know_times": 0,
     "know_since": None,
     "last_know": None,
-    # "user_cardname": None, # This field is not in Peewee model PersonInfo
-    # "user_avatar": None,   # This field is not in Peewee model PersonInfo
     "impression": None,  # Corrected from persion_impression
     "short_impression": None,
     "info_list": None,
@@ -58,28 +57,17 @@ class PersonInfoManager:
             model=global_config.model.utils,
             request_type="relation.qv_name",
         )
-        try:
-            db.connect(reuse_if_open=True)
-            # 设置连接池参数
-            if hasattr(db, "execute_sql"):
-                # 设置SQLite优化参数
-                db.execute_sql("PRAGMA cache_size = -64000")  # 64MB缓存
-                db.execute_sql("PRAGMA temp_store = memory")  # 临时存储在内存中
-                db.execute_sql("PRAGMA mmap_size = 268435456")  # 256MB内存映射
-            db.create_tables([PersonInfo], safe=True)
-        except Exception as e:
-            logger.error(f"数据库连接或 PersonInfo 表创建失败: {e}")
-
+        self.person_store = PersonStore.get_instance()
+        
         # 初始化时读取所有person_name
         try:
-            for record in PersonInfo.select(PersonInfo.person_id, PersonInfo.person_name).where(
-                PersonInfo.person_name.is_null(False)
-            ):
-                if record.person_name:
-                    self.person_name_list[record.person_id] = record.person_name
-            logger.debug(f"已加载 {len(self.person_name_list)} 个用户名称 (Peewee)")
+            all_persons = self.person_store.get_all_persons()
+            for person in all_persons:
+                if person.person_name:
+                    self.person_name_list[person.person_id] = person.person_name
+            logger.debug(f"已加载 {len(self.person_name_list)} 个用户名称")
         except Exception as e:
-            logger.error(f"从 Peewee 加载 person_name_list 失败: {e}")
+            logger.error(f"加载 person_name_list 失败: {e}")
 
     @staticmethod
     def get_person_id(platform: str, user_id: int):
@@ -96,24 +84,24 @@ class PersonInfoManager:
         person_id = self.get_person_id(platform, user_id)
 
         def _db_check_known_sync(p_id: str):
-            return PersonInfo.get_or_none(PersonInfo.person_id == p_id) is not None
+            return self.person_store.get_person_by_id(p_id) is not None
 
         try:
             return await asyncio.to_thread(_db_check_known_sync, person_id)
         except Exception as e:
-            logger.error(f"检查用户 {person_id} 是否已知时出错 (Peewee): {e}")
+            logger.error(f"检查用户 {person_id} 是否已知时出错: {e}")
             return False
 
     def get_person_id_by_person_name(self, person_name: str):
         """根据用户名获取用户ID"""
         try:
-            record = PersonInfo.get_or_none(PersonInfo.person_name == person_name)
-            if record:
-                return record.person_id
+            person = self.person_store.get_person_by_name(person_name)
+            if person:
+                return person.person_id
             else:
                 return ""
         except Exception as e:
-            logger.error(f"根据用户名 {person_name} 获取用户ID时出错 (Peewee): {e}")
+            logger.error(f"根据用户名 {person_name} 获取用户ID时出错: {e}")
             return ""
 
     @staticmethod
@@ -124,87 +112,69 @@ class PersonInfoManager:
             return
 
         _person_info_default = copy.deepcopy(person_info_default)
-        model_fields = PersonInfo._meta.fields.keys()
-
+        
         final_data = {"person_id": person_id}
 
-        # Start with defaults for all model fields
+        # Start with defaults for all fields
         for key, default_value in _person_info_default.items():
-            if key in model_fields:
-                final_data[key] = default_value
+            final_data[key] = default_value
 
         # Override with provided data
         if data:
             for key, value in data.items():
-                if key in model_fields:
-                    final_data[key] = value
+                final_data[key] = value
 
         # Ensure person_id is correctly set from the argument
         final_data["person_id"] = person_id
 
-        # Serialize JSON fields
-        for key in JSON_SERIALIZED_FIELDS:
-            if key in final_data:
-                if isinstance(final_data[key], (list, dict)):
-                    final_data[key] = json.dumps(final_data[key], ensure_ascii=False)
-                elif final_data[key] is None:  # Default for lists is [], store as "[]"
-                    final_data[key] = json.dumps([], ensure_ascii=False)
-                # If it's already a string, assume it's valid JSON or a non-JSON string field
+        # Create PersonInfo object
+        person_info = PersonInfo(**final_data)
 
-        def _db_create_sync(p_data: dict):
+        def _db_create_sync(person: PersonInfo):
             try:
-                PersonInfo.create(**p_data)
-                return True
+                person_store = PersonStore.get_instance()
+                return person_store.add_person(person)
             except Exception as e:
-                logger.error(f"创建 PersonInfo 记录 {p_data.get('person_id')} 失败 (Peewee): {e}")
+                logger.error(f"创建 PersonInfo 记录 {person.person_id} 失败: {e}")
                 return False
 
-        await asyncio.to_thread(_db_create_sync, final_data)
+        await asyncio.to_thread(_db_create_sync, person_info)
 
     async def update_one_field(self, person_id: str, field_name: str, value, data: dict = None):
         """更新某一个字段，会补全"""
-        if field_name not in PersonInfo._meta.fields:
-            logger.debug(f"更新'{field_name}'失败，未在 PersonInfo Peewee 模型中定义的字段。")
+        # 检查字段是否在PersonInfo模型中
+        if not hasattr(PersonInfo, field_name):
+            logger.debug(f"更新'{field_name}'失败，未在 PersonInfo 模型中定义的字段。")
             return
-
-        processed_value = value
-        if field_name in JSON_SERIALIZED_FIELDS:
-            if isinstance(value, (list, dict)):
-                processed_value = json.dumps(value, ensure_ascii=False, indent=None)
-            elif value is None:  # Store None as "[]" for JSON list fields
-                processed_value = json.dumps([], ensure_ascii=False, indent=None)
 
         def _db_update_sync(p_id: str, f_name: str, val_to_set):
             import time
 
             start_time = time.time()
             try:
-                record = PersonInfo.get_or_none(PersonInfo.person_id == p_id)
-                query_time = time.time()
+                person_store = PersonStore.get_instance()
+                # 使用新的 update_person_field 方法，更高效
+                success = person_store.update_person_field(p_id, f_name, val_to_set)
+                save_time = time.time()
 
-                if record:
-                    setattr(record, f_name, val_to_set)
-                    record.save()
-                    save_time = time.time()
-
+                if success:
                     total_time = save_time - start_time
                     if total_time > 0.5:  # 如果超过500ms就记录日志
                         logger.warning(
-                            f"数据库更新操作耗时 {total_time:.3f}秒 (查询: {query_time - start_time:.3f}s, 保存: {save_time - query_time:.3f}s) person_id={p_id}, field={f_name}"
+                            f"数据库更新操作耗时 {total_time:.3f}秒 person_id={p_id}, field={f_name}"
                         )
-
                     return True, False  # Found and updated, no creation needed
                 else:
                     total_time = time.time() - start_time
                     if total_time > 0.5:
-                        logger.warning(f"数据库查询操作耗时 {total_time:.3f}秒 person_id={p_id}, field={f_name}")
+                        logger.warning(f"数据库更新操作耗时 {total_time:.3f}秒 person_id={p_id}, field={f_name}")
                     return False, True  # Not found, needs creation
             except Exception as e:
                 total_time = time.time() - start_time
                 logger.error(f"数据库操作异常，耗时 {total_time:.3f}秒: {e}")
                 raise
 
-        found, needs_creation = await asyncio.to_thread(_db_update_sync, person_id, field_name, processed_value)
+        found, needs_creation = await asyncio.to_thread(_db_update_sync, person_id, field_name, value)
 
         if needs_creation:
             logger.info(f"{person_id} 不存在，将新建。")
@@ -224,22 +194,39 @@ class PersonInfoManager:
             await self.create_person_info(person_id, creation_data)
 
     @staticmethod
+    async def batch_update_fields(updates: List[tuple]) -> Dict[str, bool]:
+        """批量更新多个用户的字段
+        updates: List[tuple] - [(person_id, field_name, value), ...]
+        returns: Dict[str, bool] - {person_id: success}
+        """
+        def _db_batch_update_sync(update_list: List[tuple]):
+            try:
+                person_store = PersonStore.get_instance()
+                return person_store.batch_update_person_fields(update_list)
+            except Exception as e:
+                logger.error(f"批量更新字段失败: {e}")
+                return {person_id: False for person_id, _, _ in update_list}
+
+        return await asyncio.to_thread(_db_batch_update_sync, updates)
+
+    @staticmethod
     async def has_one_field(person_id: str, field_name: str):
         """判断是否存在某一个字段"""
-        if field_name not in PersonInfo._meta.fields:
-            logger.debug(f"检查字段'{field_name}'失败，未在 PersonInfo Peewee 模型中定义。")
+        if not hasattr(PersonInfo, field_name):
+            logger.debug(f"检查字段'{field_name}'失败，未在 PersonInfo 模型中定义。")
             return False
 
         def _db_has_field_sync(p_id: str, f_name: str):
-            record = PersonInfo.get_or_none(PersonInfo.person_id == p_id)
-            if record:
+            person_store = PersonStore.get_instance()
+            person = person_store.get_person_by_id(p_id)
+            if person:
                 return True
             return False
 
         try:
             return await asyncio.to_thread(_db_has_field_sync, person_id, field_name)
         except Exception as e:
-            logger.error(f"检查字段 {field_name} for {person_id} 时出错 (Peewee): {e}")
+            logger.error(f"检查字段 {field_name} for {person_id} 时出错: {e}")
             return False
 
     @staticmethod
@@ -343,7 +330,8 @@ class PersonInfoManager:
             else:
 
                 def _db_check_name_exists_sync(name_to_check):
-                    return PersonInfo.select().where(PersonInfo.person_name == name_to_check).exists()
+                    person_store = PersonStore.get_instance()
+                    return person_store.get_person_by_name(name_to_check) is not None
 
                 if await asyncio.to_thread(_db_check_name_exists_sync, generated_nickname):
                     is_duplicate = True
@@ -383,19 +371,19 @@ class PersonInfoManager:
 
         def _db_delete_sync(p_id: str):
             try:
-                query = PersonInfo.delete().where(PersonInfo.person_id == p_id)
-                deleted_count = query.execute()
-                return deleted_count
+                person_store = PersonStore.get_instance()
+                success = person_store.delete_person(p_id)
+                return 1 if success else 0
             except Exception as e:
-                logger.error(f"删除 PersonInfo {p_id} 失败 (Peewee): {e}")
+                logger.error(f"删除 PersonInfo {p_id} 失败: {e}")
                 return 0
 
         deleted_count = await asyncio.to_thread(_db_delete_sync, person_id)
 
         if deleted_count > 0:
-            logger.debug(f"删除成功：person_id={person_id} (Peewee)")
+            logger.debug(f"删除成功：person_id={person_id}")
         else:
-            logger.debug(f"删除失败：未找到 person_id={person_id} 或删除未影响行 (Peewee)")
+            logger.debug(f"删除失败：未找到 person_id={person_id} 或删除未影响行")
 
     @staticmethod
     async def get_value(person_id: str, field_name: str):
@@ -405,20 +393,10 @@ class PersonInfoManager:
             default_value_for_field = []  # Ensure JSON fields default to [] if not in DB
 
         def _db_get_value_sync(p_id: str, f_name: str):
-            record = PersonInfo.get_or_none(PersonInfo.person_id == p_id)
-            if record:
-                val = getattr(record, f_name, None)
-                if f_name in JSON_SERIALIZED_FIELDS:
-                    if isinstance(val, str):
-                        try:
-                            return json.loads(val)
-                        except json.JSONDecodeError:
-                            logger.warning(f"字段 {f_name} for {p_id} 包含无效JSON: {val}. 返回默认值.")
-                            return []  # Default for JSON fields on error
-                    elif val is None:  # Field exists in DB but is None
-                        return []  # Default for JSON fields
-                    # If val is already a list/dict (e.g. if somehow set without serialization)
-                    return val  # Should ideally not happen if update_one_field is always used
+            person_store = PersonStore.get_instance()
+            person = person_store.get_person_by_id(p_id)
+            if person:
+                val = getattr(person, f_name, None)
                 return val
             return None  # Record not found
 
@@ -431,7 +409,7 @@ class PersonInfoManager:
             logger.warning(f"字段 {field_name} 在 person_info_default 中未定义，且在数据库中未找到。")
             return None  # Ultimate fallback
         except Exception as e:
-            logger.error(f"获取字段 {field_name} for {person_id} 时出错 (Peewee): {e}")
+            logger.error(f"获取字段 {field_name} for {person_id} 时出错: {e}")
             # Fallback to default in case of any error during DB access
             if field_name in person_info_default:
                 return default_value_for_field
@@ -444,19 +422,10 @@ class PersonInfoManager:
         if field_name in JSON_SERIALIZED_FIELDS and default_value_for_field is None:
             default_value_for_field = []
 
-        record = PersonInfo.get_or_none(PersonInfo.person_id == person_id)
-        if record:
-            val = getattr(record, field_name, None)
-            if field_name in JSON_SERIALIZED_FIELDS:
-                if isinstance(val, str):
-                    try:
-                        return json.loads(val)
-                    except json.JSONDecodeError:
-                        logger.warning(f"字段 {field_name} for {person_id} 包含无效JSON: {val}. 返回默认值.")
-                        return []
-                elif val is None:
-                    return []
-                return val
+        person_store = PersonStore.get_instance()
+        person = person_store.get_person_by_id(person_id)
+        if person:
+            val = getattr(person, field_name, None)
             return val
 
         if field_name in person_info_default:
@@ -474,22 +443,23 @@ class PersonInfoManager:
         result = {}
 
         def _db_get_record_sync(p_id: str):
-            return PersonInfo.get_or_none(PersonInfo.person_id == p_id)
+            person_store = PersonStore.get_instance()
+            return person_store.get_person_by_id(p_id)
 
-        record = await asyncio.to_thread(_db_get_record_sync, person_id)
+        person = await asyncio.to_thread(_db_get_record_sync, person_id)
 
         for field_name in field_names:
-            if field_name not in PersonInfo._meta.fields:
+            if not hasattr(PersonInfo, field_name):
                 if field_name in person_info_default:
                     result[field_name] = copy.deepcopy(person_info_default[field_name])
-                    logger.debug(f"字段'{field_name}'不在Peewee模型中，使用默认配置值。")
+                    logger.debug(f"字段'{field_name}'不在PersonInfo模型中，使用默认配置值。")
                 else:
-                    logger.debug(f"get_values查询失败：字段'{field_name}'未在Peewee模型和默认配置中定义。")
+                    logger.debug(f"get_values查询失败：字段'{field_name}'未在PersonInfo模型和默认配置中定义。")
                     result[field_name] = None
                 continue
 
-            if record:
-                value = getattr(record, field_name)
+            if person:
+                value = getattr(person, field_name)
                 if value is not None:
                     result[field_name] = value
                 else:
@@ -507,19 +477,21 @@ class PersonInfoManager:
         """
         获取满足条件的字段值字典
         """
-        if field_name not in PersonInfo._meta.fields:
-            logger.error(f"字段检查失败：'{field_name}'未在 PersonInfo Peewee 模型中定义")
+        if not hasattr(PersonInfo, field_name):
+            logger.error(f"字段检查失败：'{field_name}'未在 PersonInfo 模型中定义")
             return {}
 
         def _db_get_specific_sync(f_name: str):
             found_results = {}
             try:
-                for record in PersonInfo.select(PersonInfo.person_id, getattr(PersonInfo, f_name)):
-                    value = getattr(record, f_name)
+                person_store = PersonStore.get_instance()
+                all_persons = person_store.get_all_persons()
+                for person in all_persons:
+                    value = getattr(person, f_name)
                     if way(value):
-                        found_results[record.person_id] = value
+                        found_results[person.person_id] = value
             except Exception as e_query:
-                logger.error(f"数据库查询失败 (Peewee specific_value_list for {f_name}): {str(e_query)}", exc_info=True)
+                logger.error(f"数据库查询失败 (specific_value_list for {f_name}): {str(e_query)}", exc_info=True)
             return found_results
 
         try:
@@ -538,12 +510,13 @@ class PersonInfoManager:
         person_id = self.get_person_id(platform, user_id)
 
         def _db_check_exists_sync(p_id: str):
-            return PersonInfo.get_or_none(PersonInfo.person_id == p_id)
+            person_store = PersonStore.get_instance()
+            return person_store.get_person_by_id(p_id)
 
-        record = await asyncio.to_thread(_db_check_exists_sync, person_id)
+        person = await asyncio.to_thread(_db_check_exists_sync, person_id)
 
-        if record is None:
-            logger.info(f"用户 {platform}:{user_id} (person_id: {person_id}) 不存在，将创建新记录 (Peewee)。")
+        if person is None:
+            logger.info(f"用户 {platform}:{user_id} (person_id: {person_id}) 不存在，将创建新记录。")
             unique_nickname = await self._generate_unique_person_name(nickname)
             initial_data = {
                 "person_id": person_id,
@@ -559,11 +532,9 @@ class PersonInfoManager:
                 "points": [],
                 "forgotten_points": [],
             }
-            model_fields = PersonInfo._meta.fields.keys()
-            filtered_initial_data = {k: v for k, v in initial_data.items() if v is not None and k in model_fields}
 
-            await self.create_person_info(person_id, data=filtered_initial_data)
-            logger.info(f"已为 {person_id} 创建新记录，初始数据 (filtered for model): {filtered_initial_data}")
+            await self.create_person_info(person_id, data=initial_data)
+            logger.info(f"已为 {person_id} 创建新记录，初始数据: {initial_data}")
 
         return person_id
 
@@ -582,18 +553,19 @@ class PersonInfoManager:
         if not found_person_id:
 
             def _db_find_by_name_sync(p_name_to_find: str):
-                return PersonInfo.get_or_none(PersonInfo.person_name == p_name_to_find)
+                person_store = PersonStore.get_instance()
+                return person_store.get_person_by_name(p_name_to_find)
 
-            record = await asyncio.to_thread(_db_find_by_name_sync, person_name)
-            if record:
-                found_person_id = record.person_id
+            person = await asyncio.to_thread(_db_find_by_name_sync, person_name)
+            if person:
+                found_person_id = person.person_id
                 if (
                     found_person_id not in self.person_name_list
                     or self.person_name_list[found_person_id] != person_name
                 ):
                     self.person_name_list[found_person_id] = person_name
             else:
-                logger.debug(f"数据库中也未找到名为 '{person_name}' 的用户 (Peewee)")
+                logger.debug(f"数据库中也未找到名为 '{person_name}' 的用户")
                 return None
 
         if found_person_id:
@@ -602,25 +574,26 @@ class PersonInfoManager:
                 "platform",
                 "user_id",
                 "nickname",
-                "user_cardname",
-                "user_avatar",
                 "person_name",
                 "name_reason",
             ]
             valid_fields_to_get = [
-                f for f in required_fields if f in PersonInfo._meta.fields or f in person_info_default
+                f for f in required_fields if hasattr(PersonInfo, f) or f in person_info_default
             ]
 
             person_data = await self.get_values(found_person_id, valid_fields_to_get)
 
             if person_data:
                 final_result = {key: person_data.get(key) for key in required_fields}
+                # 添加不存在的字段的默认值
+                final_result["user_cardname"] = None
+                final_result["user_avatar"] = None
                 return final_result
             else:
-                logger.warning(f"找到了 person_id '{found_person_id}' 但 get_values 返回空 (Peewee)")
+                logger.warning(f"找到了 person_id '{found_person_id}' 但 get_values 返回空")
                 return None
 
-        logger.error(f"逻辑错误：未能为 '{person_name}' 确定 person_id (Peewee)")
+        logger.error(f"逻辑错误：未能为 '{person_name}' 确定 person_id")
         return None
 
 

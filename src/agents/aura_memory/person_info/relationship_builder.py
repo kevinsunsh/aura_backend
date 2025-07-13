@@ -3,19 +3,13 @@ import traceback
 import os
 import pickle
 from typing import List, Dict
-from src.config.config import global_config
-from src.common.logger import get_logger
-from src.chat.message_receive.chat_stream import get_chat_manager
-from src.person_info.relationship_manager import get_relationship_manager
-from src.person_info.person_info import get_person_info_manager, PersonInfoManager
-from src.chat.utils.chat_message_builder import (
-    get_raw_msg_by_timestamp_with_chat,
-    get_raw_msg_by_timestamp_with_chat_inclusive,
-    get_raw_msg_before_timestamp_with_chat,
-    num_new_messages_since,
-)
+from configuration.config import global_config
+import logging
+from agents.aura_memory.person_info.relationship_manager import get_relationship_manager
+from agents.aura_memory.person_info.person_info import get_person_info_manager, PersonInfoManager
+from agents.aura_memory.message_store import MessageStore
 
-logger = get_logger("relationship_builder")
+logger = logging.getLogger(__name__)
 
 # 消息段清理配置
 SEGMENT_CLEANUP_CONFIG = {
@@ -55,11 +49,7 @@ class RelationshipBuilder:
         self.last_cleanup_time = 0.0
 
         # 获取聊天名称用于日志
-        try:
-            chat_name = get_chat_manager().get_stream_name(self.chat_id)
-            self.log_prefix = f"[{chat_name}] 关系构建"
-        except Exception:
-            self.log_prefix = f"[{self.chat_id}] 关系构建"
+        self.log_prefix = f"[{self.chat_id}] 关系构建"
 
         # 加载持久化的缓存
         self._load_cache()
@@ -123,9 +113,10 @@ class RelationshipBuilder:
         segments = self.person_engaged_cache[person_id]
 
         # 获取该消息前5条消息的时间作为潜在的开始时间
-        before_messages = get_raw_msg_before_timestamp_with_chat(self.chat_id, message_time, limit=5)
+        message_store = MessageStore.get_instance()
+        before_messages = message_store.get_messages_before_timestamp(self.chat_id, int(message_time * 1000), limit=5)
         if before_messages:
-            potential_start_time = before_messages[0]["time"]
+            potential_start_time = before_messages[0]["time"] / 1000  # 转换回秒
         else:
             potential_start_time = message_time
 
@@ -165,12 +156,12 @@ class RelationshipBuilder:
             # 超过10条消息，结束当前消息段并创建新的
             # 结束当前消息段：延伸到原消息段最后一条消息后5条消息的时间
             current_time = time.time()
-            after_messages = get_raw_msg_by_timestamp_with_chat(
-                self.chat_id, last_segment["last_msg_time"], current_time, limit=5, limit_mode="earliest"
+            after_messages = message_store.get_messages_by_timestamp_range(
+                self.chat_id, int(last_segment["last_msg_time"] * 1000), int(current_time * 1000), limit=5, limit_mode="earliest"
             )
             if after_messages and len(after_messages) >= 5:
                 # 如果有足够的后续消息，使用第5条消息的时间作为结束时间
-                last_segment["end_time"] = after_messages[4]["time"]
+                last_segment["end_time"] = after_messages[4]["time"] / 1000  # 转换回秒
 
             # 重新计算当前消息段的消息数量
             last_segment["message_count"] = self._count_messages_in_timerange(
@@ -195,12 +186,14 @@ class RelationshipBuilder:
 
     def _count_messages_in_timerange(self, start_time: float, end_time: float) -> int:
         """计算指定时间范围内的消息数量（包含边界）"""
-        messages = get_raw_msg_by_timestamp_with_chat_inclusive(self.chat_id, start_time, end_time)
+        message_store = MessageStore.get_instance()
+        messages = message_store.get_messages_by_timestamp_range_inclusive(self.chat_id, int(start_time * 1000), int(end_time * 1000))
         return len(messages)
 
     def _count_messages_between(self, start_time: float, end_time: float) -> int:
         """计算两个时间点之间的消息数量（不包含边界），用于间隔检查"""
-        return num_new_messages_since(self.chat_id, start_time, end_time)
+        message_store = MessageStore.get_instance()
+        return message_store.count_messages_since(self.chat_id, int(start_time * 1000), int(end_time * 1000))
 
     def _get_total_message_count(self, person_id: str) -> int:
         """获取用户所有消息段的总消息数量"""
@@ -354,10 +347,11 @@ class RelationshipBuilder:
         self._cleanup_old_segments()
         current_time = time.time()
 
-        latest_messages = get_raw_msg_by_timestamp_with_chat(
+        message_store = MessageStore.get_instance()
+        latest_messages = message_store.get_messages_by_timestamp_range(
             self.chat_id,
-            self.last_processed_message_time,
-            current_time,
+            int(self.last_processed_message_time * 1000),
+            int(current_time * 1000),
             limit=50,  # 获取自上次处理后的消息
         )
         if latest_messages:
@@ -423,7 +417,8 @@ class RelationshipBuilder:
                 start_date = time.strftime("%Y-%m-%d %H:%M", time.localtime(start_time))
 
                 # 获取该段的消息（包含边界）
-                segment_messages = get_raw_msg_by_timestamp_with_chat_inclusive(self.chat_id, start_time, end_time)
+                message_store = MessageStore.get_instance()
+                segment_messages = message_store.get_messages_by_timestamp_range_inclusive(self.chat_id, int(start_time * 1000), int(end_time * 1000))
                 logger.debug(
                     f"消息段 {i + 1}: {start_date} - {time.strftime('%Y-%m-%d %H:%M', time.localtime(end_time))}, 消息数: {len(segment_messages)}"
                 )

@@ -2,7 +2,7 @@ from logging import getLogger
 from src.person_info.person_info import PersonInfoManager, get_person_info_manager
 import time
 import random
-from src.chat.utils.chat_message_builder import build_readable_messages
+from utils.chat_message_builder import build_readable_messages
 import json
 from json_repair import repair_json
 from datetime import datetime
@@ -10,7 +10,7 @@ from difflib import SequenceMatcher
 import jieba
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from configuration.config import get_chat_model_by_type, Config, global_config
+from configuration import get_chat_model_by_type, Config, global_config
 
 logger = getLogger(__name__)
 

@@ -4,11 +4,11 @@ import json
 import asyncio
 import logging
 import ssl
-
 from typing import Dict, Any
 
-from . import protocol
-from . import config
+from .doubao_config import *
+from api_protocol.constant import *
+from api_protocol.client_protocol import client_generate_request, client_parse_response
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +37,14 @@ class RealtimeDialogClient:
     
     async def start_connection(self) -> None:
         """StartConnection - 客户端事件ID: 1"""
-        start_connection_request = bytearray(protocol.generate_header())
-        start_connection_request.extend(int(1).to_bytes(4, 'big'))
-        payload_bytes = str.encode("{}")
-        payload_bytes = gzip.compress(payload_bytes)
-        start_connection_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        start_connection_request.extend(payload_bytes)
-        
+        start_connection_request = client_generate_request(
+            payload_data={},
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            event=ClientEvent.StartConnection
+        )
         try:
             await self.ws.send(start_connection_request)
             logger.info("StartConnection请求已发送")
@@ -59,16 +60,15 @@ class RealtimeDialogClient:
 
     async def start_session(self) -> None:
         """StartSession - 客户端事件ID: 100"""
-        session_params = config.start_session_req
-        payload_bytes = str.encode(json.dumps(session_params))
-        payload_bytes = gzip.compress(payload_bytes)
-        start_session_request = bytearray(protocol.generate_header())
-        start_session_request.extend(int(100).to_bytes(4, 'big'))
-        start_session_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        start_session_request.extend(str.encode(self.session_id))
-        start_session_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        start_session_request.extend(payload_bytes)
-        
+        start_session_request = client_generate_request(
+            payload_data=start_session_req,
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            event=ClientEvent.StartSession,
+            session_id=self.session_id
+        )
         try:
             await self.ws.send(start_session_request)
             logger.info("StartSession请求已发送")
@@ -84,15 +84,15 @@ class RealtimeDialogClient:
 
     async def finish_session(self) -> None:
         """FinishSession - 客户端事件ID: 102"""
-        finish_session_request = bytearray(protocol.generate_header())
-        finish_session_request.extend(int(102).to_bytes(4, 'big'))
-        payload_bytes = str.encode("{}")
-        payload_bytes = gzip.compress(payload_bytes)
-        finish_session_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        finish_session_request.extend(str.encode(self.session_id))
-        finish_session_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        finish_session_request.extend(payload_bytes)
-        
+        finish_session_request = client_generate_request(
+            payload_data={},
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            event=ClientEvent.FinishSession,
+            session_id=self.session_id
+        )
         try:
             await self.ws.send(finish_session_request)
         except (websockets.exceptions.ConnectionClosed, 
@@ -108,13 +108,14 @@ class RealtimeDialogClient:
 
     async def finish_connection(self) -> None:
         """FinishConnection - 客户端事件ID: 2"""
-        finish_connection_request = bytearray(protocol.generate_header())
-        finish_connection_request.extend(int(2).to_bytes(4, 'big'))
-        payload_bytes = str.encode("{}")
-        payload_bytes = gzip.compress(payload_bytes)
-        finish_connection_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        finish_connection_request.extend(payload_bytes)
-        
+        finish_connection_request = client_generate_request(
+            payload_data={},
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            event=ClientEvent.FinishConnection
+        )
         try:
             await self.ws.send(finish_connection_request)
             logger.info("FinishConnection请求已发送")
@@ -149,16 +150,16 @@ class RealtimeDialogClient:
                 logger.warning(f"SSL socket状态检查失败: {e}")
                 raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection error: {e}")
         
-        task_request = bytearray(
-            protocol.generate_header(message_type=protocol.CLIENT_AUDIO_ONLY_REQUEST,
-                                     serial_method=protocol.NO_SERIALIZATION))
-        task_request.extend(int(200).to_bytes(4, 'big'))
-        task_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        task_request.extend(str.encode(self.session_id))
-        payload_bytes = gzip.compress(audio)
-        task_request.extend((len(payload_bytes)).to_bytes(4, 'big'))  # payload size(4 bytes)
-        task_request.extend(payload_bytes)
-        
+        task_request = client_generate_request(
+            payload_data=audio,
+            message_type=CLIENT_AUDIO_ONLY_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=NO_SERIALIZATION,
+            compression_type=GZIP,
+            event=ClientEvent.TaskRequest,
+            session_id=self.session_id,
+            skip_audio_compression=True
+        )
         try:
             await self.ws.send(task_request)
         except (websockets.exceptions.ConnectionClosed, 
@@ -182,16 +183,16 @@ class RealtimeDialogClient:
         hello_data = {
             "content": content
         }
-        payload_bytes = str.encode(json.dumps(hello_data))
-        payload_bytes = gzip.compress(payload_bytes)
-        
-        say_hello_request = bytearray(protocol.generate_header(message_type=0b0001, serial_method=0b0001))
-        say_hello_request.extend(int(300).to_bytes(4, 'big'))
-        say_hello_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        say_hello_request.extend(str.encode(self.session_id))
-        say_hello_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        say_hello_request.extend(payload_bytes)
-        
+
+        say_hello_request = client_generate_request(
+            payload_data=hello_data,
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            event=ClientEvent.SayHello,
+            session_id=self.session_id
+        )
         try:
             await self.ws.send(say_hello_request)
         except (websockets.exceptions.ConnectionClosed, 
@@ -217,16 +218,17 @@ class RealtimeDialogClient:
             "content": content,
             "end": end
         }
-        payload_bytes = str.encode(json.dumps(tts_data))
-        payload_bytes = gzip.compress(payload_bytes)
-        
-        chat_tts_request = bytearray(protocol.generate_header(message_type=0b0001, serial_method=0b0001))
-        chat_tts_request.extend(int(500).to_bytes(4, 'big'))
-        chat_tts_request.extend((len(self.session_id)).to_bytes(4, 'big'))
-        chat_tts_request.extend(str.encode(self.session_id))
-        chat_tts_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        chat_tts_request.extend(payload_bytes)
-        
+
+        chat_tts_request = client_generate_request(
+            payload_data=tts_data,
+            message_type=CLIENT_FULL_REQUEST,
+            message_type_specific_flags=MSG_WITH_EVENT,
+            serial_method=JSON,
+            compression_type=GZIP,
+            event=ClientEvent.ChatTTSText,
+            session_id=self.session_id
+        )
+
         try:
             await self.ws.send(chat_tts_request)
         except (websockets.exceptions.ConnectionClosed, 
@@ -260,7 +262,7 @@ class RealtimeDialogClient:
                         raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
                     
                     response = await self.ws.recv()
-                    data = protocol.parse_response(response)
+                    data = client_parse_response(response, skip_audio_decompression=True)
                     return data
                 except websockets.exceptions.ConnectionClosed:
                     # 重新抛出连接关闭异常

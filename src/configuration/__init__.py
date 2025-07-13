@@ -27,7 +27,9 @@ from .config import (
     initialize_database_configs,
     migrate_file_config_to_database,
     get_db_conn_string,
-    global_config
+    global_config,
+    get_chat_model_by_type,
+    GraphConfiguration
 )
 
 # 导出主要类和函数
@@ -54,6 +56,8 @@ __all__ = [
     'migrate_file_config_to_database',
     'get_db_conn_string',
     'global_config',
+    'get_chat_model_by_type',
+    'GraphConfiguration'
 ]
 
 # 版本信息

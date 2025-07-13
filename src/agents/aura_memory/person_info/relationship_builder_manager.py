@@ -1,8 +1,8 @@
 from typing import Dict, Optional, List
-from src.common.logger import get_logger
+from logging import getLogger
 from .relationship_builder import RelationshipBuilder
 
-logger = get_logger("relationship_builder_manager")
+logger = getLogger(__name__)
 
 
 class RelationshipBuilderManager:

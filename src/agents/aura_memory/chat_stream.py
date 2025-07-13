@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy import text
 from utils.utils import performance_point_context
-from agents.configuration.config import get_db_conn_string
+from configuration.config import get_db_conn_string
 
 logger = logging.getLogger(__name__)
 

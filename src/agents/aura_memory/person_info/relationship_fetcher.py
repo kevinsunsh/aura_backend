@@ -1,22 +1,16 @@
-from src.config.config import global_config
-from src.llm_models.utils_model import LLMRequest
+from configuration import global_config, get_chat_model_by_type
 import time
 import traceback
-from src.common.logger import get_logger
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
-from src.person_info.person_info import get_person_info_manager
+import logging
+from agents.aura_memory.person_info.person_info import get_person_info_manager
 from typing import List, Dict
 from json_repair import repair_json
-from src.chat.message_receive.chat_stream import get_chat_manager
 import json
 import random
 
-logger = get_logger("relationship_fetcher")
+logger = logging.getLogger(__name__)
 
-
-def init_real_time_info_prompts():
-    """初始化实时信息提取相关的提示词"""
-    relationship_prompt = """
+relationship_prompt = """
 <聊天记录>
 {chat_observe_info}
 </聊天记录>
@@ -36,10 +30,8 @@ def init_real_time_info_prompts():
 
 请严格按照json输出格式，不要输出多余内容：
 """
-    Prompt(relationship_prompt, "real_time_info_identify_prompt")
 
-    fetch_info_prompt = """
-    
+fetch_info_prompt = """
 {name_block}
 以下是你在之前与{person_name}的交流中，产生的对{person_name}的了解：
 {person_impression_block}
@@ -54,7 +46,6 @@ def init_real_time_info_prompts():
 
 请严格按照json输出格式，不要输出多余内容：
 """
-    Prompt(fetch_info_prompt, "real_time_fetch_person_info_prompt")
 
 
 class RelationshipFetcher:
@@ -69,19 +60,12 @@ class RelationshipFetcher:
         # 结构：{person_id: {info_type: {"info": str, "ttl": int, "start_time": float, "person_name": str, "unknow": bool}}}
 
         # LLM模型配置
-        self.llm_model = LLMRequest(
-            model=global_config.model.utils_small,
-            request_type="relation.fetcher",
-        )
+        self.llm_model = get_chat_model_by_type("utils_small")
 
         # 小模型用于即时信息提取
-        self.instant_llm_model = LLMRequest(
-            model=global_config.model.utils_small,
-            request_type="relation.fetch",
-        )
+        self.instant_llm_model = get_chat_model_by_type("utils_small")
 
-        name = get_chat_manager().get_stream_name(self.chat_id)
-        self.log_prefix = f"[{name}] 实时信息"
+        self.log_prefix = f"[{self.chat_id}] 实时信息"
 
     def _cleanup_expired_cache(self):
         """清理过期的信息缓存"""
@@ -177,7 +161,7 @@ class RelationshipFetcher:
 
         info_cache_block = self._build_info_cache_block()
 
-        prompt = (await global_prompt_manager.get_prompt_async("real_time_info_identify_prompt")).format(
+        prompt = relationship_prompt.format(
             chat_observe_info=chat_history,
             name_block=name_block,
             info_cache_block=info_cache_block,
@@ -187,10 +171,10 @@ class RelationshipFetcher:
 
         try:
             logger.debug(f"{self.log_prefix} 信息识别prompt: \n{prompt}\n")
-            content, _ = await self.llm_model.generate_response_async(prompt=prompt)
+            response = await self.llm_model.ainvoke(prompt=prompt)
 
-            if content:
-                content_json = json.loads(repair_json(content))
+            if response:
+                content_json = json.loads(repair_json(response.content))
 
                 # 检查是否返回了不需要查询的标志
                 if "none" in content_json:
@@ -217,7 +201,7 @@ class RelationshipFetcher:
                     logger.info(f"{self.log_prefix} 识别到需要调取用户 {person_name} 的[{info_type}]信息")
                     return info_type
                 else:
-                    logger.warning(f"{self.log_prefix} LLM未返回有效的info_type。响应: {content}")
+                    logger.warning(f"{self.log_prefix} LLM未返回有效的info_type。响应: {response.content}")
 
         except Exception as e:
             logger.error(f"{self.log_prefix} 执行信息识别LLM请求时出错: {e}")
@@ -320,7 +304,7 @@ class RelationshipFetcher:
             nickname_str = ",".join(global_config.bot.alias_names)
             name_block = f"你的名字是{global_config.bot.nickname},你的昵称有{nickname_str}，有人也会用这些昵称称呼你。"
 
-            prompt = (await global_prompt_manager.get_prompt_async("real_time_fetch_person_info_prompt")).format(
+            prompt = fetch_info_prompt.format(
                 name_block=name_block,
                 info_type=info_type,
                 person_impression_block=person_impression_block,
@@ -330,10 +314,10 @@ class RelationshipFetcher:
             )
 
             # 使用小模型进行即时提取
-            content, _ = await self.instant_llm_model.generate_response_async(prompt=prompt)
+            response = await self.instant_llm_model.ainvoke(prompt=prompt)
 
-            if content:
-                content_json = json.loads(repair_json(content))
+            if response:
+                content_json = json.loads(repair_json(response.content))
                 if info_type in content_json:
                     info_content = content_json[info_type]
                     is_unknown = info_content == "none" or not info_content

@@ -15,7 +15,7 @@ from langgraph.graph import START, END, StateGraph
 from langgraph.types import interrupt, Command
 
 from agents.states.thinking_state import ThinkingTaskState
-from agents.configuration.config import GraphConfiguration, get_chat_model_by_type
+from configuration.config import GraphConfiguration, get_chat_model_by_type, LLMType
 import logging
 from agents.prompts.thinking_prompt import (
     THINKING_GOAL_ANALYZER_PROMPT,
@@ -24,7 +24,7 @@ from agents.prompts.thinking_prompt import (
 )
 from agents.aura_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
-from agents.graphs.todo_mock_func import (
+from utils.todo_mock_func import (
     _get_persona_text,
     _build_chat_history_str,
     _build_goals_str,

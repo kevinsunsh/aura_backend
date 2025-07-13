@@ -16,9 +16,8 @@ from config import settings
 
 from .aura_memory.chat_stream import ChatStreamManager
 from .message_processor_audio import MessageProcessorAudio
-from .doubao_client import protocol
-from .configuration.config import ServerEventEnum, ClientEventEnum
-from .server_protocol import server_parse_request, server_generate_response
+from api_protocol.constant import *
+from api_protocol.server_protocol import server_parse_request, server_generate_response
 from utils.utils import performance_point_context
 
 # 配置LangChain日志
@@ -87,28 +86,31 @@ class AuraAgent:
             session_id = getattr(self.chat_stream, 'chat_id', 'default') if self.chat_stream else 'default'
             
             # 处理音频数据
+            skip_audio_compression = False
             if "audio_data" in payload_data and isinstance(payload_data["audio_data"], bytes):
                 # 音频数据不需要JSON序列化，直接发送
                 payload_bytes = payload_data["audio_data"]
-                message_type = protocol.SERVER_ACK
-                serial_method = protocol.NO_SERIALIZATION
-                compression_type = protocol.GZIP
+                message_type = SERVER_ACK
+                serial_method = NO_SERIALIZATION
+                skip_audio_compression = True
+                compression_type = NO_COMPRESSION
             else:
                 # 其他数据使用JSON序列化，让server_generate_response处理序列化和压缩
                 payload_bytes = payload_data
-                message_type = protocol.SERVER_FULL_RESPONSE
-                serial_method = protocol.JSON
-                compression_type = protocol.GZIP
+                message_type = SERVER_FULL_RESPONSE
+                serial_method = JSON
+                compression_type = GZIP
             
             # 使用统一的协议生成方法
             binary_data = server_generate_response(
                 payload_data=payload_bytes,
                 message_type=message_type,
-                message_type_specific_flags=protocol.MSG_WITH_EVENT,
+                message_type_specific_flags=MSG_WITH_EVENT,
                 serial_method=serial_method,
                 compression_type=compression_type,
                 event=event_id,
-                session_id=session_id
+                session_id=session_id,
+                skip_audio_compression=skip_audio_compression
             )
             
             return binary_data
@@ -175,7 +177,7 @@ class AuraAgent:
         """使用统一的协议解析方法"""
         try:
             # 使用统一的协议解析函数
-            result = server_parse_request(data)
+            result = server_parse_request(data, skip_audio_decompression=True)
             
             # 如果解析成功，添加额外的调试信息
             if 'error' not in result:
@@ -189,55 +191,6 @@ class AuraAgent:
             # 降级处理，返回空消息
             return {"error": f"解析失败: {str(e)}"}
     
-    def _is_websocket_closed(self, websocket) -> bool:
-        """检查WebSocket是否已关闭，兼容不同版本的websockets库"""
-        try:
-            if websocket is None:
-                logger.debug("WebSocket为None，认为已关闭")
-                return True
-            
-            # 检查是否有state属性 (新版websockets)
-            if hasattr(websocket, 'state'):
-                try:
-                    from websockets.protocol import State
-                    current_state = websocket.state
-                    is_closed = current_state != State.OPEN
-                    logger.debug(f"WebSocket状态检查: state={current_state}, is_closed={is_closed}")
-                    return is_closed
-                except ImportError:
-                    logger.debug("无法导入websockets.protocol.State，跳过state检查")
-                    pass
-                except Exception as e:
-                    logger.debug(f"检查websocket.state时出错: {e}")
-                    pass
-            
-            # 检查是否有closed属性 (某些版本websockets)
-            if hasattr(websocket, 'closed'):
-                is_closed = websocket.closed
-                logger.debug(f"WebSocket closed属性检查: {is_closed}")
-                return is_closed
-            
-            # 检查是否有open属性 (某些版本)
-            if hasattr(websocket, 'open'):
-                is_closed = not websocket.open
-                logger.debug(f"WebSocket open属性检查: open={websocket.open}, is_closed={is_closed}")
-                return is_closed
-            
-            # 检查是否有close_code属性，如果有且不为None，说明连接已关闭
-            if hasattr(websocket, 'close_code'):
-                close_code = websocket.close_code
-                is_closed = close_code is not None
-                logger.debug(f"WebSocket close_code检查: {close_code}, is_closed={is_closed}")
-                return is_closed
-            
-            # 最后的兜底方案，假设连接未关闭
-            logger.debug("WebSocket状态检查：使用兜底方案，假设连接未关闭")
-            return False
-            
-        except Exception as e:
-            logger.debug(f"检查WebSocket关闭状态时出错: {e}")
-            return True  # 出错时假设连接已关闭
-
     async def handle_websocket_connection(self, websocket):
         """处理WebSocket连接，包括连接和session生命周期管理"""
         await websocket.accept()
@@ -299,11 +252,11 @@ class AuraAgent:
                 return False
                 
             # 检查是否是开始连接消息
-            if message_data.get("event") == ClientEventEnum.StartConnection.value:
+            if message_data.get("event") == ClientEvent.StartConnection:
                 logger.info("收到开始连接消息")
                 # 发送连接确认
                 await self.send_websocket_message({
-                    "event": ServerEventEnum.ConnectionStarted.value,
+                    "event": ServerEvent.ConnectionStarted,
                     "payload_msg": {"status": "connected", "message": "连接已建立"}
                 })
                 return True
@@ -347,7 +300,7 @@ class AuraAgent:
                 return False
                 
             # 检查是否是开始session消息
-            if message_data.get("event") == ClientEventEnum.StartSession.value:
+            if message_data.get("event") == ClientEvent.StartSession:
                 chat_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("chat_id", None)
                 user_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("user_id", None)
                 if chat_id is None or user_id is None:
@@ -364,7 +317,7 @@ class AuraAgent:
                     if not locked:
                         logger.warning(f"加锁失败: chat_id={chat_id}")
                         await self.send_websocket_message({
-                            "event": ServerEventEnum.SessionFailed.value, 
+                            "event": ServerEvent.SessionFailed, 
                             "payload_msg": {"status": "failed", "message": "无法获取session锁"}
                         })
                         return False
@@ -377,7 +330,7 @@ class AuraAgent:
                 await self.message_processor_audio.start()
                 # 发送session确认
                 await self.send_websocket_message({
-                    "event": ServerEventEnum.SessionStarted.value,
+                    "event": ServerEvent.SessionStarted,
                     "payload_msg": {"status": "started", "chat_id": chat_id, "message": "Session已开始"}
                 })
                 return True
@@ -424,10 +377,10 @@ class AuraAgent:
                     continue
                 
                 # 检查是否是结束session消息
-                if message_data.get("event") == ClientEventEnum.FinishSession.value:
+                if message_data.get("event") == ClientEvent.FinishSession:
                     logger.info("收到结束session消息")
                     await self.send_websocket_message({
-                        "event": ServerEventEnum.SessionFinished.value,
+                        "event": ServerEvent.SessionFinished,
                         "payload_msg": {"status": "ended", "message": "Session已结束"}
                     })
                     break
@@ -480,10 +433,10 @@ class AuraAgent:
                     
                 message_data = self._parse_binary_protocol_message(data)
                 
-                if message_data.get("event") == ClientEventEnum.FinishConnection.value:
+                if message_data.get("event") == ClientEvent.FinishConnection:
                     logger.info("收到结束连接消息")
                     await self.send_websocket_message({
-                        "event": ServerEventEnum.ConnectionFinished.value,
+                        "event": ServerEvent.ConnectionFinished,
                         "payload_msg": {"status": "ended", "message": "连接已结束"}
                     })
                 else:

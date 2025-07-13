@@ -13,9 +13,9 @@ from .doubao_client.dialog_session import DialogSession
 from .doubao_client.asr_client import AsrClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
-from .configuration.config import ServerEventEnum
 from utils.utils import start_performance_point, end_performance_point
 from muttering_data.mutter_index import get_muttering_file_path, MutteringType
+from api_protocol.constant import *
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +125,9 @@ class SeparateClientsClient(IAudioClient):
         # 创建ASR客户端
         self.asr_client = AsrClient(
             uid=uid,
-            asr_start_callback=self._asr_start_wrapper,
-            asr_response_callback=self._asr_response_wrapper,
-            asr_end_callback=self._asr_end_wrapper
+            asr_start_callback=self._asr_start_callback,
+            asr_response_callback=self._asr_response_callback,
+            asr_end_callback=self._asr_end_callback
         )
         
         # 创建TTS客户端
@@ -137,23 +137,6 @@ class SeparateClientsClient(IAudioClient):
             tts_response_callback=self._tts_response_wrapper,
             tts_end_callback=self._tts_end_wrapper
         )
-    
-    def _asr_start_wrapper(self) -> None:
-        """ASR开始包装器"""
-        if self._asr_start_callback:
-            self._asr_start_callback()
-    
-    def _asr_response_wrapper(self, text: str) -> None:
-        """ASR响应包装器"""
-        self.last_asr_text = text
-        if self._asr_response_callback:
-            self._asr_response_callback(text, False)  # ASR客户端不支持interim参数
-    
-    def _asr_end_wrapper(self) -> None:
-        """ASR结束包装器，存储最终文本"""
-        self.final_asr_text = self.last_asr_text
-        if self._asr_end_callback:
-            self._asr_end_callback(self.final_asr_text)
     
     def _tts_start_wrapper(self, text: str) -> None:
         """TTS开始包装器"""
@@ -284,7 +267,7 @@ class MessageProcessorAudio:
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应并发送到TTS"""
         # 如果是聊天响应，发送到TTS
-        if message.get("event") == ServerEventEnum.ChatResponse.value:
+        if message.get("event") == ServerEvent.ChatResponse:
             chunk_content = message.get("payload_msg", {}).get("content", "")
             if chunk_content and self.audio_client and self.audio_client.is_connected():
                 try:
@@ -297,7 +280,7 @@ class MessageProcessorAudio:
                 except Exception as e:
                     logger.error(f"发送TTS文本片段失败: {e}")
                     
-        elif message.get("event") == ServerEventEnum.ChatEnded.value:
+        elif message.get("event") == ServerEvent.ChatEnded:
             # 结束TTS合成
             if self.audio_client and self.audio_client.is_connected():
                 try:
@@ -306,7 +289,7 @@ class MessageProcessorAudio:
                     logger.info("TTS流式合成结束")
                 except Exception as e:
                     logger.error(f"结束TTS合成失败: {e}")
-        elif message.get("event") == ServerEventEnum.MutteringResponse.value:
+        elif message.get("event") == ServerEvent.MutteringResponse:
             # 读取muttering_data里的bin文件内容，并用TTSResponse事件发给客户端
             try:
                 chunk_content = message.get("payload_msg", {}).get("content", "")
@@ -315,19 +298,19 @@ class MessageProcessorAudio:
                     audio_data = f.read()
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
-                        "event": ServerEventEnum.TTSSentenceStart.value,
+                        "event": ServerEvent.TTSSentenceStart,
                         "payload_msg": {
                             "text": "我想想。"
                         }
                     })
                     await self.websocket_send_callback({
-                        "event": ServerEventEnum.TTSResponse.value,
+                        "event": ServerEvent.TTSResponse,
                         "payload_msg": {
                             "audio_data": audio_data
                         }
                     })
                     await self.websocket_send_callback({
-                        "event": ServerEventEnum.TTSSentenceEnd.value
+                        "event": ServerEvent.TTSSentenceEnd,
                     })
             except Exception as e:
                 logger.error(f"读取muttering_data bin文件失败: {e}")
@@ -342,7 +325,7 @@ class MessageProcessorAudio:
         logger.info("ASR识别开始 - 检测到语音输入")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
-                "event": ServerEventEnum.ASRInfo.value
+                "event": ServerEvent.ASRInfo,
             })
         if self.total_performance_point_id is None:
             self.total_performance_point_id = start_performance_point("总性能点")
@@ -353,7 +336,7 @@ class MessageProcessorAudio:
         logger.debug(f"收到ASR识别结果: {asr_text}")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
-                "event": ServerEventEnum.ASRResponse.value,
+                "event": ServerEvent.ASRResponse,
                 "payload_msg": {
                     "results":[
                         {
@@ -369,7 +352,7 @@ class MessageProcessorAudio:
         # logger.info(f"ASR识别结束")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
-                "event": ServerEventEnum.ASREnded.value
+                "event": ServerEvent.ASREnded,
             })
         # 如果asr_text为空，则不启动文本处理任务
         # await asyncio.sleep(1)
@@ -387,7 +370,7 @@ class MessageProcessorAudio:
         logger.info(f"TTS合成开始 : {text}")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
-                "event": ServerEventEnum.TTSSentenceStart.value,
+                "event": ServerEvent.TTSSentenceStart,
                 "payload_msg": {
                     "text": text
                 }
@@ -398,7 +381,7 @@ class MessageProcessorAudio:
         logger.debug(f"收到TTS音频数据: {len(audio_data)} 字节")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
-                "event": ServerEventEnum.TTSResponse.value,
+                "event": ServerEvent.TTSResponse,
                 "payload_msg": {
                     "audio_data": audio_data
                 }
@@ -410,7 +393,7 @@ class MessageProcessorAudio:
         logger.debug("TTS合成结束")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
-                "event": ServerEventEnum.TTSSentenceEnd.value
+                "event": ServerEvent.TTSSentenceEnd,
             })
     
     async def chat_end_callback(self, text: str) -> None:
@@ -439,20 +422,19 @@ class MessageProcessorAudio:
             # 处理统一协议格式的payload_msg中的音频数据
             if "payload_msg" in message_data and message_data["payload_msg"]:
                 payload_msg = message_data["payload_msg"]
-                if isinstance(payload_msg, dict):
-                    # JSON序列化的情况，从字典中提取audio_data
-                    text_data = payload_msg.get("content", "")
-                    result = await self.text_processor.handle_text_message(
-                        message_data={"message": text_data}
-                    )
-                    
-                    logger.debug(f"文本结果处理完成: {result}")
-                elif isinstance(payload_msg, bytes):
-                    # NO_SERIALIZATION的情况，payload_msg本身就是音频数据
-                    logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(payload_msg)} 字节")
-                    if self.audio_client:
-                        await self.audio_client.process_audio_chunk(payload_msg)
-            
+                if message_data.get("event") == ClientEvent.SayHello:
+                    if isinstance(payload_msg, dict):
+                        text_data = payload_msg.get("content", "")
+                        result = await self.text_processor.handle_text_message(
+                            message_data={"message": text_data}
+                        )
+                        logger.debug(f"文本结果处理完成: {result}")
+                elif message_data.get("event") == ClientEvent.TaskRequest:
+                    if isinstance(payload_msg, bytes):
+                        # NO_SERIALIZATION的情况，payload_msg本身就是音频数据
+                        logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(payload_msg)} 字节")
+                        if self.audio_client:
+                            await self.audio_client.process_audio_chunk(payload_msg)
             # logger.info(f"已启动音频消息处理任务: chat_id={chat_stream.chat_id}")
             return {
                 "success": True,

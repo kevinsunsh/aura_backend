@@ -14,14 +14,14 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from agents.states.muttering_state import MutteringTaskState
-from agents.configuration.config import get_chat_model_by_type, GraphConfiguration
+from configuration.config import get_chat_model_by_type, GraphConfiguration
 import logging
 from agents.prompts.muttering_prompt import (
     MUTTERING_CHOOSER_PROMPT
 )
 from agents.aura_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
-from agents.graphs.todo_mock_func import (
+from utils.todo_mock_func import (
     _get_persona_text
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
@@ -103,7 +103,7 @@ async def _generate_muttering(state: MutteringTaskState, config: RunnableConfig)
             "muttering_content": muttering_type
         })
     except Exception as e:
-        logger.error(f"生成回复时出错: {str(e)}")
+        logger.error(f"生成打招呼时出错: {str(e)}")
         return Command(goto=END, update={
             "muttering_response": "error"
         })            

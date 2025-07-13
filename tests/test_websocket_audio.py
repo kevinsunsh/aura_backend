@@ -60,120 +60,21 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
 
 # === 二进制协议支持 ===
 # 导入protocol模块和枚举
-try:
-    from agents.doubao_client import protocol
-except ImportError:
-    print("⚠️ 无法导入protocol模块，将使用内置协议定义")
-    # 内置协议定义作为备选
-
-    PROTOCOL_VERSION = 0b0001
-    DEFAULT_HEADER_SIZE = 0b0001
-
-    PROTOCOL_VERSION_BITS = 4
-    HEADER_BITS = 4
-    MESSAGE_TYPE_BITS = 4
-    MESSAGE_TYPE_SPECIFIC_FLAGS_BITS = 4
-    MESSAGE_SERIALIZATION_BITS = 4
-    MESSAGE_COMPRESSION_BITS = 4
-    RESERVED_BITS = 8
-
-    # Message Type:
-    CLIENT_FULL_REQUEST = 0b0001
-    CLIENT_AUDIO_ONLY_REQUEST = 0b0010
-
-    SERVER_FULL_RESPONSE = 0b1001
-    SERVER_ACK = 0b1011
-    SERVER_ERROR_RESPONSE = 0b1111
-
-    # Message Type Specific Flags
-    NO_SEQUENCE = 0b0000  # no check sequence
-    POS_SEQUENCE = 0b0001
-    NEG_SEQUENCE = 0b0010
-    NEG_SEQUENCE_1 = 0b0011
-
-    MSG_WITH_EVENT = 0b0100
-
-    # Message Serialization
-    NO_SERIALIZATION = 0b0000
-    JSON = 0b0001
-    THRIFT = 0b0011
-    CUSTOM_TYPE = 0b1111
-
-    # Message Compression
-    NO_COMPRESSION = 0b0000
-    GZIP = 0b0001
-    CUSTOM_COMPRESSION = 0b1111
-
-    def generate_header(
-            version=PROTOCOL_VERSION,
-            message_type=CLIENT_FULL_REQUEST,
-            message_type_specific_flags=MSG_WITH_EVENT,
-            serial_method=JSON,
-            compression_type=GZIP,
-            reserved_data=0x00,
-            extension_header=bytes()
-    ):
-        """
-        protocol_version(4 bits), header_size(4 bits),
-        message_type(4 bits), message_type_specific_flags(4 bits)
-        serialization_method(4 bits) message_compression(4 bits)
-        reserved （8bits) 保留字段
-        header_extensions 扩展头(大小等于 8 * 4 * (header_size - 1) )
-        """
-        header = bytearray()
-        header_size = int(len(extension_header) / 4) + 1
-        header.append((version << 4) | header_size)
-        header.append((message_type << 4) | message_type_specific_flags)
-        header.append((serial_method << 4) | compression_type)
-        header.append(reserved_data)
-        header.extend(extension_header)
-        return header
-    
-    # 内置枚举定义作为备选
-    class ClientEventEnum:
-        StartConnection = 1
-        FinishConnection = 2
-        StartSession = 100
-        FinishSession = 102
-    
-    class ServerEventEnum:
-        ConnectionStarted = 50
-        ConnectionFailed = 51
-        ConnectionFinished = 52
-        SessionStarted = 150
-        SessionFinished = 152
-        SessionFailed = 153
+from api_protocol.constant import *
+from api_protocol.client_protocol import client_generate_request, client_parse_response
 
 async def send_audio_task_request(websocket, audio: bytes, session_id: str = "test_user_123") -> None:
     """发送音频数据，参考RealtimeDialogClient.task_request的简洁方式"""
-    task_request = bytearray(
-        protocol.generate_header(message_type=protocol.CLIENT_AUDIO_ONLY_REQUEST,
-                                 serial_method=protocol.NO_SERIALIZATION))
-    task_request.extend(int(200).to_bytes(4, 'big'))
-    task_request.extend((len(session_id)).to_bytes(4, 'big'))
-    task_request.extend(str.encode(session_id))
-    payload_bytes = gzip.compress(audio)
-    task_request.extend((len(payload_bytes)).to_bytes(4, 'big'))  # payload size(4 bytes)
-    task_request.extend(payload_bytes)
+    task_request = client_generate_request(
+        payload_data=audio,
+        message_type=CLIENT_AUDIO_ONLY_REQUEST,
+        message_type_specific_flags=MSG_WITH_EVENT,
+        serial_method=NO_SERIALIZATION,
+        compression_type=GZIP,
+        event=ClientEvent.TaskRequest,
+        session_id=session_id
+    )
     await websocket.send(task_request)
-
-async def send_text_message(websocket, text: str, session_id: str = "test_user_123") -> None:
-    """发送文本消息"""
-    payload_data = {"message": text}
-    payload_bytes = str.encode(json.dumps(payload_data))
-    payload_bytes = gzip.compress(payload_bytes)
-    
-    request = bytearray(protocol.generate_header(
-        message_type=protocol.CLIENT_FULL_REQUEST,
-        serial_method=protocol.JSON
-    ))
-    
-    request.extend(int(300).to_bytes(4, 'big'))  # 文本事件ID
-    request.extend((len(session_id)).to_bytes(4, 'big'))
-    request.extend(str.encode(session_id))
-    request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-    request.extend(payload_bytes)
-    await websocket.send(request)
 
 class AudioConfig:
     """音频配置类"""
@@ -719,17 +620,17 @@ class WebSocketTestSession:
             event_id = data["event"]
             payload_msg = data.get("payload_msg", {})
             if event_id == 450:  # ASRInfo
-                logger.debug("🎤 收到ASRInfo事件(450)，触发AI播报打断")
+                logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
                 self.asr_info_received_time = time.time()
                 self._clear_audio_buffers()
                 logger.debug("⏸️ 播放已暂停")
             elif event_id == 451:  # ASRResponse
                 self.chunk_count += 1
-                content = payload_msg.get("text", "")
+                content = payload_msg.get("results", [{}])[0].get("text", "")
                 self.full_response += content
-                logger.debug(f"收到第{self.chunk_count}个内容片段: '{content}'")
+                logger.info(f"ASR收到第{self.chunk_count}个内容片段: '{content}'")
             elif event_id == 459:  # ASREnded
-                logger.debug("🎤 ASR结束")
+                logger.info("🎤 ASR结束")
                 self.asr_ended_time = time.time()
                 logger.debug(f"⏱️ ASREnded时间戳: {self.asr_ended_time}")
             elif event_id == 350:  # TTSSentenceStart
@@ -860,19 +761,7 @@ class WebSocketTestSession:
                     # logger.info("🔍 开始接收消息")
                     # 添加短超时，让循环能定期检查退出条件
                     response_data = await asyncio.wait_for(self.websocket.recv(), timeout=0.5)
-                    # logger.info("🔍 接收消息完成")
-                    # 解析响应数据
-                    if isinstance(response_data, bytes):
-                        # 二进制协议格式
-                        data = await self.parse_server_response(response_data)
-                        if "error" in data:
-                            logger.error(f"解析二进制协议失败: {data['error']}")
-                            continue
-                        # logger.info(f"收到二进制协议响应: 事件ID={data.get('event', 'unknown')}")
-                    else:
-                        # 文本格式，尝试JSON解析
-                        data = json.loads(response_data)
-
+                    data = client_parse_response(response_data)
                     self.handle_websocket_response(data)
                     
                 except asyncio.TimeoutError:
@@ -994,49 +883,41 @@ class WebSocketTestSession:
         logger.info(f"录制时间达到{timeout_seconds}秒，自动停止...")
         self.is_running = False
     
-    async def send_control_message(self, action: str, data: dict = None):
+    async def send_control_message(self, action: str):
         """发送控制消息（连接、session等）"""
         try:
             # 根据action确定客户端事件ID
+            session_id = None
+            payload_data = {}  # 设置事件ID
             if action == "start_connection":
                 event_id = 1
             elif action == "end_connection":
                 event_id = 2
             elif action == "start_session":
+                session_id = "test_user_123"
+                payload_data = {
+                    "chat_info": {
+                        "chat_id": "test_user_123",
+                        "user_id": "test_user_123"
+                    }
+                }
                 event_id = 100
             elif action == "end_session":
+                session_id = "test_user_123"
                 event_id = 102
             else:
                 event_id = 1001  # 默认事件ID
             
-            payload_data = {"event": event_id}  # 设置事件ID
-            if data:
-                payload_data.update(data)
             
-            # JSON序列化并压缩
-            payload_bytes = str.encode(json.dumps(payload_data))
-            payload_bytes = gzip.compress(payload_bytes)
-            
-            # 构造协议头
-            request = bytearray(protocol.generate_header(
-                message_type=protocol.CLIENT_FULL_REQUEST,
-                message_type_specific_flags=protocol.MSG_WITH_EVENT,
-                serial_method=protocol.JSON,
-                compression_type=protocol.GZIP
-            ))
-            
-            # 添加事件ID (4 bytes)
-            request.extend(int(event_id).to_bytes(4, 'big'))
-            
-            # 添加session ID
-            session_id = "test_user_123"
-            request.extend((len(session_id)).to_bytes(4, 'big'))
-            request.extend(str.encode(session_id))
-            
-            # 添加payload
-            request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-            request.extend(payload_bytes)
-            
+            request = client_generate_request(
+                payload_data=payload_data,
+                message_type=CLIENT_FULL_REQUEST,
+                message_type_specific_flags=MSG_WITH_EVENT,
+                serial_method=JSON,
+                compression_type=GZIP,
+                event=event_id,
+                session_id=session_id
+            )
             await self.websocket.send(bytes(request))
             logger.info(f"📤 发送控制消息: {action} (事件ID: {event_id})")
             
@@ -1044,48 +925,7 @@ class WebSocketTestSession:
             logger.error(f"发送控制消息失败: {e}")
             return False
         return True
-
-    async def parse_server_response(self, data: bytes) -> dict:
-        """解析服务端二进制协议响应 - 使用统一的协议解析函数"""
-        try:
-            # 导入统一的协议解析函数
-            import sys
-            import os
-            sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
-            from agents.doubao_client.protocol import parse_response
-            
-            result = parse_response(data)
-            return result
-            
-            # logger.debug(f"协议头解析: version={version}, type={message_type}, serial={serial_method}, compression={compression}")
-            
-            # 根据序列化方法和压缩方式解析payload
-            if serial_method == protocol.NO_SERIALIZATION:
-                # 音频数据，直接使用二进制数据
-                audio_data = payload_bytes
-                
-                return {
-                    "event": event_id,
-                    "session_id": session_id,
-                    "audio_data": audio_data
-                }
-            else:
-                # JSON数据
-                try:
-                    if compression == protocol.GZIP:
-                        payload_bytes = gzip.decompress(payload_bytes)
-                    payload_data = json.loads(payload_bytes.decode('utf-8'))
-                    payload_data.update({
-                        "event": event_id,
-                        "session_id": session_id
-                    })
-                    return payload_data
-                except Exception as e:
-                    return {"error": f"解析payload失败: {e}"}
-                
-        except Exception as e:
-            return {"error": f"解析失败: {e}"}
-
+    
     async def wait_for_server_response(self, expected_event_id: int, timeout: float = 5.0):
         """等待服务端特定响应 - 使用事件等待机制避免并发recv冲突"""
         try:
@@ -1141,15 +981,15 @@ class WebSocketTestSession:
             return False
             
         # 等待连接确认
-        if not await self.wait_for_server_response(50):  # ServerEventEnum.ConnectionStarted.value
+        if not await self.wait_for_server_response(ServerEvent.ConnectionStarted):
             return False
         
         # 第二步：发送开始session消息
-        if not await self.send_control_message("start_session", {"chat_id": "test_user_123"}):
+        if not await self.send_control_message("start_session"):
             return False
             
         # 等待session确认
-        if not await self.wait_for_server_response(150):  # ServerEventEnum.SessionStarted.value
+        if not await self.wait_for_server_response(ServerEvent.SessionStarted):
             return False
             
         logger.info("🎉 连接和Session握手完成！")
@@ -1168,7 +1008,7 @@ class WebSocketTestSession:
             # 第一步：结束session
             try:
                 if await self.send_control_message("end_session"):
-                    await self.wait_for_server_response(152, timeout=3.0)  # ServerEventEnum.SessionFinished.value
+                    await self.wait_for_server_response(ServerEvent.SessionFinished, timeout=3.0)
                 else:
                     logger.warning("⚠️ 发送end_session消息失败")
             except Exception as e:
@@ -1177,7 +1017,7 @@ class WebSocketTestSession:
             # 第二步：结束连接
             try:
                 if await self.send_control_message("end_connection"):
-                    await self.wait_for_server_response(52, timeout=3.0)  # ServerEventEnum.ConnectionFinished.value
+                    await self.wait_for_server_response(ServerEvent.ConnectionFinished, timeout=3.0)
                 else:
                     logger.warning("⚠️ 发送end_connection消息失败")
             except Exception as e:
@@ -1696,13 +1536,13 @@ class WebSocketTestSession:
 
 async def test_audio_websocket_stream():
     """测试带预处理音频文件的WebSocket流式接口"""
-    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream/test_user_123")
+    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
     await session.start_with_files()
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    # session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream/test_user_123")
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
+    # session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":

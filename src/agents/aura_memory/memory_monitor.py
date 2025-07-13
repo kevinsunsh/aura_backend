@@ -15,7 +15,6 @@ from collections import defaultdict
 
 from agents.aura_memory.Hippocampus import hippocampus_manager
 from agents.aura_memory.message_store import MessageStore
-from agents.configuration.config import global_config
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from agents.states.replaying_state import ReplayingTaskState
-from agents.configuration.config import GraphConfiguration, get_chat_model_by_type
+from configuration.config import GraphConfiguration, get_chat_model_by_type
 import logging
 from agents.prompts.replying_prompt import (
     REPLYING_GENERATOR_DIRECT_PROMPT
@@ -22,7 +22,7 @@ from agents.prompts.replying_prompt import (
 from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
-from agents.graphs.todo_mock_func import (
+from utils.todo_mock_func import (
     _get_persona_text
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
@@ -106,7 +106,7 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
             "replaying_response": "finished"
         })            
     except Exception as e:
-        logger.error(f"生成回复时出错: {str(e)}")
+        logger.error(f"生成被动回复时出错: {str(e)}")
         return Command(goto=END, update={
             "replaying_response": "error"
         })            

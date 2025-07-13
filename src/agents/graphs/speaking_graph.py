@@ -14,7 +14,7 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from agents.states.speaking_state import SpeakingTaskState
-from agents.configuration.config import GraphConfiguration, get_chat_model_by_type
+from configuration.config import GraphConfiguration, get_chat_model_by_type
 import logging
 from agents.prompts.speaking_prompt import (
     SPEAKING_ACTION_PLANNER_PROMPT,
@@ -23,7 +23,7 @@ from agents.prompts.speaking_prompt import (
 from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
-from agents.graphs.todo_mock_func import (
+from utils.todo_mock_func import (
     _get_persona_text,
     _build_action_history_summary
 )
@@ -35,6 +35,9 @@ reply_max_latency = 30 #s
 async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
     """规划下一步行动"""
     try:
+        await asyncio.sleep(1)
+        if TaskManager.get_instance().get_task_state(TaskType.SPEAKING) == TaskStateType.PAUSED:
+            return Command(goto=END)
         chat_model = get_chat_model_by_type("pfc_action_planner")
         
         # 构建提示词参数
@@ -215,7 +218,7 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
             "speaking_response": "finished"
         })            
     except Exception as e:
-        logger.error(f"生成回复时出错: {str(e)}")
+        logger.error(f"生成主动回复时出错: {str(e)}")
         return Command(goto=END, update={
             "speaking_response": "error"
         })            

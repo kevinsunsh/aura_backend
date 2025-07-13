@@ -13,8 +13,10 @@ from datetime import datetime
 import websockets
 import gzip
 
+from api_protocol.constant import *
+
 from .realtime_dialog_client import RealtimeDialogClient
-from .config import ws_connect_config
+from .doubao_config import ws_connect_config
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +166,11 @@ class DialogSession:
 
             # 执行连接握手
             await self.client.start_connection()
-            if not await self.wait_for_server_response(50):  # ConnectionStarted
+            if not await self.wait_for_server_response(ServerEvent.ConnectionStarted):
                 raise Exception("重连时连接握手失败")
                 
             await self.client.start_session()
-            if not await self.wait_for_server_response(150):  # SessionStarted
+            if not await self.wait_for_server_response(ServerEvent.SessionStarted):
                 raise Exception("重连时会话握手失败")
             
             # 重连成功
@@ -289,44 +291,44 @@ class DialogSession:
     
     async def _handle_server_event(self, event_id: int, payload_msg: Dict[str, Any]) -> None:
         # Connect类事件 (50-52)
-        if event_id == 50:  # ConnectionStarted
+        if event_id == ServerEvent.ConnectionStarted:
             await self._on_connection_started(payload_msg)
-        elif event_id == 51:  # ConnectionFailed
+        elif event_id == ServerEvent.ConnectionFailed:
             await self._on_connection_failed(payload_msg)
-        elif event_id == 52:  # ConnectionFinished
+        elif event_id == ServerEvent.ConnectionFinished:
             await self._on_connection_finished(payload_msg)
         # Session类事件 (150-153)
-        elif event_id == 150:  # SessionStarted
+        elif event_id == ServerEvent.SessionStarted:
             await self._on_session_started(payload_msg)
-        elif event_id == 152:  # SessionFinished
+        elif event_id == ServerEvent.SessionFinished:
             await self._on_session_finished(payload_msg)
-        elif event_id == 153:  # SessionFailed
+        elif event_id == ServerEvent.SessionFailed:
             await self._on_session_failed(payload_msg)
         # TTS类事件 (350-359)
-        elif event_id == 350:  # TTSSentenceStart
+        elif event_id == ServerEvent.TTSSentenceStart:
             # if payload_msg["tts_type"] in ["chat_tts_text", "default"]:
             if payload_msg["tts_type"] in ["chat_tts_text"]:
                 await self._on_tts_sentence_start(payload_msg)
                 self.is_tts_sentence_start = True
-        elif event_id == 351:  # TTSSentenceEnd
+        elif event_id == ServerEvent.TTSSentenceEnd:
             await self._on_tts_sentence_end(payload_msg)
             self.is_tts_sentence_start = False
-        elif event_id == 352:  # TTSResponse
+        elif event_id == ServerEvent.TTSResponse:
             if self.is_tts_sentence_start:
                 await self._on_tts_response(payload_msg)
-        elif event_id == 359:  # TTSEnded
+        elif event_id == ServerEvent.TTSEnded:
             await self._on_tts_ended(payload_msg)
         # ASR类事件 (450-459)
-        elif event_id == 450:  # ASRInfo
+        elif event_id == ServerEvent.ASRInfo:
             await self._on_asr_info(payload_msg)
-        elif event_id == 451:  # ASRResponse
+        elif event_id == ServerEvent.ASRResponse:
             await self._on_asr_response(payload_msg)
-        elif event_id == 459:  # ASREnded
+        elif event_id == ServerEvent.ASREnded:
             await self._on_asr_ended(payload_msg)
         # Chat类事件 (550-559)
-        elif event_id == 550:  # ChatResponse
+        elif event_id == ServerEvent.ChatResponse:
             await self._on_chat_response(payload_msg)
-        elif event_id == 559:  # ChatEnded
+        elif event_id == ServerEvent.ChatEnded:
             await self._on_chat_ended(payload_msg)
         else:
             logger.warning(f"未知事件ID: {event_id}")
@@ -710,7 +712,10 @@ class DialogSession:
                 # 导入State枚举
                 try:
                     from websockets.protocol import State
-                    return self.client.ws.state == State.OPEN
+                    if self.client.ws.state == State.OPEN:
+                        return True
+                    else:
+                        return False
                 except ImportError:
                     # 如果导入失败，尝试其他方法
                     pass
@@ -769,11 +774,11 @@ class DialogSession:
             
             # 执行连接握手
             await self.client.start_connection()
-            if not await self.wait_for_server_response(50):  # ConnectionStarted
+            if not await self.wait_for_server_response(ServerEvent.ConnectionStarted):
                 raise Exception("连接握手失败")
                 
             await self.client.start_session()
-            if not await self.wait_for_server_response(150):  # SessionStarted
+            if not await self.wait_for_server_response(ServerEvent.SessionStarted):
                 raise Exception("会话握手失败")
             
             # 握手完成后启动服务器响应接收任务
