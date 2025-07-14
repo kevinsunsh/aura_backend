@@ -309,13 +309,13 @@ class MessageProcessorAudio:
     async def asr_start_callback(self) -> None:
         """ASR开始回调 - 识别出首字时调用"""
         logger.info("ASR识别开始 - 检测到语音输入")
+        await self.text_processor.user_input_interruption()
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "event": ServerEvent.ASRInfo,
             })
         if self.total_performance_point_id is None:
             self.total_performance_point_id = start_performance_point("总性能点")
-        await self.text_processor.user_input_interruption()
     
     async def asr_response_callback(self, asr_text: str, is_interim: bool) -> None:
         """ASR响应回调 - 收到识别结果时调用"""
