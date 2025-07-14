@@ -36,7 +36,10 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
             return Command(goto=END, update={
                 "replaying_response": "stopped"
             })
-        
+        if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
+            return Command(goto=END, update={
+                "replaying_response": "paused"
+            })
         # 使用LLM生成立即回复
         chat_model = get_chat_model_by_type("pfc_chat")
         
@@ -87,21 +90,10 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
                     await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.STOPPED)
                 final_response += chunk.content
                 writer({"content": chunk.content})
-        
         ChatStreamManager.get_instance().update_chat_stream_checked_at(state["chat_id"])
-        # 保存消息到数据库
-        MessageStore.get_instance().add_message(Message(
-            msg_id=str(uuid.uuid4()),
-            chat_id=state["chat_id"],
-            user_id="aura",
-            platform="default",
-            m_type="text",
-            content=final_response,
-            data={},
-            created_at=int(datetime.now().timestamp() * 1000)
-        ))
         # if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.STOPPED:
         #     await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+        await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.STOPPED)
         return Command(goto=END, update={
             "replaying_response": "finished"
         })            

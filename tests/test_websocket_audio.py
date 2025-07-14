@@ -704,6 +704,8 @@ class WebSocketTestSession:
                 #     logger.debug(f"🎵 Opus解码成功: {len(audio_data)} -> {len(pcm_data)} 字节")
                 # except Exception as e:
                 #     logger.error(f"❌ Opus解码失败: {e}")
+            elif event_id == ServerEvent.ChatResponse:  # ChatResponse
+                logger.info(f"🎵 收到ChatResponse事件:{payload_msg.get("content", "")}")
             elif event_id == 353:  # ChatEnded
                 logger.info("服务器一次回复结束，等待用户继续说话...")
             elif event_id == 999:  # Error

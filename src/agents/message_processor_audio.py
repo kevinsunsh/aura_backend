@@ -16,6 +16,7 @@ from .message_processor_text import MessageProcessorText
 from utils.utils import start_performance_point, end_performance_point
 from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 from api_protocol.constant import *
+from agents.aura_memory.message_store import MessageStore, Message
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ class MessageProcessorAudio:
                  chat_id: str,
                  user_id: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
-                 client_type: AudioClientType = AudioClientType.SEPARATE_CLIENTS):
+                 client_type: AudioClientType = AudioClientType.DIALOG_SESSION):
         self.websocket_send_callback = websocket_send_callback
         self.task_lock = asyncio.Lock()
         self.is_running = True
@@ -353,6 +354,17 @@ class MessageProcessorAudio:
     async def tts_start_callback(self, text: str) -> None:
         """TTS开始回调 - 开始合成语音时调用"""
         logger.info(f"TTS合成开始 : {text}")
+        # 保存消息到数据库
+        MessageStore.get_instance().add_message(Message(
+            msg_id=str(uuid.uuid4()),
+            chat_id=self.chat_id,
+            user_id="aura",
+            platform="default",
+            m_type="text",
+            content=text,
+            data={},
+            created_at=int(datetime.now().timestamp() * 1000)
+        ))
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "event": ServerEvent.TTSSentenceStart,

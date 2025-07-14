@@ -117,7 +117,7 @@ class TaskManager:
         if task_type in self._task_map:
             async with self._task_map[task_type].task_lock:
                 self._task_map[task_type].metadata.shared_data = data
-                logger.info(f"任务共享数据已设置: {task_type.value}, 数据: {data}")
+                logger.debug(f"任务共享数据已设置: {task_type.value}, 数据: {data}")
     
     async def get_task_shared_data(self, task_type: TaskType) -> Dict[str, Any]:
         """获取任务共享数据（线程安全）"""

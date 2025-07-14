@@ -199,17 +199,7 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
                 writer({"content": chunk.content})
         
         ChatStreamManager.get_instance().update_chat_stream_checked_at(state["chat_id"])
-        # 保存消息到数据库
-        MessageStore.get_instance().add_message(Message(
-            msg_id=str(uuid.uuid4()),
-            chat_id=state["chat_id"],
-            user_id="aura",
-            platform="default",
-            m_type="text",
-            content=final_response,
-            data={},
-            created_at=int(datetime.now().timestamp() * 1000)
-        ))
+        
         if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.STOPPED:
             await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
         # if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.STOPPED:

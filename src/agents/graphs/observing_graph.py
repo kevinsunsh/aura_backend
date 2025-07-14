@@ -25,7 +25,7 @@ from utils.todo_mock_func import _build_chat_history_str
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
 logger = logging.getLogger(__name__)
-history_check_interval = 60000 #ms
+history_check_interval = 10000 #ms
 # 后台任务节点函数
 async def _observe_conversation(state: ObservingTaskState, config: RunnableConfig):
     """观察对话状态"""
@@ -63,9 +63,9 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
         
         # 更新观察信息
         unprocessed_chat_history_str = _build_chat_history_str(unprocessed_messages)
-        logger.info(f"observe_conversation unprocessed_chat_history_str: {unprocessed_chat_history_str}")
+        logger.debug(f"observe_conversation unprocessed_chat_history_str: {unprocessed_chat_history_str}")
         processed_chat_history_str = _build_chat_history_str(recent_processed_messages)
-        logger.info(f"observe_conversation processed_chat_history_str: {processed_chat_history_str}")
+        logger.debug(f"observe_conversation processed_chat_history_str: {processed_chat_history_str}")
 
         await TaskManager.get_instance().set_task_shared_data(TaskType.OBSERVING, {
             "processed_chat_history_str": processed_chat_history_str,
