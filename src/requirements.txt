@@ -21,6 +21,7 @@ httpx==0.28.1
 idna==3.10
 jieba==0.42.1
 jiter==0.10.0
+json_repair==0.47.6
 jsonpatch==1.33
 jsonpointer==3.0.0
 langchain==0.3.26
@@ -54,6 +55,7 @@ PyYAML==6.0.2
 regex==2024.11.6
 requests==2.32.4
 requests-toolbelt==1.0.0
+scipy==1.16.0
 setuptools==78.1.1
 sniffio==1.3.1
 sounddevice==0.5.2
