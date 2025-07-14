@@ -405,7 +405,7 @@ class AudioDeviceManager:
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
-    def __init__(self, uri: str = "ws://sd1jn2gk3k341ncbl2d5g.apigateway-cn-shanghai.volceapi.com/ws/stream/test_user_123"):
+    def __init__(self, uri: str = "ws://sd1jn2gk3k341ncbl2d5g.apigateway-cn-shanghai.volceapi.com/ws/stream"):
         self.uri = uri
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式

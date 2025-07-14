@@ -257,7 +257,7 @@ class AuraAgent:
                 # 发送连接确认
                 await self.send_websocket_message({
                     "event": ServerEvent.ConnectionStarted,
-                    "payload_msg": {"status": "connected", "message": "连接已建立"}
+                    "payload_msg": {}
                 })
                 return True
             else:
