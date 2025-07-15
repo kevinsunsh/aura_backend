@@ -2,7 +2,7 @@ import uuid
 
 # ASR API配置
 asr_config = {
-    "base_url": "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com/ws/stream/asr",
+    "base_url": "ws://sd1r107kfo0m61h76b49g.apigateway-cn-beijing.volceapi.com/ws/stream/asr",
     "headers": {
         "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
         "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",

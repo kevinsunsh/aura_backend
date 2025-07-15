@@ -39,8 +39,8 @@ asr_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
     "headers": {
         "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
-        "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",
-        "X-Api-App-Key": "4522921771",
+        "X-Api-Access-Key": "wo4mooD0lf3nNJlfNoYsnHzrx7Dl5jrl",
+        "X-Api-App-Key": "4427555468",
     },
     "audio": {
         "format": "pcm",

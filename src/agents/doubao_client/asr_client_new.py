@@ -4,6 +4,7 @@ import gzip
 import json
 import time
 import uuid
+import struct
 import wave
 from io import BytesIO
 import logging
@@ -12,184 +13,243 @@ from enum import Enum
 from dataclasses import dataclass
 import websockets
 from utils.utils import start_performance_point, end_performance_point
-
 from .doubao_config import asr_config
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
-class SendMessageType(Enum):
-    """发送消息类型"""
-    AUDIO = "audio"
-    KEEPALIVE = "keepalive"
+INVALID_AUDIO_FORMAT = 45000151
+# 常量定义
+DEFAULT_SAMPLE_RATE = 16000
 
+class ProtocolVersion:
+    V1 = 0b0001
 
-@dataclass
-class SendMessage:
-    """发送消息数据类"""
-    type: SendMessageType
-    content: bytes  # 音频数据
-    is_last: bool = False
-    timestamp: float = None
+class MessageType:
+    CLIENT_FULL_REQUEST = 0b0001
+    CLIENT_AUDIO_ONLY_REQUEST = 0b0010
+    SERVER_FULL_RESPONSE = 0b1001
+    SERVER_ERROR_RESPONSE = 0b1111
+
+class MessageTypeSpecificFlags:
+    NO_SEQUENCE = 0b0000
+    POS_SEQUENCE = 0b0001
+    NEG_SEQUENCE = 0b0010
+    NEG_WITH_SEQUENCE = 0b0011
+
+class SerializationType:
+    NO_SERIALIZATION = 0b0000
+    JSON = 0b0001
+
+class CompressionType:
+    GZIP = 0b0001
+
+class Config:
+    def __init__(self):
+        # 填入控制台获取的app id和access token
+        self.auth = {
+            "app_key": "4427555468",
+            "access_key": "wo4mooD0lf3nNJlfNoYsnHzrx7Dl5jrl"
+        }
     
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = time.time()
+    @property
+    def app_key(self) -> str:
+        return self.auth["app_key"]
 
+    @property
+    def access_key(self) -> str:
+        return self.auth["access_key"]
 
-class AsrConnectionError(Exception):
-    """ASR连接错误异常"""
-    def __init__(self, code: int, message: str = ""):
-        self.code = code
-        self.message = message
-        super().__init__(f"ASR连接错误: code={code}, message={message}")
+config = Config()
 
+class CommonUtils:
+    @staticmethod
+    def gzip_compress(data: bytes) -> bytes:
+        return gzip.compress(data)
 
-class AsrServiceError(Exception):
-    """ASR服务错误异常"""
-    def __init__(self, code: int, message: str = ""):
-        self.code = code
-        self.message = message
-        super().__init__(f"ASR服务错误: code={code}, message={message}")
+    @staticmethod
+    def gzip_decompress(data: bytes) -> bytes:
+        return gzip.decompress(data)
 
+class AsrRequestHeader:
+    def __init__(self):
+        self.message_type = MessageType.CLIENT_FULL_REQUEST
+        self.message_type_specific_flags = MessageTypeSpecificFlags.POS_SEQUENCE
+        self.serialization_type = SerializationType.JSON
+        self.compression_type = CompressionType.GZIP
+        self.reserved_data = bytes([0x00])
 
-# 需要触发重连的ASR错误码
-RECONNECT_ERROR_CODES = {
-    45000001,  # 请求参数无效 - 请求参数缺失必需字段/字段值无效/重复请求
-    45000081,  # 等包超时
-    55000031,  # 服务器繁忙 - 服务过载，无法处理当前请求
-}
+    def with_message_type(self, message_type: int) -> 'AsrRequestHeader':
+        self.message_type = message_type
+        return self
 
-# 不需要重连的错误码（仅记录，供参考）
-# 45000002: 空音频 - 客户端音频问题，重连无效
-# 45000151: 音频格式不正确 - 配置问题，重连无效
+    def with_message_type_specific_flags(self, flags: int) -> 'AsrRequestHeader':
+        self.message_type_specific_flags = flags
+        return self
 
-def should_reconnect_on_error(code: int) -> bool:
-    """
-    判断错误码是否需要触发重连
-    
-    需要重连的错误码：
-    - 45000001: 请求参数无效
-    - 45000081: 等包超时  
-    - 55000031: 服务器繁忙
-    - 550xxxxx: 服务内部处理错误（55000000-55099999范围）
-    
-    不需要重连的错误码：
-    - 45000002: 空音频（客户端问题）
-    - 45000151: 音频格式不正确（配置问题）
-    """
-    # 检查精确匹配的错误码
-    if code in RECONNECT_ERROR_CODES:
-        return True
-    
-    # 检查550xxxxx范围的服务内部处理错误
-    if 55000000 <= code <= 55099999:
-        return True
-    
-    return False
+    def with_serialization_type(self, serialization_type: int) -> 'AsrRequestHeader':
+        self.serialization_type = serialization_type
+        return self
 
-PROTOCOL_VERSION = 0b0001
-DEFAULT_HEADER_SIZE = 0b0001
+    def with_compression_type(self, compression_type: int) -> 'AsrRequestHeader':
+        self.compression_type = compression_type
+        return self
 
-# Message Type:
-FULL_CLIENT_REQUEST = 0b0001
-AUDIO_ONLY_REQUEST = 0b0010
-FULL_SERVER_RESPONSE = 0b1001
-SERVER_ACK = 0b1011
-SERVER_ERROR_RESPONSE = 0b1111
+    def with_reserved_data(self, reserved_data: bytes) -> 'AsrRequestHeader':
+        self.reserved_data = reserved_data
+        return self
 
-# Message Type Specific Flags
-NO_SEQUENCE = 0b0000  # no check sequence
-POS_SEQUENCE = 0b0001
-NEG_SEQUENCE = 0b0010
-NEG_WITH_SEQUENCE = 0b0011
-NEG_SEQUENCE_1 = 0b0011
+    def to_bytes(self) -> bytes:
+        header = bytearray()
+        header.append((ProtocolVersion.V1 << 4) | 1)
+        header.append((self.message_type << 4) | self.message_type_specific_flags)
+        header.append((self.serialization_type << 4) | self.compression_type)
+        header.extend(self.reserved_data)
+        return bytes(header)
 
-# Message Serialization
-NO_SERIALIZATION = 0b0000
-JSON = 0b0001
+    @staticmethod
+    def default_header() -> 'AsrRequestHeader':
+        return AsrRequestHeader()
 
-# Message Compression
-NO_COMPRESSION = 0b0000
-GZIP = 0b0001
+class RequestBuilder:
+    @staticmethod
+    def new_auth_headers() -> Dict[str, str]:
+        reqid = str(uuid.uuid4())
+        return {
+            "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
+            "X-Api-Request-Id": reqid,
+            "X-Api-Access-Key": config.access_key,
+            "X-Api-App-Key": config.app_key
+        }
 
+    @staticmethod
+    def new_full_client_request(seq: int) -> bytes:  # 添加seq参数
+        header = AsrRequestHeader.default_header() \
+            .with_message_type_specific_flags(MessageTypeSpecificFlags.POS_SEQUENCE)
+        
+        payload = {
+            "user": {
+                "uid": "demo_uid"
+            },
+            "audio": {
+                "format": "wav",
+                "codec": "raw",
+                "rate": 16000,
+                "bits": 16,
+                "channel": 1
+            },
+            "request": {
+                "model_name": "bigmodel",
+                "enable_itn": True,
+                "enable_punc": True,
+                "enable_ddc": True,
+                "show_utterances": True,
+                "enable_nonstream": False
+            }
+        }
+        
+        payload_bytes = json.dumps(payload).encode('utf-8')
+        compressed_payload = CommonUtils.gzip_compress(payload_bytes)
+        payload_size = len(compressed_payload)
+        
+        request = bytearray()
+        request.extend(header.to_bytes())
+        request.extend(struct.pack('>i', seq))  # 使用传入的seq
+        request.extend(struct.pack('>I', payload_size))
+        request.extend(compressed_payload)
+        
+        return bytes(request)
 
-def generate_header(
-        message_type=FULL_CLIENT_REQUEST,
-        message_type_specific_flags=NO_SEQUENCE,
-        serial_method=JSON,
-        compression_type=GZIP,
-        reserved_data=0x00
-):
-    """生成协议头"""
-    header = bytearray()
-    header_size = 1
-    header.append((PROTOCOL_VERSION << 4) | header_size)
-    header.append((message_type << 4) | message_type_specific_flags)
-    header.append((serial_method << 4) | compression_type)
-    header.append(reserved_data)
-    return header
+    @staticmethod
+    def new_audio_only_request(seq: int, segment: bytes, is_last: bool = False) -> bytes:
+        header = AsrRequestHeader.default_header()
+        if is_last:  # 最后一个包特殊处理
+            header.with_message_type_specific_flags(MessageTypeSpecificFlags.NEG_WITH_SEQUENCE)
+            seq = -seq  # 设为负值
+        else:
+            header.with_message_type_specific_flags(MessageTypeSpecificFlags.POS_SEQUENCE)
+        header.with_message_type(MessageType.CLIENT_AUDIO_ONLY_REQUEST)
+        
+        request = bytearray()
+        request.extend(header.to_bytes())
+        request.extend(struct.pack('>i', seq))
+        
+        compressed_segment = CommonUtils.gzip_compress(segment)
+        request.extend(struct.pack('>I', len(compressed_segment)))
+        request.extend(compressed_segment)
+        
+        return bytes(request)
 
+class AsrResponse:
+    def __init__(self):
+        self.code = 0
+        self.event = 0
+        self.is_last_package = False
+        self.payload_sequence = 0
+        self.payload_size = 0
+        self.payload_msg = None
 
-def generate_before_payload(sequence: int):
-    """生成payload前的序列号"""
-    before_payload = bytearray()
-    before_payload.extend(sequence.to_bytes(4, 'big', signed=True))  # sequence
-    return before_payload
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "code": self.code,
+            "event": self.event,
+            "is_last_package": self.is_last_package,
+            "payload_sequence": self.payload_sequence,
+            "payload_size": self.payload_size,
+            "payload_msg": self.payload_msg
+        }
 
-
-def parse_response(res):
-    """解析服务器响应"""
-    protocol_version = res[0] >> 4
-    header_size = res[0] & 0x0f
-    message_type = res[1] >> 4
-    message_type_specific_flags = res[1] & 0x0f
-    serialization_method = res[2] >> 4
-    message_compression = res[2] & 0x0f
-    reserved = res[3]
-    header_extensions = res[4:header_size * 4]
-    payload = res[header_size * 4:]
-    result = {
-        'is_last_package': False,
-    }
-    payload_msg = None
-    payload_size = 0
-    if message_type_specific_flags & 0x01:
-        # receive frame with sequence
-        seq = int.from_bytes(payload[:4], "big", signed=True)
-        result['payload_sequence'] = seq
-        payload = payload[4:]
-
-    if message_type_specific_flags & 0x02:
-        # receive last package
-        result['is_last_package'] = True
-
-    if message_type == FULL_SERVER_RESPONSE:
-        payload_size = int.from_bytes(payload[:4], "big", signed=True)
-        payload_msg = payload[4:]
-    elif message_type == SERVER_ACK:
-        seq = int.from_bytes(payload[:4], "big", signed=True)
-        result['seq'] = seq
-        if len(payload) >= 8:
-            payload_size = int.from_bytes(payload[4:8], "big", signed=False)
-            payload_msg = payload[8:]
-    elif message_type == SERVER_ERROR_RESPONSE:
-        code = int.from_bytes(payload[:4], "big", signed=False)
-        result['code'] = code
-        payload_size = int.from_bytes(payload[4:8], "big", signed=False)
-        payload_msg = payload[8:]
-    if payload_msg is None:
-        return result
-    if message_compression == GZIP:
-        payload_msg = gzip.decompress(payload_msg)
-    if serialization_method == JSON:
-        payload_msg = json.loads(str(payload_msg, "utf-8"))
-    elif serialization_method != NO_SERIALIZATION:
-        payload_msg = str(payload_msg, "utf-8")
-    result['payload_msg'] = payload_msg
-    result['payload_size'] = payload_size
-    return result
-
+class ResponseParser:
+    @staticmethod
+    def parse_response(msg: bytes) -> AsrResponse:
+        response = AsrResponse()
+        
+        header_size = msg[0] & 0x0f
+        message_type = msg[1] >> 4
+        message_type_specific_flags = msg[1] & 0x0f
+        serialization_method = msg[2] >> 4
+        message_compression = msg[2] & 0x0f
+        
+        payload = msg[header_size*4:]
+        
+        # 解析message_type_specific_flags
+        if message_type_specific_flags & 0x01:
+            response.payload_sequence = struct.unpack('>i', payload[:4])[0]
+            payload = payload[4:]
+        if message_type_specific_flags & 0x02:
+            response.is_last_package = True
+        if message_type_specific_flags & 0x04:
+            response.event = struct.unpack('>i', payload[:4])[0]
+            payload = payload[4:]
+            
+        # 解析message_type
+        if message_type == MessageType.SERVER_FULL_RESPONSE:
+            response.payload_size = struct.unpack('>I', payload[:4])[0]
+            payload = payload[4:]
+        elif message_type == MessageType.SERVER_ERROR_RESPONSE:
+            response.code = struct.unpack('>i', payload[:4])[0]
+            response.payload_size = struct.unpack('>I', payload[4:8])[0]
+            payload = payload[8:]
+            
+        if not payload:
+            return response
+            
+        # 解压缩
+        if message_compression == CompressionType.GZIP:
+            try:
+                payload = CommonUtils.gzip_decompress(payload)
+            except Exception as e:
+                logger.error(f"Failed to decompress payload: {e}")
+                return response
+                
+        # 解析payload
+        try:
+            if serialization_method == SerializationType.JSON:
+                response.payload_msg = json.loads(payload.decode('utf-8'))
+        except Exception as e:
+            logger.error(f"Failed to parse payload: {e}")
+            
+        return response
 
 class AsrClient:
     """ASR客户端，支持实时音频识别和断线重连"""
@@ -221,14 +281,7 @@ class AsrClient:
         # 使用配置文件中的设置，也可以通过kwargs覆盖
         self.ws_url = kwargs.get("ws_url", asr_config["ws_url"])
         self.uid = uid
-        self.format = kwargs.get("format", asr_config["audio"]["format"])
-        self.rate = kwargs.get("rate", asr_config["audio"]["sample_rate"])
-        self.bits = kwargs.get("bits", asr_config["audio"]["bits"])
-        self.channel = kwargs.get("channel", asr_config["audio"]["channel"])
-        self.codec = kwargs.get("codec", asr_config["audio"]["codec"])
-        self.seg_duration = kwargs.get("seg_duration", asr_config["seg_duration"])
-        self.headers = kwargs.get("headers", asr_config["headers"])
-        
+
         # 回调函数
         self.asr_start_callback = asr_start_callback
         self.asr_response_callback = asr_response_callback
@@ -246,7 +299,6 @@ class AsrClient:
         self.ws = None
         self.is_running = False
         self.asr_started = False
-        self.reqid = None
         self.connection_lost = False  # 新增：标记连接是否丢失
         
         # 重连状态
@@ -255,6 +307,7 @@ class AsrClient:
         self.current_reconnect_interval = self.reconnect_interval
         self.should_reconnect = True
         self.reconnect_task = None
+        self.seq = 1
         
         # 接收任务
         self.receive_task = None
@@ -268,30 +321,7 @@ class AsrClient:
 
         # 性能点
         self.asr_service_performance_point_id = None
-
-    def construct_request(self):
-        """构造初始请求"""
-        req = {
-            "user": {
-                "uid": self.uid,
-            },
-            "audio": {
-                'format': self.format,
-                "sample_rate": self.rate,
-                "bits": self.bits,
-                "channel": self.channel,
-                "codec": self.codec,
-            },
-            "request": {
-                "model_name": "bigmodel",
-                "enable_punc": True,
-                "show_utterances": True,
-                "result_type": "single",
-                "end_window_size": 600
-            }
-        }
-        return req
-            
+                
     async def start(self):
         """启动ASR连接"""
         if self.is_running:
@@ -312,11 +342,8 @@ class AsrClient:
         """建立WebSocket连接"""
         logger.info(f"连接ASR服务: {self.ws_url}")
         
-        self.reqid = str(uuid.uuid4())
-        
         # 构建连接头
-        header = self.headers.copy()
-        header["X-Api-Connect-Id"] = self.reqid
+        header = RequestBuilder.new_auth_headers()
         
         # 建立WebSocket连接
         self.ws = await websockets.connect(
@@ -327,9 +354,6 @@ class AsrClient:
         
         self.is_running = True
         logger.info("ASR WebSocket连接已建立")
-        
-        # 发送初始请求
-        await self._send_initial_request()
         
         # 启动接收任务 - 确保没有旧任务在运行
         if self.receive_task and not self.receive_task.done():
@@ -343,6 +367,9 @@ class AsrClient:
         self.receive_task = asyncio.create_task(self._receive_loop())
         logger.debug("已启动新的接收任务")
 
+        # 发送初始请求
+        await self._send_initial_request()
+        
         # 重置重连状态
         if self.is_reconnecting:
             self.is_reconnecting = False
@@ -356,17 +383,15 @@ class AsrClient:
 
     async def _send_initial_request(self):
         """发送初始请求"""
-        request_params = self.construct_request()
-        payload_bytes = str.encode(json.dumps(request_params))
-        payload_bytes = gzip.compress(payload_bytes)
-        
-        full_client_request = bytearray(generate_header())
-        full_client_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-        full_client_request.extend(payload_bytes)
-        
-        await self.ws.send(full_client_request)
-        logger.info("ASR初始请求已发送")
-        
+        request = RequestBuilder.new_full_client_request(self.seq)
+        self.seq += 1  # 发送后递增
+        try:
+            await self.ws.send(request)
+            logger.info(f"Sent full client request with seq: {self.seq-1}")
+        except Exception as e:
+            logger.error(f"Failed to send full client request: {e}")
+            raise
+    
     async def _receive_loop(self):
         """接收循环"""
         try:
@@ -380,7 +405,7 @@ class AsrClient:
                     
                     # logger.debug(f"开始接收新的ASR响应")
                     response = await self.ws.recv()
-                    result = parse_response(response)
+                    result = ResponseParser.parse_response(response)
                     await self._handle_response(result)
                     # logger.debug(f"接收新的ASR响应完成")
                 except websockets.exceptions.ConnectionClosed:
@@ -393,10 +418,6 @@ class AsrClient:
                     break
                 except websockets.exceptions.ConnectionClosedOK:
                     logger.info("ASR WebSocket连接正常关闭")
-                    break
-                except (AsrConnectionError, AsrServiceError) as e:
-                    logger.error(f"ASR服务错误，触发重连: {e}")
-                    self._mark_disconnected()
                     break
                 except Exception as e:
                     logger.error(f"接收ASR响应失败: {e}")
@@ -470,10 +491,15 @@ class AsrClient:
             except Exception as e:
                 logger.error(f"ASR结束回调执行失败: {e}")
     
-    async def _handle_response(self, result: Dict[str, Any]):
+    async def _handle_response(self, result: AsrResponse):
         """处理服务器响应"""
         # logger.debug(f"ASR响应: {result}")
-        
+        if result.event == 150:
+            logger.info("连接成功")
+            return
+        if result.code == INVALID_AUDIO_FORMAT:
+            logger.error("音频格式错误")
+            return
         # 处理ASR结果
         if 'payload_msg' in result and result['payload_msg']:
             payload = result['payload_msg']
@@ -615,7 +641,7 @@ class AsrClient:
             except Exception as e:
                 logger.error(f"等待接收任务结束时出错: {e}")
         self.receive_task = None
-        
+        self.seq = 1
         # 关闭WebSocket连接
         if self.ws:
             try:
@@ -647,14 +673,10 @@ class AsrClient:
         try:
             if not self.ws or not self.is_running:
                 raise Exception("WebSocket连接不可用")
-                
-            payload_bytes =chunk
-            audio_request = bytearray(generate_header(message_type=AUDIO_ONLY_REQUEST))
-            audio_request.extend((len(payload_bytes)).to_bytes(4, 'big'))
-            audio_request.extend(payload_bytes)
-            
-            await self.ws.send(audio_request)
-            # logger.info(f"发送音频块，大小: {len(chunk)}")
+            request = RequestBuilder.new_audio_only_request(self.seq, chunk)
+            self.seq += 1
+            await self.ws.send(request)
+            logger.info(f"发送音频块，大小: {len(chunk)}")
         except Exception as e:
             logger.error(f"发送音频块失败: {e}")
             raise

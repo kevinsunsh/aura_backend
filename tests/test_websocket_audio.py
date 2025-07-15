@@ -93,8 +93,8 @@ class AudioDeviceManager:
     """音频设备管理类，处理音频输入输出，支持耳机检测和切换"""
 
     def __init__(self, input_config: AudioConfig = None, output_config: AudioConfig = None):
-        self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=6400)  # 麦克风配置
-        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=6400, bit_size=pyaudio.paInt32)  # 播放配置
+        self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=3200, bit_size=pyaudio.paInt16, channels=1)  # 麦克风配置
+        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=3200, bit_size=pyaudio.paInt32)  # 播放配置
         self.pyaudio = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
@@ -632,6 +632,10 @@ class WebSocketTestSession:
                 logger.info(f"ASR收到第{self.chunk_count}个内容片段: '{content}'")
             elif event_id == 459:  # ASREnded
                 logger.info("🎤 ASR结束")
+                if self.first_request_send_time is not None:
+                    delay = time.time() - self.first_request_send_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASR结束到第一个request发送完成延迟: {delay:.3f}秒")
                 self.asr_ended_time = time.time()
                 logger.debug(f"⏱️ ASREnded时间戳: {self.asr_ended_time}")
             elif event_id == 350:  # TTSSentenceStart
@@ -1194,13 +1198,10 @@ class WebSocketTestSession:
                 logger.error("发送第一个请求音频失败")
                 return
             
-            # 发送1秒静音（使用缓存的静音音频）
-            await self._send_silence_audio()
-
             # 记录第一个request发送完成时间
             self.first_request_send_time = time.time()
             logger.info(f"⏱️ 第一个request发送完成时间: {self.first_request_send_time}")
-            
+
             # 等待TTS回复开始
             logger.info("⏳ 等待TTS回复开始...")
             await self._wait_for_tts_start()
@@ -1544,8 +1545,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    # session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
+    # session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":

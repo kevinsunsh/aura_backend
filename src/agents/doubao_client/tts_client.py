@@ -398,10 +398,10 @@ class TtsClient:
         self.connection_id = res.optional.connectionId
         
         # 开始会话
-        self.session_id = str(uuid.uuid4()).replace('-', '')
-        await self._tts_start_session(self.ws, self.speaker, self.session_id)
-        res = self._parse_tts_response(await self.ws.recv())
-        logger.debug(f"TTS会话响应: event={res.optional.event}")
+        # self.session_id = str(uuid.uuid4()).replace('-', '')
+        # await self._tts_start_session(self.ws, self.speaker, self.session_id)
+        # res = self._parse_tts_response(await self.ws.recv())
+        # logger.debug(f"TTS会话响应: event={res.optional.event}")
         
         if res.optional.event != EVENT_SessionStarted:
             raise RuntimeError('TTS会话启动失败')
@@ -624,11 +624,11 @@ class TtsClient:
         if self.ws:
             try:
                 # 尝试正常结束会话和连接
-                if self.session_id:
-                    try:
-                        await self._tts_finish_session(self.ws, self.session_id)
-                    except:
-                        pass
+                # if self.session_id:
+                #     try:
+                #         await self._tts_finish_session(self.ws, self.session_id)
+                #     except:
+                #         pass
                 try:
                     await self._tts_finish_connection(self.ws)
                 except:
@@ -645,7 +645,7 @@ class TtsClient:
         self.connection_id = None
         # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
     
-    async def send_text_chunk(self, text: str):
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False):
         """
         发送文本片段进行流式合成（异步队列版本）
         
@@ -658,6 +658,13 @@ class TtsClient:
         try:
             # 非阻塞方式放入队列，如果队列满了就记录警告
             try:
+                if start:
+                    self.session_id = str(uuid.uuid4()).replace('-', '')
+                    await self._tts_start_session(self.ws, self.speaker, self.session_id)
+                    res = self._parse_tts_response(await self.ws.recv())
+                    logger.debug(f"TTS会话响应: event={res.optional.event}")
+                elif end:
+                    await self._tts_finish_session(self.ws, self.session_id)
                 await self._send_text_internal(text)
                 logger.debug(f"文本已加入发送队列: {text[:50]}...")
             except asyncio.QueueFull:
@@ -719,4 +726,4 @@ class TtsClient:
 
     def is_connected(self) -> bool:
         """检查连接状态"""
-        return self.is_running and self.ws is not None and self._tts_session_active 
+        return self.is_running and self.ws is not None

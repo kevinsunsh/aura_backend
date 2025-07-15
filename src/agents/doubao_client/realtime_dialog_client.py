@@ -58,14 +58,10 @@ class RealtimeDialogClient:
             logger.warning(f"发送StartConnection请求时检测到连接问题: {e}")
             raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
 
-    async def start_session(self, start_session_req: dict = None) -> None:
+    async def start_session(self) -> None:
         """StartSession - 客户端事件ID: 100"""
-        current_session_req = default_session_req.copy()
-        if start_session_req:
-            current_session_req.update(start_session_req)
-        current_session_req["dialog"]["dialog_id"] = self.session_id
         start_session_request = client_generate_request(
-            payload_data=current_session_req,
+            payload_data=default_session_req,
             message_type=CLIENT_FULL_REQUEST,
             message_type_specific_flags=MSG_WITH_EVENT,
             serial_method=JSON,

@@ -146,7 +146,7 @@ class AuraDialogSession:
             if not await self.wait_for_server_response(ServerEvent.ConnectionStarted):
                 raise Exception("重连时连接握手失败")
                 
-            await self.client.start_session()
+            await self.client.start_session({})
             if not await self.wait_for_server_response(ServerEvent.SessionStarted):
                 raise Exception("重连时会话握手失败")
             
@@ -579,7 +579,7 @@ class AuraDialogSession:
             if not await self.wait_for_server_response(ServerEvent.ConnectionStarted):
                 raise Exception("连接握手失败")
                 
-            await self.client.start_session()
+            await self.client.start_session({})
             if not await self.wait_for_server_response(ServerEvent.SessionStarted):
                 raise Exception("会话握手失败")
             

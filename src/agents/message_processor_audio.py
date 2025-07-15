@@ -120,18 +120,18 @@ class SeparateClientsClient(IAudioClient):
         self.last_asr_text = ""
         
         # 创建ASR客户端
-        # self.asr_client = AsrClient(
-        #     uid=uid,
-        #     asr_start_callback=self._asr_start_callback,
-        #     asr_response_callback=self._asr_response_callback,
-        #     asr_end_callback=self._asr_end_callback
-        # )
-        self.asr_client = AuraDialogSession(
+        self.asr_client = AsrClient(
             uid=uid,
             asr_start_callback=self._asr_start_callback,
             asr_response_callback=self._asr_response_callback,
             asr_end_callback=self._asr_end_callback
         )
+        # self.asr_client = AuraDialogSession(
+        #     uid=uid,
+        #     asr_start_callback=self._asr_start_callback,
+        #     asr_response_callback=self._asr_response_callback,
+        #     asr_end_callback=self._asr_end_callback
+        # )
         
         # 创建TTS客户端
         self.tts_client = TtsClient(
@@ -154,7 +154,7 @@ class SeparateClientsClient(IAudioClient):
     
     async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
         if text.strip():  # 只发送非空文本
-            await self.tts_client.send_text_chunk(text)
+            await self.tts_client.send_text_chunk(text, start, end)
     
     def is_connected(self) -> bool:
         return self.asr_client.is_connected() and self.tts_client.is_connected()
@@ -204,7 +204,7 @@ class MessageProcessorAudio:
                  chat_id: str,
                  user_id: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
-                 client_type: AudioClientType = AudioClientType.DIALOG_SESSION):
+                 client_type: AudioClientType = AudioClientType.SEPARATE_CLIENTS):
         self.websocket_send_callback = websocket_send_callback
         self.task_lock = asyncio.Lock()
         self.is_running = True
