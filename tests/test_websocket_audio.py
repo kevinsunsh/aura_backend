@@ -405,13 +405,14 @@ class AudioDeviceManager:
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
-    def __init__(self, uri: str = "ws://sd1jn2gk3k341ncbl2d5g.apigateway-cn-shanghai.volceapi.com/ws/stream"):
+    def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com/ws/stream"):
         self.uri = uri
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
             input_config=AudioConfig(sample_rate=16000, channels=1, chunk=800),
-            output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
+            # output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
+            output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
         )
         # 状态控制
         self.is_running = True
@@ -1543,8 +1544,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
-    # session = WebSocketTestSession()
+    # session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
+    session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":

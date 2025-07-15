@@ -15,26 +15,22 @@ import gzip
 
 from api_protocol.constant import *
 
-from .realtime_dialog_client import RealtimeDialogClient
-from .doubao_config import ws_connect_config
+from .base_client import AsrClient
+from .config import asr_config
 
 logger = logging.getLogger(__name__)
 
-class DialogSession:
+class AuraDialogSession:
     """对话会话管理类，集成RealtimeDialogClient和aura流式聊天"""
     def __init__(self, 
                  uid: str = None,
                  asr_start_callback: Callable[[], None] = None,
                  asr_response_callback: Callable[[str, bool], None] = None,
                  asr_end_callback: Callable[[str], None] = None,
-                 tts_start_callback: Callable[[str], None] = None,
-                 tts_response_callback: Callable[[bytes], None] = None,
-                 tts_end_callback: Callable[[], None] = None,
-                 chat_end_callback: Callable[[str], None] = None,
                  ):
         self.uid = uid or str(uuid.uuid4())
         self.session_id = self.uid
-        self.client = RealtimeDialogClient(config=ws_connect_config, session_id=self.session_id)
+        self.client = AsrClient(config=asr_config, session_id=self.session_id)
 
         # 状态管理
         self.is_running = True
@@ -53,15 +49,6 @@ class DialogSession:
         self.asr_response_callback = asr_response_callback
         self.asr_end_callback = asr_end_callback
 
-        # 服务器TTS结果
-        self.tts_start_callback = tts_start_callback
-        self.tts_response_callback = tts_response_callback
-        self.tts_end_callback = tts_end_callback
-
-        # 服务器Chat结果
-        self.server_chat_response = ""
-        self.chat_end_callback = chat_end_callback
-
         # 延迟监控
         self.last_input_time = None
         self.first_audio_response_time = None
@@ -75,7 +62,6 @@ class DialogSession:
         
         # 任务管理
         self.server_receive_task = None
-        self.is_tts_sentence_start = False
         
     def _update_latency_stats(self, latency: float) -> None:
         """更新延迟统计信息"""
@@ -150,7 +136,7 @@ class DialogSession:
             await asyncio.sleep(0.1)
             
             # 创建新的客户端实例
-            self.client = RealtimeDialogClient(config=ws_connect_config, session_id=self.session_id)
+            self.client = AsrClient(config=asr_config, session_id=self.session_id)
             
             # 重新连接
             await self.client.connect()
@@ -295,20 +281,6 @@ class DialogSession:
             await self._on_session_finished(payload_msg)
         elif event_id == ServerEvent.SessionFailed:
             await self._on_session_failed(payload_msg)
-        # TTS类事件 (350-359)
-        elif event_id == ServerEvent.TTSSentenceStart:
-            # if payload_msg["tts_type"] in ["chat_tts_text", "default"]:
-            if payload_msg["tts_type"] in ["chat_tts_text"]:
-                await self._on_tts_sentence_start(payload_msg)
-                self.is_tts_sentence_start = True
-        elif event_id == ServerEvent.TTSSentenceEnd:
-            await self._on_tts_sentence_end(payload_msg)
-            self.is_tts_sentence_start = False
-        elif event_id == ServerEvent.TTSResponse:
-            if self.is_tts_sentence_start:
-                await self._on_tts_response(payload_msg)
-        elif event_id == ServerEvent.TTSEnded:
-            await self._on_tts_ended(payload_msg)
         # ASR类事件 (450-459)
         elif event_id == ServerEvent.ASRInfo:
             await self._on_asr_info(payload_msg)
@@ -316,11 +288,6 @@ class DialogSession:
             await self._on_asr_response(payload_msg)
         elif event_id == ServerEvent.ASREnded:
             await self._on_asr_ended(payload_msg)
-        # Chat类事件 (550-559)
-        elif event_id == ServerEvent.ChatResponse:
-            await self._on_chat_response(payload_msg)
-        elif event_id == ServerEvent.ChatEnded:
-            await self._on_chat_ended(payload_msg)
         else:
             logger.warning(f"未知事件ID: {event_id}")
     
@@ -354,51 +321,6 @@ class DialogSession:
         error_msg = payload.get("error", "未知错误")
         logger.error(f"会话失败: {error_msg}")
         self.is_session_finished = True
-
-    # TTS类事件回调方法
-    async def _on_tts_sentence_start(self, payload: Dict[str, Any]) -> None:
-        """TTS句子开始事件回调"""
-        tts_type = payload.get("tts_type", "")
-        text = payload.get("text", "")
-        logger.debug(f"TTS句子开始 - 类型: {tts_type}, 文本: {text[:50]}...")
-        if self.tts_start_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_start_callback):
-                    await self.tts_start_callback(text)
-                else:
-                    self.tts_start_callback(text)
-            except Exception as e:
-                logger.error(f"TTS开始回调执行失败: {e}")
-    
-    async def _on_tts_sentence_end(self, payload: Dict[str, Any]) -> None:
-        """TTS句子结束事件回调"""
-        logger.debug("TTS句子结束")
-        if self.tts_end_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_end_callback):
-                    await self.tts_end_callback()
-                else:
-                    self.tts_end_callback()
-            except Exception as e:
-                logger.error(f"TTS结束回调执行失败: {e}")
-
-    async def _on_tts_response(self, payload: Dict[str, Any]) -> None:
-        """TTS音频响应事件回调"""
-        # 这里payload应该是二进制音频数据
-        audio_data = payload if isinstance(payload, bytes) else b""
-        logger.debug(f"收到TTS音频数据: {len(audio_data)} 字节")
-        if self.tts_response_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_response_callback):
-                    await self.tts_response_callback(audio_data)
-                else:
-                    self.tts_response_callback(audio_data)
-            except Exception as e:
-                logger.error(f"TTS响应回调执行失败: {e}")
-    
-    async def _on_tts_ended(self, payload: Dict[str, Any]) -> None:
-        """TTS结束事件回调"""
-        logger.info("TTS合成结束")
     
     # ASR类事件回调方法
     async def _on_asr_info(self, payload: Dict[str, Any]) -> None:
@@ -445,31 +367,6 @@ class DialogSession:
                     self.asr_end_callback(self.server_asr_result)
             except Exception as e:
                 logger.error(f"ASR结束回调执行失败: {e}")
-    
-    # Chat类事件回调方法
-    async def _on_chat_response(self, payload: Dict[str, Any]) -> None:
-        """聊天响应事件回调"""
-        pass
-        # content = payload.get("content", "")
-        # logger.info(f"收到聊天响应: {content[:50]}...")
-        
-        # 缓冲服务器聊天响应
-        # self.server_chat_response += content
-
-    async def _on_chat_ended(self, payload: Dict[str, Any]) -> None:
-        """聊天结束事件回调"""
-        pass
-        # logger.info("聊天响应结束")
-        # if self.chat_end_callback:
-        #     try:
-        #         if asyncio.iscoroutinefunction(self.chat_end_callback):
-        #             await self.chat_end_callback(self.server_chat_response)
-        #         else:
-        #             self.chat_end_callback(self.server_chat_response)
-        #     except Exception as e:
-        #         logger.error(f"聊天结束回调执行失败: {e}")
-        #     # 重置聊天响应缓冲区
-        #     self.server_chat_response = ""
     
     async def _server_receive_loop(self):
         """服务器响应接收循环"""
@@ -540,15 +437,7 @@ class DialogSession:
             # 只有在出现严重错误时才停止运行
             if not self.is_reconnecting:
                 self.is_running = False
-    async def refresh_session(self) -> None:
-        """刷新会话"""
-        await self.client.finish_session()
-        if not await self.wait_for_server_response(ServerEvent.SessionFinished):
-            raise Exception("重连时会话结束失败")
-        await self.client.start_session()
-        if not await self.wait_for_server_response(ServerEvent.SessionStarted):
-            raise Exception("重连时会话握手失败")
-
+    
     async def process_audio_input(self, audio_data: bytes) -> None:
         """处理音频输入"""
         try:
@@ -585,92 +474,6 @@ class DialogSession:
     async def process_audio_chunk(self, audio_chunk: bytes) -> None:
         """处理音频块（兼容ASR客户端的接口）"""
         await self.process_audio_input(audio_chunk)
-    
-    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
-        """发送文本块到TTS（兼容TTS客户端的接口）"""
-        await self.send_chat_tts_text(text, start, end)
-    
-    async def send_say_hello(self, content: str) -> None:
-        """发送打招呼消息"""
-        try:
-            # 检查连接状态并尝试重连
-            if not await self.check_connection_and_reconnect():
-                logger.warning("连接检查失败，无法发送打招呼消息")
-                return
-                
-            await self.client.say_hello(content)
-            logger.info(f"已发送打招呼消息: {content}")
-        except (websockets.exceptions.ConnectionClosed,
-                websockets.exceptions.ConnectionClosedError,
-                websockets.exceptions.WebSocketException,
-                OSError,
-                ConnectionResetError,
-                BrokenPipeError) as e:
-            logger.error(f"WebSocket连接相关错误: {e}")
-            if await self.check_connection_and_reconnect():
-                # 重连成功，重试发送
-                try:
-                    await self.client.say_hello(content)
-                    logger.info(f"重连后成功发送打招呼消息: {content}")
-                except Exception as retry_e:
-                    logger.error(f"重连后发送打招呼消息仍然失败: {retry_e}")
-            else:
-                logger.error("重连失败，无法发送打招呼消息")
-        except Exception as e:
-            logger.error(f"发送打招呼消息失败: {e}")
-            # 如果是连接相关错误，尝试重连
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
-                if await self.check_connection_and_reconnect():
-                    # 重连成功，重试发送
-                    try:
-                        await self.client.say_hello(content)
-                        logger.info(f"重连后成功发送打招呼消息: {content}")
-                    except Exception as retry_e:
-                        logger.error(f"重连后发送打招呼消息仍然失败: {retry_e}")
-            else:
-                logger.error(f"非连接相关错误，不进行重连: {e}")
-    
-    async def send_chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
-        """发送聊天TTS文本"""
-        try:
-            # 检查连接状态并尝试重连
-            if not await self.check_connection_and_reconnect():
-                logger.warning("连接检查失败，无法发送TTS文本")
-                return
-                
-            await self.client.chat_tts_text(content, start, end)
-            # logger.info(f"已发送TTS文本: {content[:50]}...")
-        except (websockets.exceptions.ConnectionClosed,
-                websockets.exceptions.ConnectionClosedError,
-                websockets.exceptions.WebSocketException,
-                OSError,
-                ConnectionResetError,
-                BrokenPipeError) as e:
-            logger.error(f"WebSocket连接相关错误: {e}")
-            if await self.check_connection_and_reconnect():
-                # 重连成功，重试发送
-                try:
-                    await self.client.chat_tts_text(content, start, end)
-                    logger.info(f"重连后成功发送TTS文本: {content[:50]}...")
-                except Exception as retry_e:
-                    logger.error(f"重连后发送TTS文本仍然失败: {retry_e}")
-            else:
-                logger.error("重连失败，无法发送TTS文本")
-        except Exception as e:
-            logger.error(f"发送TTS文本失败: {e}")
-            # 如果是连接相关错误，尝试重连
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
-                if await self.check_connection_and_reconnect():
-                    # 重连成功，重试发送
-                    try:
-                        await self.client.chat_tts_text(content, start, end)
-                        logger.info(f"重连后成功发送TTS文本: {content[:50]}...")
-                    except Exception as retry_e:
-                        logger.error(f"重连后发送TTS文本仍然失败: {retry_e}")
-            else:
-                logger.error(f"非连接相关错误，不进行重连: {e}")
     
     async def get_session_info(self) -> Dict[str, Any]:
         """获取会话信息"""

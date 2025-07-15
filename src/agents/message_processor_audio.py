@@ -10,6 +10,7 @@ from enum import Enum
 from abc import ABC, abstractmethod
 
 from .doubao_client.dialog_session import DialogSession
+from .aura_client.aura_dialog_session import AuraDialogSession
 from .doubao_client.asr_client import AsrClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
@@ -19,11 +20,6 @@ from api_protocol.constant import *
 from agents.aura_memory.message_store import MessageStore, Message
 
 logger = logging.getLogger(__name__)
-
-class AudioTaskType(Enum):
-    """音频任务类型枚举"""
-    PROCESS = "process"  # 正常处理任务
-    QUICK_RESPONSE = "quick_response"  # 快速回复任务
 
 class AudioClientType(Enum):
     """音频客户端类型枚举"""
@@ -124,7 +120,13 @@ class SeparateClientsClient(IAudioClient):
         self.last_asr_text = ""
         
         # 创建ASR客户端
-        self.asr_client = AsrClient(
+        # self.asr_client = AsrClient(
+        #     uid=uid,
+        #     asr_start_callback=self._asr_start_callback,
+        #     asr_response_callback=self._asr_response_callback,
+        #     asr_end_callback=self._asr_end_callback
+        # )
+        self.asr_client = AuraDialogSession(
             uid=uid,
             asr_start_callback=self._asr_start_callback,
             asr_response_callback=self._asr_response_callback,
@@ -159,7 +161,6 @@ class SeparateClientsClient(IAudioClient):
 
 class AudioClientFactory:
     """音频客户端工厂"""
-    
     @staticmethod
     def create_client(client_type: AudioClientType,
                      uid: str,
@@ -211,10 +212,6 @@ class MessageProcessorAudio:
         # 音频客户端相关
         self.client_type = client_type
         self.audio_client: Optional[IAudioClient] = None
-        
-        # 激活任务相关
-        self.active_task: Optional[AudioTaskType] = None  # 当前激活的任务类型
-        self.active_task_lock = asyncio.Lock()  # 激活任务的锁
         
         # 当前处理的 chat_stream
         self.chat_id = chat_id

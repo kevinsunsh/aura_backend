@@ -12,7 +12,7 @@ ws_connect_config = {
     }
 }
 
-start_session_req = {
+default_session_req = {
     "tts": {
         "audio_config": {
             "channel": 1,
