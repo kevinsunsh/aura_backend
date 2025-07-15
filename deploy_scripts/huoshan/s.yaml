@@ -36,18 +36,18 @@ resources:
         VpcConfig:
           EnableVpc: true
           EnableSharedInternetAccess: true
-          VpcId: vpc-3qdp4y7bewqv47prml0435ung
+          VpcId: vpc-13g4piwtkhhc03n6nu5hmq2jt
           SubnetIds:
-            - subnet-22iyhsqz1g1s07r2qr11p3qgy
+            - subnet-rrkuf0d9y800v0x58hi8g42
           SecurityGroupIds:
-            - sg-3qdp4yf7jcyrk7prml0n2gmj3
+            - sg-13g4pj6oq1r7k3n6nu5jnw94u
 
       replicaLimit:
         MaxInstance: 10
       triggers:
         - TriggerName: apig-trigger
           TriggerType: apig
-          GatewayId: "gd1jlf1k3k341ncbl2c5g" # todo: 新建 apig 后填写 gatewayId 即可
+          GatewayId: "gd1qqo74fo0m61h76anf0" # todo: 新建 apig 后填写 gatewayId 即可
           ServiceName: "service-aurabk"
           UpstreamName: "upstream-aurabk"
           RouteName: default
