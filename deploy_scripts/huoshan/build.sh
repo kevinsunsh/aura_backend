@@ -5,7 +5,7 @@ NEW_VERSION="0.0.3"
 
 # 尝试使用 Docker 命令
 echo "构建 Docker 镜像..."
-if docker build --platform=linux/amd64 --no-cache -t mengs-cn-shanghai.cr.volces.com/aura/aura_backend:${NEW_VERSION} -f ../../src/Dockerfile ../../src; then
+if docker build --platform=linux/amd64 --no-cache -t mengs-cn-beijing.cr.volces.com/aura/aura_backend:${NEW_VERSION} -f ../../src/Dockerfile ../../src; then
     echo "Docker 镜像构建成功"
 else
     echo "错误: Docker 镜像构建失败"
@@ -14,7 +14,7 @@ fi
 
 # 推送 Docker 镜像
 echo "推送 Docker 镜像..."
-if docker push mengs-cn-shanghai.cr.volces.com/aura/aura_backend:${NEW_VERSION}; then
+if docker push mengs-cn-beijing.cr.volces.com/aura/aura_backend:${NEW_VERSION}; then
     echo "Docker 镜像推送成功"
 else
     echo "错误: Docker 镜像推送失败"
