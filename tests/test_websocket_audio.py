@@ -1514,6 +1514,7 @@ class WebSocketTestSession:
             # 重新建立连接
             self.websocket = await websockets.connect(
                 self.uri,
+                open_timeout=5,
                 ping_interval=30,      # 每30秒发送一次ping（更保守）
                 ping_timeout=15,       # ping超时时间15秒（更宽松）
                 close_timeout=10,      # 关闭超时时间10秒

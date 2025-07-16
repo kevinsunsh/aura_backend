@@ -322,6 +322,7 @@ class TtsClient:
 
     async def _tts_start_session(self, websocket, speaker, session_id):
         """TTS开始会话"""
+        logger.info(f"===========TTS开始会话: {session_id}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -340,6 +341,8 @@ class TtsClient:
 
     async def _tts_finish_session(self, ws, session_id):
         """TTS结束会话"""
+        logger.info(f"===========TTS结束会话: {session_id}")
+        self._tts_session_active = False
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -488,7 +491,6 @@ class TtsClient:
                     elif res.optional.event == EVENT_SessionFinished:
                         # 会话结束，触发结束回调
                         logger.debug(f"TTS会话结束: {res.optional.event}")
-                        self._tts_session_active = False
                         self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
                     elif res.optional.event == EVENT_ConnectionFailed:
@@ -637,7 +639,6 @@ class TtsClient:
                 except:
                     pass
                 await self.ws.close()
-                logger.debug("TTS WebSocket连接已关闭")
             except Exception as e:
                 logger.debug(f"关闭TTS WebSocket时出错: {e}")
             self.ws = None

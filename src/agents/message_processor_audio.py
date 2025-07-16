@@ -11,7 +11,8 @@ from abc import ABC, abstractmethod
 
 from .doubao_client.dialog_session import DialogSession
 from .aura_client.aura_dialog_session import AuraDialogSession
-from .doubao_client.asr_client import AsrClient
+# from .doubao_client.asr_client import AsrClient
+from .doubao_client.asr_client_new import AsrClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
 from utils.utils import start_performance_point, end_performance_point

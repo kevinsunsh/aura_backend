@@ -35,7 +35,7 @@ class AuraDialogSession:
         # 状态管理
         self.is_running = True
         self.is_session_finished = False
-        
+
         # 重连状态管理
         self.is_reconnecting = False
         self.reconnect_attempts = 0
@@ -44,7 +44,7 @@ class AuraDialogSession:
         self.reconnect_start_time = None  # 重连开始时间
         
         # 服务器ASR结果
-        self.server_asr_result = None
+        self.server_asr_result = ""
         self.asr_start_callback = asr_start_callback
         self.asr_response_callback = asr_response_callback
         self.asr_end_callback = asr_end_callback
@@ -158,7 +158,7 @@ class AuraDialogSession:
             
             # 重置聊天响应缓冲区，避免数据混淆
             self.server_chat_response = ""
-            self.server_asr_result = None
+            self.server_asr_result = ""
             
             # 检查并确保接收任务正常运行
             if self.server_receive_task and self.server_receive_task.done():
@@ -186,18 +186,6 @@ class AuraDialogSession:
                 self.is_running = False
                 return False
     
-    def is_connection_healthy(self) -> bool:
-        """检查连接是否健康"""
-        try:
-            return (not self.is_reconnecting and 
-                    self.is_running and 
-                    not self.is_session_finished and 
-                    self.client.ws is not None and 
-                    self._is_websocket_open())
-        except Exception as e:
-            logger.debug(f"检查连接健康状态时出错: {e}")
-            return False
-
     async def wait_for_server_response(self, expected_event_id: int, timeout: float = 5.0) -> bool:
         """等待服务端特定响应 - 直接接收模式，避免循环依赖"""
         try:
@@ -310,7 +298,7 @@ class AuraDialogSession:
         """会话启动成功事件回调"""
         dialog_id = payload.get("dialog_id", "")
         logger.info(f"会话启动成功，dialog_id: {dialog_id}")
-
+    
     async def _on_session_finished(self, payload: Dict[str, Any]) -> None:
         """会话结束事件回调"""
         logger.info("会话已结束")
@@ -344,7 +332,7 @@ class AuraDialogSession:
                 is_interim = result.get("is_interim", False)
                 logger.debug(f"ASR识别结果: {text} (临时: {is_interim})")
                 
-                self.server_asr_result = text
+                self.server_asr_result += text
                 
                 # 调用ASR响应回调
                 if self.asr_response_callback:
@@ -365,13 +353,14 @@ class AuraDialogSession:
                     await self.asr_end_callback(self.server_asr_result)
                 else:
                     self.asr_end_callback(self.server_asr_result)
+                self.server_asr_result = ""
             except Exception as e:
                 logger.error(f"ASR结束回调执行失败: {e}")
     
     async def _server_receive_loop(self):
         """服务器响应接收循环"""
         try:
-            while self.is_running and not self.is_session_finished:
+            while self.is_running:
                 try:
                     # 检查连接状态并尝试重连
                     if not await self.check_connection_and_reconnect():
@@ -496,7 +485,6 @@ class AuraDialogSession:
         """检查连接状态"""
         try:
             return (self.is_running and 
-                    not self.is_session_finished and 
                     self.client.ws is not None and 
                     self._is_websocket_open())
         except Exception as e:
@@ -547,10 +535,6 @@ class AuraDialogSession:
         """检查客户端是否正在运行"""
         return self.is_running
     
-    def is_server_session_active(self) -> bool:
-        """检查服务器会话是否活跃"""
-        return not self.is_session_finished
-    
     def is_receive_task_running(self) -> bool:
         """检查接收任务是否正在运行"""
         return (self.server_receive_task is not None and 
@@ -599,10 +583,7 @@ class AuraDialogSession:
             # 结束会话
             if not self.is_session_finished:
                 await self.client.finish_session()
-                while not self.is_session_finished:
-                    await asyncio.sleep(0.1)
-
-            self.is_tts_sentence_start = False
+            
             await self.client.finish_connection()
             await asyncio.sleep(0.1)
             await self.client.close()

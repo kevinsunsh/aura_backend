@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import websockets
 from utils.utils import start_performance_point, end_performance_point
 from .doubao_config import asr_config
+import fastrand
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -111,15 +112,24 @@ class AsrRequestHeader:
     def default_header() -> 'AsrRequestHeader':
         return AsrRequestHeader()
 
+def _gen_log_id():
+    """生成logID"""
+    ts = int(time.time() * 1000)  # 毫秒时间戳
+    r = fastrand.pcg32bounded(1 << 24) + (1 << 20)
+    local_ip = "00000000000000000000000000000000"
+    return f"02{ts}{local_ip}{r:08x}"
+log_id = _gen_log_id()
 class RequestBuilder:
     @staticmethod
     def new_auth_headers() -> Dict[str, str]:
         reqid = str(uuid.uuid4())
+        logger.info(f"new_auth_headers log_id: {log_id}")
         return {
             "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
             "X-Api-Request-Id": reqid,
             "X-Api-Access-Key": config.access_key,
-            "X-Api-App-Key": config.app_key
+            "X-Api-App-Key": config.app_key,
+            "X-Tt-Logid": log_id
         }
 
     @staticmethod
@@ -258,8 +268,6 @@ class AsrClient:
                  asr_start_callback: Callable[[], None] = None,
                  asr_response_callback: Callable[[str], None] = None,
                  asr_end_callback: Callable[[], None] = None,
-                 asr_reconnect_callback: Callable[[], None] = None,
-                 asr_disconnect_callback: Callable[[], None] = None,
                  uid: str = None,
                  max_reconnect_attempts: int = 5,
                  reconnect_interval: float = 2.0,
@@ -279,16 +287,14 @@ class AsrClient:
         :param max_reconnect_interval: 最大重连间隔（秒）
         """
         # 使用配置文件中的设置，也可以通过kwargs覆盖
-        self.ws_url = kwargs.get("ws_url", asr_config["ws_url"])
+        self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
         self.uid = uid
 
         # 回调函数
         self.asr_start_callback = asr_start_callback
         self.asr_response_callback = asr_response_callback
         self.asr_end_callback = asr_end_callback
-        self.asr_reconnect_callback = asr_reconnect_callback
-        self.asr_disconnect_callback = asr_disconnect_callback
-        
+
         # 重连配置
         self.max_reconnect_attempts = max_reconnect_attempts
         self.reconnect_interval = reconnect_interval
@@ -376,11 +382,7 @@ class AsrClient:
             self.reconnect_attempts = 0
             self.current_reconnect_interval = self.reconnect_interval
             self.connection_lost = False  # 重连成功后重置连接丢失标志
-            logger.info("ASR重连成功")
-            if self.asr_reconnect_callback:
-                # 异步执行重连回调，不阻塞连接流程
-                asyncio.create_task(self._safe_execute_callback(self.asr_reconnect_callback))
-
+    
     async def _send_initial_request(self):
         """发送初始请求"""
         request = RequestBuilder.new_full_client_request(self.seq)
@@ -390,6 +392,33 @@ class AsrClient:
             logger.info(f"Sent full client request with seq: {self.seq-1}")
         except Exception as e:
             logger.error(f"Failed to send full client request: {e}")
+            raise
+    
+    async def _send_wav_header(self):
+        """发送WAV文件头"""
+        # 构建一个标准的16kHz、16bit、单声道的WAV文件头
+        wav_header = (
+            b'RIFF' +
+            (36).to_bytes(4, 'little') +  # ChunkSize: 36 + SubChunk2Size（此处先写36，后续音频数据长度为0）
+            b'WAVE' +
+            b'fmt ' +
+            (16).to_bytes(4, 'little') +  # Subchunk1Size: 16 for PCM
+            (1).to_bytes(2, 'little') +   # AudioFormat: 1 for PCM
+            (1).to_bytes(2, 'little') +   # NumChannels: 1
+            (16000).to_bytes(4, 'little') +  # SampleRate: 16000
+            (16000 * 1).to_bytes(4, 'little') +  # ByteRate: SampleRate * NumChannels * BitsPerSample/8
+            (1).to_bytes(2, 'little') +   # BlockAlign: NumChannels * BitsPerSample/8
+            (16).to_bytes(2, 'little') +  # BitsPerSample: 16
+            b'data' +
+            (0).to_bytes(4, 'little')     # Subchunk2Size: 0（无音频数据）
+        )
+        request = RequestBuilder.new_audio_only_request(wav_header, self.seq)
+        self.seq += 1  # 发送后递增
+        try:
+            await self.ws.send(request)
+            logger.info(f"Sent wav header request with seq: {self.seq-1}")
+        except Exception as e:
+            logger.error(f"Failed to send wav header request: {e}")
             raise
     
     async def _receive_loop(self):
@@ -566,11 +595,6 @@ class AsrClient:
             
         logger.warning("处理ASR连接断开")
         self.is_running = False
-        
-        # 调用断开连接回调
-        if self.asr_disconnect_callback:
-            # 异步执行断开连接回调，不阻塞重连流程
-            asyncio.create_task(self._safe_execute_callback(self.asr_disconnect_callback))
         
         # 如果应该重连，启动重连逻辑
         if self.should_reconnect:
