@@ -91,7 +91,7 @@ class AuraDialogSession:
         if connection_ok:
             # 连接正常，重置重连计数和状态
             if self.reconnect_attempts > 0:
-                logger.info("连接已恢复正常，重置重连计数")
+                logger.debug("连接已恢复正常，重置重连计数")
                 self.reconnect_attempts = 0
                 self.reconnect_start_time = None
             return True
@@ -124,13 +124,13 @@ class AuraDialogSession:
             if self.client.ws:
                 try:
                     await self.client.close()
-                    logger.info("旧连接已关闭")
+                    logger.debug("旧连接已关闭")
                 except Exception as e:
                     logger.warning(f"关闭旧连接时出错: {e}")
                 
                 # 强制清理WebSocket对象
                 self.client.ws = None
-                logger.info("WebSocket对象已清理")
+                logger.debug("WebSocket对象已清理")
             
             # 确保旧连接完全关闭后再创建新连接
             await asyncio.sleep(0.1)
@@ -151,7 +151,7 @@ class AuraDialogSession:
                 raise Exception("重连时会话握手失败")
             
             # 重连成功
-            logger.info(f"重连成功，第 {self.reconnect_attempts} 次尝试")
+            logger.debug(f"重连成功，第 {self.reconnect_attempts} 次尝试")
             self.is_reconnecting = False
             self.reconnect_start_time = None
             self.is_session_finished = False  # 重置会话状态
@@ -168,7 +168,7 @@ class AuraDialogSession:
                 logger.warning("接收任务不存在，重新创建...")
                 self.server_receive_task = asyncio.create_task(self._server_receive_loop())
             else:
-                logger.info("重连成功，接收循环将继续运行")
+                logger.debug("重连成功，接收循环将继续运行")
             
             return True
             
@@ -189,7 +189,7 @@ class AuraDialogSession:
     async def wait_for_server_response(self, expected_event_id: int, timeout: float = 5.0) -> bool:
         """等待服务端特定响应 - 直接接收模式，避免循环依赖"""
         try:
-            logger.info(f"等待事件ID {expected_event_id} 的响应...")
+            logger.debug(f"等待事件ID {expected_event_id} 的响应...")
             
             # 直接循环接收消息，直到收到期望的响应或超时
             start_time = time.time()
@@ -201,11 +201,11 @@ class AuraDialogSession:
                     # 检查是否是期望的响应
                     if response.get('event') == expected_event_id:
                         event_id = response.get("event", "unknown")
-                        logger.info(f"📥 收到服务端响应: 事件ID={event_id}")
+                        logger.debug(f"📥 收到服务端响应: 事件ID={event_id}")
                         
                         status = response.get("status", "unknown")
                         message = response.get("message", "")
-                        logger.info(f"✅ 事件{expected_event_id} 成功: {status} - {message}")
+                        logger.debug(f"✅ 事件{expected_event_id} 成功: {status} - {message}")
                         return True
                     else:
                         # 在重连过程中，只记录其他消息但不处理，避免干扰重连流程
@@ -282,7 +282,7 @@ class AuraDialogSession:
     # Connect类事件回调方法
     async def _on_connection_started(self, payload: Dict[str, Any]) -> None:
         """连接建立成功事件回调"""
-        logger.info("连接建立成功")
+        logger.debug("连接建立成功")
 
     async def _on_connection_failed(self, payload: Dict[str, Any]) -> None:
         """连接建立失败事件回调"""
@@ -291,17 +291,17 @@ class AuraDialogSession:
 
     async def _on_connection_finished(self, payload: Dict[str, Any]) -> None:
         """连接结束事件回调"""
-        logger.info("连接已结束")
+        logger.debug("连接已结束")
 
     # Session类事件回调方法
     async def _on_session_started(self, payload: Dict[str, Any]) -> None:
         """会话启动成功事件回调"""
         dialog_id = payload.get("dialog_id", "")
-        logger.info(f"会话启动成功，dialog_id: {dialog_id}")
+        logger.debug(f"会话启动成功，dialog_id: {dialog_id}")
     
     async def _on_session_finished(self, payload: Dict[str, Any]) -> None:
         """会话结束事件回调"""
-        logger.info("会话已结束")
+        logger.debug("会话已结束")
         self.is_session_finished = True
 
     async def _on_session_failed(self, payload: Dict[str, Any]) -> None:
@@ -313,7 +313,7 @@ class AuraDialogSession:
     # ASR类事件回调方法
     async def _on_asr_info(self, payload: Dict[str, Any]) -> None:
         """ASR信息事件回调 - 识别出首字"""
-        logger.info("ASR识别出首字")
+        logger.debug("ASR识别出首字")
         if self.asr_start_callback:
             try:
                 if asyncio.iscoroutinefunction(self.asr_start_callback):
@@ -346,7 +346,7 @@ class AuraDialogSession:
     
     async def _on_asr_ended(self, payload: Dict[str, Any]) -> None:
         """ASR结束事件回调"""
-        logger.info(f"ASR识别结束 : {self.server_asr_result}")
+        logger.debug(f"ASR识别结束 : {self.server_asr_result}")
         if self.asr_end_callback:
             try:
                 if asyncio.iscoroutinefunction(self.asr_end_callback):
@@ -394,7 +394,7 @@ class AuraDialogSession:
                             # 重新抛出其他类型的错误
                             raise recv_error
                 except websockets.exceptions.ConnectionClosed:
-                    logger.info("服务器连接已关闭，尝试重连...")
+                    logger.debug("服务器连接已关闭，尝试重连...")
                     # 不立即退出，让重连逻辑处理
                     reconnect_success = await self.check_connection_and_reconnect()
                     if not reconnect_success and not self.is_running:
@@ -406,7 +406,7 @@ class AuraDialogSession:
                     
                     # 特别处理并发recv错误
                     if ("recv" in error_msg and "already running" in error_msg) or "cannot call recv" in error_msg:
-                        logger.info("检测到WebSocket并发接收问题，短暂暂停后重试...")
+                        logger.debug("检测到WebSocket并发接收问题，短暂暂停后重试...")
                         await asyncio.sleep(0.2)
                         continue
                     
@@ -420,7 +420,7 @@ class AuraDialogSession:
                 await asyncio.sleep(0.01)  # 避免CPU过度使用
                 
         except asyncio.CancelledError:
-            logger.info("服务器接收任务已取消")
+            logger.debug("服务器接收任务已取消")
         except Exception as e:
             logger.error(f"服务器接收消息出现未预期错误: {e}")
             # 只有在出现严重错误时才停止运行
@@ -448,14 +448,14 @@ class AuraDialogSession:
             logger.error(f"WebSocket连接相关错误: {e}")
             # 触发重连
             await self._trigger_reconnect()
-            logger.info("已触发重连，音频数据将在重连后重试")
+            logger.debug("已触发重连，音频数据将在重连后重试")
         except Exception as e:
             logger.error(f"发送音频数据失败: {e}")
             # 如果是连接相关错误，尝试重连
             error_msg = str(e).lower()
             if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
                 await self._trigger_reconnect()
-                logger.info("已触发重连，音频数据将在重连后重试")
+                logger.debug("已触发重连，音频数据将在重连后重试")
             else:
                 # 其他类型的错误，记录但不重连
                 logger.error(f"非连接相关错误，不进行重连: {e}")
@@ -544,7 +544,7 @@ class AuraDialogSession:
     async def _trigger_reconnect(self) -> None:
         """触发重连"""
         if not self.is_reconnecting:
-            logger.info("检测到连接问题，触发重连...")
+            logger.debug("检测到连接问题，触发重连...")
             self.is_reconnecting = True
             self.reconnect_start_time = time.time()
             # 异步触发重连，不阻塞当前任务
@@ -555,7 +555,7 @@ class AuraDialogSession:
     async def start(self) -> None:
         """启动对话会话"""
         try:
-            logger.info(f"启动对话会话: {self.session_id}")
+            logger.debug(f"启动对话会话: {self.session_id}")
             await self.client.connect()
             
             # 执行连接握手
@@ -588,7 +588,7 @@ class AuraDialogSession:
             await asyncio.sleep(0.1)
             await self.client.close()
             
-            logger.info(f"对话会话已清理: {self.session_id}")
+            logger.debug(f"对话会话已清理: {self.session_id}")
             
         except Exception as e:
             logger.error(f"AuraDialogSession清理资源时出错: {e}")
@@ -596,14 +596,14 @@ class AuraDialogSession:
     def print_latency_summary(self) -> None:
         """打印延迟统计摘要"""
         if self.latency_stats['total_requests'] > 0:
-            logger.info(f"=== 延迟统计摘要 ===")
-            logger.info(f"总请求数: {self.latency_stats['total_requests']}")
-            logger.info(f"平均延迟: {self.latency_stats['avg_latency']:.3f}秒")
-            logger.info(f"最小延迟: {self.latency_stats['min_latency']:.3f}秒")
-            logger.info(f"最大延迟: {self.latency_stats['max_latency']:.3f}秒")
-            logger.info(f"总延迟: {self.latency_stats['total_latency']:.3f}秒")
+            logger.debug(f"=== 延迟统计摘要 ===")
+            logger.debug(f"总请求数: {self.latency_stats['total_requests']}")
+            logger.debug(f"平均延迟: {self.latency_stats['avg_latency']:.3f}秒")
+            logger.debug(f"最小延迟: {self.latency_stats['min_latency']:.3f}秒")
+            logger.debug(f"最大延迟: {self.latency_stats['max_latency']:.3f}秒")
+            logger.debug(f"总延迟: {self.latency_stats['total_latency']:.3f}秒")
         else:
-            logger.info("没有延迟统计数据")
+            logger.debug("没有延迟统计数据")
 
     def get_reconnect_status(self) -> Dict[str, Any]:
         """获取重连状态信息"""
@@ -623,7 +623,7 @@ class AuraDialogSession:
             logger.warning("已有重连任务在进行中，忽略强制重连请求")
             return False
         
-        logger.info("执行强制重连...")
+        logger.debug("执行强制重连...")
         old_attempts = self.reconnect_attempts
         self.reconnect_attempts = 0  # 暂时重置计数以允许重连
         

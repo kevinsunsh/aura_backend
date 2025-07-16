@@ -269,7 +269,7 @@ class MessageProcessorAudio:
                 try:
                     self.is_chat_start = True
                     await self.audio_client.send_text_chunk("", start=False, end=True)
-                    logger.info("ChatEnded流式结束")
+                    logger.debug("ChatEnded流式结束")
                 except Exception as e:
                     logger.error(f"结束TTS合成失败: {e}")
         elif message.get("event") == ServerEvent.MutteringResponse:
@@ -305,7 +305,7 @@ class MessageProcessorAudio:
     # DialogSession 回调函数
     async def asr_start_callback(self) -> None:
         """ASR开始回调 - 识别出首字时调用"""
-        logger.info("ASR识别开始 - 检测到语音输入")
+        logger.debug("ASR识别开始 - 检测到语音输入")
         await self.text_processor.user_input_interruption()
         if self.websocket_send_callback:
             await self.websocket_send_callback({
@@ -332,7 +332,7 @@ class MessageProcessorAudio:
     
     async def asr_end_callback(self, asr_text: str) -> None:
         """ASR结束回调 - 识别完成时调用"""
-        # logger.info(f"ASR识别结束")
+        # logger.debug(f"ASR识别结束")
         if self.websocket_send_callback:
             await self.websocket_send_callback({
                 "event": ServerEvent.ASREnded,
@@ -350,7 +350,7 @@ class MessageProcessorAudio:
     
     async def tts_start_callback(self, text: str) -> None:
         """TTS开始回调 - 开始合成语音时调用"""
-        logger.info(f"TTS合成开始 : {text}")
+        logger.debug(f"TTS合成开始 : {text}")
         # 保存消息到数据库
         MessageStore.get_instance().add_message(Message(
             msg_id=str(uuid.uuid4()),
@@ -392,12 +392,12 @@ class MessageProcessorAudio:
     
     async def chat_end_callback(self, text: str) -> None:
         """聊天结束回调 - 聊天结束时调用"""
-        logger.info(f"闲聊结束 : {text}")
+        logger.debug(f"闲聊结束 : {text}")
     
     async def _handle_asr_result(self, asr_text: str) -> None:
         """处理ASR识别结果"""
         try:
-            logger.info(f"开始处理ASR结果: {asr_text}")
+            logger.debug(f"开始处理ASR结果: {asr_text}")
             
             # 使用文本处理器处理ASR结果
             result = await self.text_processor.handle_text_message(
@@ -429,7 +429,7 @@ class MessageProcessorAudio:
                         logger.debug(f"使用统一协议音频数据(NO_SERIALIZATION): {len(payload_msg)} 字节")
                         if self.audio_client:
                             await self.audio_client.process_audio_chunk(payload_msg)
-            # logger.info(f"已启动音频消息处理任务: chat_id={chat_stream.chat_id}")
+            # logger.debug(f"已启动音频消息处理任务: chat_id={chat_stream.chat_id}")
             return {
                 "success": True,
                 "action": "audio_task_started",
@@ -447,12 +447,12 @@ class MessageProcessorAudio:
         """清理资源"""
         if self.audio_client:
             try:
-                logger.info("清理音频客户端资源...")
+                logger.debug("清理音频客户端资源...")
                 await self.audio_client.cleanup()
-                logger.info("音频客户端资源清理完成")
+                logger.debug("音频客户端资源清理完成")
             except Exception as e:
                 logger.warning(f"清理音频客户端时出错: {e}")
             finally:
                 self.audio_client = None
-                logger.info("音频客户端引用已置空")
+                logger.debug("音频客户端引用已置空")
         await self.text_processor.cleanup()
