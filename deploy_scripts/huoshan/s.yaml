@@ -6,7 +6,7 @@ vars:
   sid: "aurabk"
   region: "cn-beijing"
   functionName: "aura-backend-function"
-  version: "0.0.3"
+  version: "0.0.5"
 
 resources:
   aura_backend:
