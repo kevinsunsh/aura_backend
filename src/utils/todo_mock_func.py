@@ -63,9 +63,9 @@ def _build_chat_history_str(messages: List[Message]) -> str:
     chat_history_str = ""
     for msg in messages:
         if msg.user_id == "aura":
-            chat_history_str += f"aura(bot)说: {msg.content}\n"
+            chat_history_str += f"你说: {msg.content}\n"
         else:
-            chat_history_str += f"{msg.user_id}(user)说: {msg.content}\n"
+            chat_history_str += f"{msg.user_id}说: {msg.content}\n"
     return chat_history_str
 
 def _build_readable_messages_internal(

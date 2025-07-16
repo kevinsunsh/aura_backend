@@ -75,7 +75,7 @@ async def _observe_conversation(state: ObservingTaskState, config: RunnableConfi
             "last_user_message_time": last_user_message_time,
             "last_user_message_content": last_user_message_content
         })
-
+        
         return Command(goto=END)
     except Exception as e:
         logger.error(f"观察对话状态时出错: {str(e)}")

@@ -68,9 +68,7 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
             goals_str=goals_str,
             knowledge_info_str=knowledge_info_str,
             processed_chat_history_str=processed_chat_history_str,
-            unprocessed_chat_history_str=unprocessed_chat_history_str,
-            bot_name="aura",
-            user_name=state.get("user_id", "")
+            unprocessed_chat_history_str=unprocessed_chat_history_str
         )
         
         writer = get_stream_writer()

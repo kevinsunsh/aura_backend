@@ -28,7 +28,7 @@ class BaseClient:
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=self.config['headers'],
-            ping_interval=None
+            open_timeout=5
         )
         
         # 新版本websockets不再提供获取响应头的方法
