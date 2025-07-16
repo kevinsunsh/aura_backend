@@ -270,9 +270,7 @@ class ChatStreamManager:
                 if current_locked_id == chat_id:
                     logger.debug(f"处理器锁已由当前进程持有: {chat_id}")
                     return True
-                else:
-                    logger.warning(f"处理器锁被其他进程持有: {current_locked_id}")
-                    return False
+            
             with self.db.get_session() as session:
                 result = session.execute(
                     text(f"""
