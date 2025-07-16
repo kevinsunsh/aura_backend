@@ -209,7 +209,7 @@ class TtsClient:
         
         # TTS会话状态
         self._tts_session_active = False
-        
+        self.buffer_text = ""
         # 性能指标
         self.tts_service_performance_point_id = None
         
@@ -398,17 +398,16 @@ class TtsClient:
         self.connection_id = res.optional.connectionId
         
         # 开始会话
-        # self.session_id = str(uuid.uuid4()).replace('-', '')
-        # await self._tts_start_session(self.ws, self.speaker, self.session_id)
-        # res = self._parse_tts_response(await self.ws.recv())
-        # logger.debug(f"TTS会话响应: event={res.optional.event}")
-        
+        self.session_id = str(uuid.uuid4()).replace('-', '')
+        await self._tts_start_session(self.ws, self.speaker, self.session_id)
+        res = self._parse_tts_response(await self.ws.recv())
+        logger.debug(f"TTS会话响应: event={res.optional.event}")
         if res.optional.event != EVENT_SessionStarted:
-            raise RuntimeError('TTS会话启动失败')
+            raise RuntimeError('连接TTS会话启动失败')
         
         self.is_running = True
         self._tts_session_active = True
-        
+        self.buffer_text = ""
         # 重置重连状态
         if self.is_reconnecting:
             self.is_reconnecting = False
@@ -456,13 +455,15 @@ class TtsClient:
                                     logger.error(f"TTS响应回调执行失败: {e}")
                     elif res.optional.event == EVENT_TTSSentenceStart:
                         logger.debug(f"TTS句子事件: {res.optional.event}")
+                        json_data = json.loads(res.payload_json)
+                        text = json_data.get("text", "")
                         # 第一次开始合成时触发开始回调
                         if self.tts_start_callback:
                             try:
                                 if asyncio.iscoroutinefunction(self.tts_start_callback):
-                                    await self.tts_start_callback("")
+                                    await self.tts_start_callback(text)
                                 else:
-                                    self.tts_start_callback("")
+                                    self.tts_start_callback(text)
                             except Exception as e:
                                 logger.error(f"TTS开始回调执行失败: {e}")
                     elif res.optional.event == EVENT_TTSSentenceEnd:
@@ -488,6 +489,8 @@ class TtsClient:
                         # 会话结束，触发结束回调
                         logger.debug(f"TTS会话结束: {res.optional.event}")
                         self._tts_session_active = False
+                        self.session_id = str(uuid.uuid4()).replace('-', '')
+                        await self._tts_start_session(self.ws, self.speaker, self.session_id)
                     elif res.optional.event == EVENT_ConnectionFailed:
                         logger.error(f"TTS连接失败: {res.optional.event}")
                         self._mark_disconnected()
@@ -641,6 +644,7 @@ class TtsClient:
             
         # 重置会话相关状态
         self._tts_session_active = False
+        self.buffer_text = ""
         self.session_id = None
         self.connection_id = None
         # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
@@ -654,18 +658,17 @@ class TtsClient:
         """
         if not self.is_running or not self.ws:
             return
-            
+        
+        if not self._tts_session_active:
+            self.buffer_text += text
+            return
+        
         try:
             # 非阻塞方式放入队列，如果队列满了就记录警告
             try:
-                if start:
-                    self.session_id = str(uuid.uuid4()).replace('-', '')
-                    await self._tts_start_session(self.ws, self.speaker, self.session_id)
-                    res = self._parse_tts_response(await self.ws.recv())
-                    logger.debug(f"TTS会话响应: event={res.optional.event}")
-                elif end:
+                await self._send_text_internal(self.buffer_text + text)
+                if end:
                     await self._tts_finish_session(self.ws, self.session_id)
-                await self._send_text_internal(text)
                 logger.debug(f"文本已加入发送队列: {text[:50]}...")
             except asyncio.QueueFull:
                 logger.warning("发送队列已满，文本将被丢弃")
@@ -679,8 +682,9 @@ class TtsClient:
         """内部发送文本方法"""
         if self.tts_service_performance_point_id is None:
             self.tts_service_performance_point_id = start_performance_point("TTS服务")
-        await self._tts_send_text(self.ws, self.speaker, text, self.session_id)
-        logger.info(f"已发送文本片段: {text[:50]}...")
+        if len(text) > 0:
+            await self._tts_send_text(self.ws, self.speaker, text, self.session_id)
+            logger.info(f"已发送文本片段: {text[:50]}...")
 
     def enable_reconnect(self):
         """启用自动重连"""

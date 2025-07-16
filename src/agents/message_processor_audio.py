@@ -120,18 +120,18 @@ class SeparateClientsClient(IAudioClient):
         self.last_asr_text = ""
         
         # 创建ASR客户端
-        self.asr_client = AsrClient(
-            uid=uid,
-            asr_start_callback=self._asr_start_callback,
-            asr_response_callback=self._asr_response_callback,
-            asr_end_callback=self._asr_end_callback
-        )
-        # self.asr_client = AuraDialogSession(
+        # self.asr_client = AsrClient(
         #     uid=uid,
         #     asr_start_callback=self._asr_start_callback,
         #     asr_response_callback=self._asr_response_callback,
         #     asr_end_callback=self._asr_end_callback
         # )
+        self.asr_client = AuraDialogSession(
+            uid=uid,
+            asr_start_callback=self._asr_start_callback,
+            asr_response_callback=self._asr_response_callback,
+            asr_end_callback=self._asr_end_callback
+        )
         
         # 创建TTS客户端
         self.tts_client = TtsClient(
@@ -153,8 +153,7 @@ class SeparateClientsClient(IAudioClient):
         await self.asr_client.process_audio_chunk(audio_chunk)
     
     async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
-        if text.strip():  # 只发送非空文本
-            await self.tts_client.send_text_chunk(text, start, end)
+        await self.tts_client.send_text_chunk(text, start, end)
     
     def is_connected(self) -> bool:
         return self.asr_client.is_connected() and self.tts_client.is_connected()
@@ -269,7 +268,7 @@ class MessageProcessorAudio:
                 try:
                     self.is_chat_start = True
                     await self.audio_client.send_text_chunk("", start=False, end=True)
-                    logger.info("TTS流式合成结束")
+                    logger.info("ChatEnded流式结束")
                 except Exception as e:
                     logger.error(f"结束TTS合成失败: {e}")
         elif message.get("event") == ServerEvent.MutteringResponse:

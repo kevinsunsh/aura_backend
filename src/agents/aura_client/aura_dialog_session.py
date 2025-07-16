@@ -610,7 +610,7 @@ class AuraDialogSession:
             logger.info(f"对话会话已清理: {self.session_id}")
             
         except Exception as e:
-            logger.error(f"DoubaoClient清理资源时出错: {e}")
+            logger.error(f"AuraDialogSession清理资源时出错: {e}")
 
     def print_latency_summary(self) -> None:
         """打印延迟统计摘要"""
