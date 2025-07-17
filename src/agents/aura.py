@@ -50,25 +50,24 @@ class AuraAgent:
     async def send_websocket_message(self, message: dict):
         """发送WebSocket消息，使用统一的协议格式"""
         try:
-            async with asyncio.timeout(5.0):  # 5秒超时
-                async with self.websocket_lock:
-                    if self.websocket_connection:
-                        try:
-                            # 使用统一的协议构造方法
-                            binary_data = self._construct_protocol_message(message)
+            async with self.websocket_lock:
+                if self.websocket_connection:
+                    try:
+                        # 使用统一的协议构造方法
+                        binary_data = self._construct_protocol_message(message)
+                        
+                        # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
+                        if hasattr(self.websocket_connection, 'send_bytes'):
+                            await self.websocket_connection.send_bytes(binary_data)
+                        else:
+                            await self.websocket_connection.send(binary_data)
                             
-                            # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
-                            if hasattr(self.websocket_connection, 'send_bytes'):
-                                await self.websocket_connection.send_bytes(binary_data)
-                            else:
-                                await self.websocket_connection.send(binary_data)
-                                
-                        except Exception as e:
-                            logger.error(f"发送消息失败: {str(e)}")
-                            # 标记连接为无效，但不在这里调用remove_websocket_connection避免死锁
-                            self.websocket_connection = None
+                    except Exception as e:
+                        logger.error(f"发送消息失败: {str(e)}")
+                        # 标记连接为无效，但不在这里调用remove_websocket_connection避免死锁
+                        self.websocket_connection = None
         except asyncio.TimeoutError:
-            logger.error("获取websocket_lock超时，可能存在死锁")
+            logger.error("send_websocket_message获取websocket_lock超时，可能存在死锁")
         except Exception as e:
             logger.error(f"发送WebSocket消息时出错: {e}")
 
@@ -123,12 +122,11 @@ class AuraAgent:
     async def set_websocket_connection(self, websocket):
         """设置WebSocket连接"""
         try:
-            async with asyncio.timeout(5.0):  # 5秒超时
-                async with self.websocket_lock:
-                    self.websocket_connection = websocket
-                    logger.info(f"用户已连接 WebSocket")
+            async with self.websocket_lock:
+                self.websocket_connection = websocket
+                logger.info(f"用户已连接 WebSocket")
         except asyncio.TimeoutError:
-            logger.error("获取websocket_lock超时，可能存在死锁")
+            logger.error("set_websocket_connection获取websocket_lock超时，可能存在死锁")
             # 强制设置连接
             self.websocket_connection = websocket
             logger.info(f"强制设置WebSocket连接")
@@ -141,13 +139,12 @@ class AuraAgent:
         """移除WebSocket连接"""
         # 先获取锁，移除WebSocket连接，添加超时防止死锁
         try:
-            async with asyncio.timeout(5.0):  # 5秒超时
-                async with self.websocket_lock:
-                    if self.websocket_connection:
-                        self.websocket_connection = None
-                        logger.info(f"用户已断开 WebSocket 连接")
+            async with self.websocket_lock:
+                if self.websocket_connection:
+                    self.websocket_connection = None
+                    logger.info(f"用户已断开 WebSocket 连接")
         except asyncio.TimeoutError:
-            logger.error("获取websocket_lock超时，可能存在死锁")
+            logger.error("remove_websocket_connection获取websocket_lock超时，可能存在死锁")
             # 强制重置连接
             self.websocket_connection = None
         except Exception as e:

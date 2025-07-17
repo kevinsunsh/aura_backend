@@ -260,17 +260,21 @@ class DialogSessionFactory:
         else:
             raise ValueError(f"不支持的客户端类型: {client_type}")
 
-def client_process(client_type, input_queue, output_queue, chat_id, user_id, should_interrupt_replying):
-    asyncio.run(client_main(client_type, input_queue, output_queue, chat_id, user_id, should_interrupt_replying))
+def client_process(client_type, input_queue, output_queue, chat_id, user_id):
+    asyncio.run(client_main(client_type, input_queue, output_queue, chat_id, user_id))
 
-async def client_main(client_type, input_queue, output_queue, chat_id, user_id, should_interrupt_replying):
+async def client_main(client_type, input_queue, output_queue, chat_id, user_id):
     # ALTSession 进程内详细实现
     if client_type == DialogSessionType.ALT_SESSION:
         # 状态变量
         is_chat_start = True
+        is_in_asr = False
+        is_in_chat = False
+        is_in_tts = False
         # 回调适配
         async def asr_start_callback():
-            should_interrupt_replying.value = True
+            nonlocal is_in_asr
+            is_in_asr = True
             await text_processor.user_input_interruption()
             output_queue.put({"event": ServerEvent.ASRInfo})
         async def asr_response_callback(asr_text, is_interim):
@@ -279,18 +283,42 @@ async def client_main(client_type, input_queue, output_queue, chat_id, user_id, 
                 "payload_msg": {"results": [{"text": asr_text, "is_interim": is_interim}]}
             })
         async def asr_end_callback(asr_text):
+            nonlocal is_in_asr
+            is_in_asr = False
             await text_processor.handle_text_message({"message": asr_text})
             output_queue.put({"event": ServerEvent.ASREnded})
         async def tts_start_callback(text):
+            nonlocal is_in_tts
+            is_in_tts = True
+            if is_in_asr:
+                logger.info(f"在发消息处打断流式响应，继续倾听")
+                return
             output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
         async def tts_response_callback(audio_data):
+            if is_in_asr:
+                logger.info(f"在发消息处打断流式响应，继续倾听")
+                return
             output_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": {"audio_data": audio_data}})
         async def tts_end_callback():
+            nonlocal is_in_tts
+            is_in_tts = False
+            if is_in_asr:
+                logger.info(f"在发消息处打断流式响应，继续倾听")
+                return
             output_queue.put({"event": ServerEvent.TTSSentenceEnd})
         async def chat_response_callback(text):
-            should_interrupt_replying.value = False
+            nonlocal is_in_chat
+            is_in_chat = True
+            if is_in_asr:
+                logger.info(f"在发消息处打断流式响应，继续倾听")
+                return
             output_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": text}})
         async def chat_end_callback(text):
+            nonlocal is_in_chat
+            is_in_chat = False
+            if is_in_asr:
+                logger.info(f"在发消息处打断流式响应，继续倾听")
+                return
             output_queue.put({"event": ServerEvent.ChatEnded, "payload_msg": {"content": text}})
         # 文本处理器回调
         async def text_processor_callback(message: Dict[str, Any]):
@@ -402,7 +430,6 @@ class MessageProcessorAudio:
         self.chat_id = chat_id
         self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
-        self.should_interrupt_replying = multiprocessing.Value('b', False)
         self.input_queues = {
             DialogSessionType.E2E_SESSION: multiprocessing.Queue(),
             DialogSessionType.ALT_SESSION: multiprocessing.Queue()
@@ -439,12 +466,13 @@ class MessageProcessorAudio:
         try:
             loop = asyncio.get_event_loop()
             while True:
+                # msg = await loop.run_in_executor(None, self.output_queues[DialogSessionType.E2E_SESSION].get)
+                # if msg.get("event") in [ServerEvent.ASRInfo, ServerEvent.ASRResponse, ServerEvent.ASREnded] or self.active_client == DialogSessionType.E2E_SESSION:
+                #     if self.websocket_send_callback:
+                #         await self.websocket_send_callback(msg)
+                #     continue
                 msg = await loop.run_in_executor(None, self.output_queues[self.active_client].get)
                 logger.debug(f"收到消息: {msg}")
-                if self.should_interrupt_replying.value:
-                    if msg.get("event") in [ServerEvent.ChatResponse, ServerEvent.ChatEnded, ServerEvent.TTSSentenceStart, ServerEvent.TTSSentenceEnd, ServerEvent.TTSResponse]:
-                        logger.info(f"在发消息处打断流式响应，继续倾听")
-                        continue
                 if self.websocket_send_callback:
                     await self.websocket_send_callback(msg)
         except asyncio.CancelledError:
@@ -456,7 +484,7 @@ class MessageProcessorAudio:
         for t in SESSION_TYPES:
             p = multiprocessing.Process(
                 target=client_process,
-                args=(t, self.input_queues[t], self.output_queues[t], self.chat_id, self.user_id, self.should_interrupt_replying)
+                args=(t, self.input_queues[t], self.output_queues[t], self.chat_id, self.user_id)
             )
             p.start()
             self.processes[t] = p
