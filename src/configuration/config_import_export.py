@@ -16,12 +16,9 @@ import argparse
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-# 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from agents.configuration.config_manager import DatabaseConfigManager
-from agents.configuration.config_loader import DatabaseConfigLoader
-from agents.configuration.config import get_db_conn_string
+from configuration.config_manager import DatabaseConfigManager
+from configuration.config_loader import DatabaseConfigLoader
+from configuration.config import get_db_conn_string
 
 class ConfigImportExport:
     """配置导入导出工具"""
@@ -73,7 +70,7 @@ class ConfigImportExport:
                     # 配置对象是配置类实例，需要从数据库模型获取元数据
                     config_id = f"{category}_config"
                     with self.config_manager.db.get_session() as session:
-                        from agents.configuration.config_manager import ConfigurationModel
+                        from configuration.config_manager import ConfigurationModel
                         config_model = session.query(ConfigurationModel).filter(
                             ConfigurationModel.id == config_id,
                             ConfigurationModel.environment == environment
@@ -251,7 +248,7 @@ class ConfigImportExport:
                 # 从数据库模型获取元数据
                 config_id = f"{category}_config"
                 with self.config_manager.db.get_session() as session:
-                    from agents.configuration.config_manager import ConfigurationModel
+                    from configuration.config_manager import ConfigurationModel
                     config_model = session.query(ConfigurationModel).filter(
                         ConfigurationModel.id == config_id,
                         ConfigurationModel.environment == environment

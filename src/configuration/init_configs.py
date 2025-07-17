@@ -12,9 +12,9 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
 import time
-from agents.configuration.config_manager import DatabaseConfigManager
-from agents.configuration.config import get_db_conn_string
-from agents.configuration.official_configs import (
+from configuration.config_manager import DatabaseConfigManager
+from configuration.config import get_db_conn_string
+from configuration.official_configs import (
     MemoryConfig, ChatConfig, BotConfig, PersonalityConfig, IdentityConfig,
     RelationshipConfig, MessageReceiveConfig, NormalChatConfig, FocusChatConfig,
     EmojiConfig, ExpressionConfig, MoodConfig, KeywordReactionConfig,

@@ -8,13 +8,9 @@
 
 import sys
 import os
-# 自动添加src到sys.path，保证包内导入正常
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src')))
-
-import os
 from agents.aura_memory.database.database import Database
-from agents.configuration.database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
-from agents.configuration.config import get_db_conn_string
+from configuration.database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
+from configuration.config import get_db_conn_string
 
 def recreate_tables():
     """重新创建数据库表"""

@@ -9,15 +9,15 @@
 import sys
 import os
 # 自动添加src到sys.path，保证包内导入正常
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src')))
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
 
 import json
 from pathlib import Path
 
 # 添加项目根目录到路径
-# sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
 
-from agents.configuration.config_import_export import ConfigImportExport
+from configuration.config_import_export import ConfigImportExport
 
 def quick_test():
     """快速测试配置导入导出功能"""
@@ -47,10 +47,10 @@ def quick_test():
         # print("\n👀 3. 预览内存配置...")
         # tool.preview_config("memory", environment="production")
         tool.preview_config("model", environment="test")
-        return True
+        # return True
         # 4. 从文件重新导入（测试环境）
         # print(f"\n📥 4. 从文件导入配置到测试环境...")
-        # success = tool.import_from_file(test_file, environment="test", overwrite=True)
+        success = tool.import_from_file(test_file, environment="test", overwrite=True)
         
         # if success:
         #     print("✓ 导入成功")

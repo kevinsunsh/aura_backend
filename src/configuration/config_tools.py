@@ -11,11 +11,11 @@ import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy import text
-from agents.configuration.database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
+from configuration.database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
 
 try:
-    from agents.configuration.config_loader import DatabaseConfigLoader, load_config
-    from agents.configuration.config import get_db_conn_string
+    from configuration.config_loader import DatabaseConfigLoader, load_config
+    from configuration.config import get_db_conn_string
     from agents.aura_memory.database.database import Database
 except ImportError as e:
     print(f"导入错误: {e}")

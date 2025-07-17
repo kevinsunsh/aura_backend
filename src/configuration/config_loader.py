@@ -359,10 +359,12 @@ class DatabaseConfigLoader:
                         "api_base": "https://ark.cn-beijing.volces.com/api/v3"
                     },
                     pfc_action_planner={
+                        "model": "deepseek-r1",
                         "api_key": "dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
                         "api_base": "https://ark.cn-beijing.volces.com/api/v3"
                     },
                     pfc_chat={
+                        "model": "deepseek-v3-250324",
                         "api_key": "dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
                         "api_base": "https://ark.cn-beijing.volces.com/api/v3"
                     },
