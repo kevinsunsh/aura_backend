@@ -1,4 +1,4 @@
-import os
+import multiprocessing
 import asyncio
 import logging
 import uuid
@@ -255,167 +255,197 @@ class DialogSessionFactory:
         else:
             raise ValueError(f"不支持的客户端类型: {client_type}")
 
-class MessageProcessorAudio:
-    """音频消息处理器，负责处理音频消息并启动ASR相关任务（支持双client并发）"""
-    
-    def __init__(self, 
-                 chat_id: str,
-                 user_id: str,
-                 websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
-        self.websocket_send_callback = websocket_send_callback
+def client_process(client_type, input_queue, output_queue, chat_id, user_id):
+    asyncio.run(client_main(client_type, input_queue, output_queue, chat_id, user_id))
 
-        # 支持双client
-        self.audio_clients = {DialogSessionType.E2E_SESSION: None, DialogSessionType.ALT_SESSION: None}
-        
+async def client_main(client_type, input_queue, output_queue, chat_id, user_id):
+    # ALTSession 进程内详细实现
+    if client_type == DialogSessionType.ALT_SESSION:
+        # 状态变量
+        is_chat_start = True
+        # 回调适配
+        async def asr_start_callback():
+            await text_processor.user_input_interruption()
+            output_queue.put({"event": ServerEvent.ASRInfo})
+        async def asr_response_callback(asr_text, is_interim):
+            output_queue.put({
+                "event": ServerEvent.ASRResponse,
+                "payload_msg": {"results": [{"text": asr_text, "is_interim": is_interim}]}
+            })
+        async def asr_end_callback(asr_text):
+            await text_processor.handle_text_message({"message": asr_text})
+            output_queue.put({"event": ServerEvent.ASREnded})
+        async def tts_start_callback(text):
+            output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
+        async def tts_response_callback(audio_data):
+            output_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": {"audio_data": audio_data}})
+        async def tts_end_callback():
+            output_queue.put({"event": ServerEvent.TTSSentenceEnd})
+        async def chat_response_callback(text):
+            output_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": text}})
+        async def chat_end_callback(text):
+            output_queue.put({"event": ServerEvent.ChatEnded, "payload_msg": {"content": text}})
+        # 文本处理器回调
+        async def text_processor_callback(message: Dict[str, Any]):
+            nonlocal is_chat_start
+            if message.get("event") == ServerEvent.ChatResponse:
+                chunk_content = message.get("payload_msg", {}).get("content", "")
+                if chunk_content:
+                    try:
+                        if is_chat_start:
+                            is_chat_start = False
+                            await tts_client.send_text_chunk(chunk_content, start=True, end=False)
+                        else:
+                            await tts_client.send_text_chunk(chunk_content)
+                    except Exception as e:
+                        logger.error(f"发送TTS文本片段失败: {e}")
+                await chat_response_callback(chunk_content)
+            elif message.get("event") == ServerEvent.ChatEnded:
+                try:
+                    is_chat_start = True
+                    await tts_client.send_text_chunk("", start=False, end=True)
+                except Exception as e:
+                    logger.error(f"结束TTS合成失败: {e}")
+                await chat_end_callback("")
+        # 组件初始化
+        asr_client = AuraDialogSession(
+            uid=user_id,
+            asr_start_callback=asr_start_callback,
+            asr_response_callback=asr_response_callback,
+            asr_end_callback=asr_end_callback
+        )
+        text_processor = MessageProcessorText(
+            chat_id=chat_id,
+            user_id=user_id,
+            websocket_send_callback=text_processor_callback
+        )
+        tts_client = TtsClient(
+            uid=user_id,
+            tts_start_callback=tts_start_callback,
+            tts_response_callback=tts_response_callback,
+            tts_end_callback=tts_end_callback
+        )
+        # 启动
+        await asr_client.start()
+        await text_processor.start()
+        await tts_client.start()
+        # 主循环
+        while True:
+            msg = input_queue.get()
+            if isinstance(msg, dict) and msg.get("type") == "stop":
+                break
+            elif isinstance(msg, dict) and msg.get("type") == "audio":
+                await asr_client.process_audio_chunk(msg["data"])
+            elif isinstance(msg, dict) and msg.get("type") == "text":
+                await tts_client.send_text_chunk(msg["data"])
+        # 清理
+        await asr_client.cleanup()
+        await text_processor.cleanup()
+        await tts_client.cleanup()
+    # E2E_SESSION 逻辑保持不变
+    elif client_type == DialogSessionType.E2E_SESSION:
+        def asr_start_callback():
+            output_queue.put({"event": ServerEvent.ASRInfo})
+        def asr_response_callback(asr_text, is_interim):
+            output_queue.put({
+                "event": ServerEvent.ASRResponse,
+                "payload_msg": {"results": [{"text": asr_text, "is_interim": is_interim}]}
+            })
+        def asr_end_callback(asr_text):
+            output_queue.put({"event": ServerEvent.ASREnded})
+        def tts_start_callback(text):
+            output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
+        def tts_response_callback(audio_data):
+            output_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": {"audio_data": audio_data}})
+        def tts_end_callback():
+            output_queue.put({"event": ServerEvent.TTSSentenceEnd})
+        def chat_response_callback(text):
+            output_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": text}})
+        def chat_end_callback(text):
+            output_queue.put({"event": ServerEvent.ChatEnded, "payload_msg": {"content": text}})
+        client = DialogSession(
+            uid=user_id,
+            asr_start_callback=asr_start_callback,
+            asr_response_callback=asr_response_callback,
+            asr_end_callback=asr_end_callback,
+            tts_start_callback=tts_start_callback,
+            tts_response_callback=tts_response_callback,
+            tts_end_callback=tts_end_callback,
+            chat_response_callback=chat_response_callback,
+            chat_end_callback=chat_end_callback
+        )
+        await client.start()
+        while True:
+            msg = input_queue.get()
+            if isinstance(msg, dict) and msg.get("type") == "stop":
+                break
+            elif isinstance(msg, dict) and msg.get("type") == "audio":
+                await client.process_audio_chunk(msg["data"])
+            elif isinstance(msg, dict) and msg.get("type") == "text":
+                pass
+        await client.cleanup()
+
+class MessageProcessorAudio:
+    """
+    多进程版音频消息处理器
+    """
+    def __init__(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
         self.chat_id = chat_id
         self.user_id = user_id
-        
-        # 缓存结构
-        self.message_cache = {DialogSessionType.E2E_SESSION: asyncio.Queue(), DialogSessionType.ALT_SESSION: asyncio.Queue()}
-        self.active_client = None
-        self.active_client_lock = asyncio.Lock()
-        self.check_response_task = None
-        self.send_response_task = None
-    
-    async def start(self):
-        # 创建两个音频客户端
-        for type in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-            self.audio_clients[type] = DialogSessionFactory.create_client(
-                client_type=type,
-                chat_id=self.chat_id,
-                user_id=self.user_id,
-                asr_start_callback=lambda type=type: self.asr_start_callback(type),
-                asr_response_callback=lambda asr_text, is_interim, type=type: self.asr_response_callback(asr_text, is_interim, type),
-                asr_end_callback=lambda asr_text, type=type: self.asr_end_callback(asr_text, type),
-                tts_start_callback=lambda text, type=type: self.tts_start_callback(text, type),
-                tts_response_callback=lambda audio_data, type=type: self.tts_response_callback(audio_data, type),
-                tts_end_callback=lambda type=type: self.tts_end_callback(type),
-                chat_response_callback=lambda text, type=type: self.chat_response_callback(text, type),
-                chat_end_callback=lambda text, type=type: self.chat_end_callback(text, type)
+        self.websocket_send_callback = websocket_send_callback
+
+        self.input_queues = {
+            DialogSessionType.E2E_SESSION: multiprocessing.Queue(),
+            DialogSessionType.ALT_SESSION: multiprocessing.Queue()
+        }
+        self.output_queues = {
+            DialogSessionType.E2E_SESSION: multiprocessing.Queue(),
+            DialogSessionType.ALT_SESSION: multiprocessing.Queue()
+        }
+        self.processes = {}
+
+    def start(self):
+        for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
+            p = multiprocessing.Process(
+                target=client_process,
+                args=(t, self.input_queues[t], self.output_queues[t], self.chat_id, self.user_id)
             )
-            await self.audio_clients[type].start()
-        self.send_response_task = asyncio.create_task(self.send_response())
-    
-    async def asr_start_callback(self, type: DialogSessionType) -> None:
-        if type == DialogSessionType.E2E_SESSION:
-            if self.websocket_send_callback:
-                await self.websocket_send_callback({"event": ServerEvent.ASRInfo})
-    
-    async def asr_response_callback(self, asr_text: str, is_interim: bool, type: DialogSessionType) -> None:
-        if type == DialogSessionType.E2E_SESSION:
-            if self.websocket_send_callback:
-                await self.websocket_send_callback({
-                    "event": ServerEvent.ASRResponse,
-                    "payload_msg": {
-                        "results":[{"text": asr_text, "is_interim": is_interim}]
-                    }
-                })
-    
-    async def check_response(self, asr_text: str) -> None:
+            p.start()
+            self.processes[t] = p
+
+    def send_to_client(self, client_type, msg):
+        self.input_queues[client_type].put(msg)
+
+    def get_from_client(self, client_type, timeout=0.1):
         try:
-            # chat_model = get_chat_model_by_type("pfc_action_planner")
-            # prompt = CHECK_RESPONSE_PROMPT.format(
-            #     user_input=asr_text
-            # )
-            # response = await chat_model.ainvoke([
-            #     SystemMessage(content=prompt)
-            # ],
-            # extra_body={"thinking": {"type": "disabled"}})
-            # if "True" in response.content:
-            if True:
-                async with self.active_client_lock:
-                    self.active_client = DialogSessionType.E2E_SESSION
-                # 清空缓存
-                while not self.message_cache[DialogSessionType.ALT_SESSION].empty():
-                    try:
-                        self.message_cache[DialogSessionType.ALT_SESSION].get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-            else:
-                async with self.active_client_lock:
-                    self.active_client = DialogSessionType.ALT_SESSION
-                # 清空缓存
-                while not self.message_cache[DialogSessionType.E2E_SESSION].empty():
-                    try:
-                        self.message_cache[DialogSessionType.E2E_SESSION].get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"检查响应失败: {e}")
-    
-    async def send_response(self) -> None:
-        try:
-            while True:
-                if self.active_client is not None:
-                    if self.websocket_send_callback:
-                        message = await self.message_cache[self.active_client].get()
-                        await self.websocket_send_callback(message)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"发送响应失败: {e}")
-    
-    async def asr_end_callback(self, asr_text: str, type: DialogSessionType) -> None:
-        if type == DialogSessionType.E2E_SESSION:
-            if self.websocket_send_callback:
-                await self.websocket_send_callback({"event": ServerEvent.ASREnded})
-        if type == DialogSessionType.ALT_SESSION:
-            if self.check_response_task:
-                self.check_response_task.cancel()
-            self.check_response_task = asyncio.create_task(self.check_response(asr_text))
-    
-    async def chat_response_callback(self, text: str, type: DialogSessionType) -> None:
-        if self.active_client == type or self.active_client is None:
-            self.message_cache[type].put_nowait({"event": ServerEvent.ChatResponse, "payload_msg": {"content": text}})
-    
-    async def chat_end_callback(self, text: str, type: DialogSessionType) -> None:
-        if self.active_client == type or self.active_client is None:
-            self.message_cache[type].put_nowait({"event": ServerEvent.ChatEnded, "payload_msg": {"content": text}})
-    
-    async def tts_start_callback(self, text: str, type: DialogSessionType) -> None:
-        if self.active_client == type or self.active_client is None:
-            self.message_cache[type].put_nowait({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
-    
-    async def tts_response_callback(self, audio_data: bytes, type: DialogSessionType) -> None:
-        if self.active_client == type or self.active_client is None:
-            self.message_cache[type].put_nowait({"event": ServerEvent.TTSResponse, "payload_msg": {"audio_data": audio_data}})
-    
-    async def tts_end_callback(self, type: DialogSessionType) -> None:
-        if self.active_client == type or self.active_client is None:
-            self.message_cache[type].put_nowait({"event": ServerEvent.TTSSentenceEnd})
-    
-    async def handle_message(self, message_data: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            if "payload_msg" in message_data and message_data["payload_msg"]:
-                payload_msg = message_data["payload_msg"]
-                if message_data.get("event") == ClientEvent.SayHello:
-                    if isinstance(payload_msg, dict):
-                        text_data = payload_msg.get("content", "")
-                        for type in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-                            await self.audio_clients[type].process_text_input(text_data)
-                elif message_data.get("event") == ClientEvent.TaskRequest:
-                    if isinstance(payload_msg, bytes):
-                        for type in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-                            await self.audio_clients[type].process_audio_input(payload_msg)
-            return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
-        except Exception as e:
-            logger.error(f"启动音频消息处理任务失败: {e}")
-            return {"success": False, "error": f"启动音频处理任务失败: {str(e)}"}
-    
-    async def cleanup(self) -> None:
-        for type in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-            if self.audio_clients[type]:
-                try:
-                    await self.audio_clients[type].cleanup()
-                except Exception as e:
-                    logger.warning(f"清理音频客户端时出错: {e}")
-        self.audio_clients = {DialogSessionType.E2E_SESSION: None, DialogSessionType.ALT_SESSION: None}
-        self.message_cache = {DialogSessionType.E2E_SESSION: asyncio.Queue(), DialogSessionType.ALT_SESSION: asyncio.Queue()}
-        if self.send_response_task:
-            self.send_response_task.cancel()
-        self.send_response_task = None
-        if self.check_response_task:
-            self.check_response_task.cancel()
-        self.check_response_task = None
+            return self.output_queues[client_type].get(timeout=timeout)
+        except Exception:
+            return None
+
+    def cleanup(self):
+        for t in self.processes:
+            self.input_queues[t].put("STOP")
+            self.processes[t].join()
+
+    def handle_message(self, message_data: Dict[str, Any]):
+        """
+        分发消息到两个 client 进程
+        """
+        if "payload_msg" in message_data and message_data["payload_msg"]:
+            payload_msg = message_data["payload_msg"]
+            if message_data.get("event") == "SayHello":
+                for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
+                    self.send_to_client(t, payload_msg.get("content", ""))
+            elif message_data.get("event") == "TaskRequest":
+                for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
+                    self.send_to_client(t, payload_msg)
+        return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
+
+    def poll_clients(self):
+        """
+        轮询两个 client 的输出队列，有消息就发给 websocket
+        """
+        for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
+            msg = self.get_from_client(t)
+            if msg and self.websocket_send_callback:
+                self.websocket_send_callback(msg)
