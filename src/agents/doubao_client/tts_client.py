@@ -307,7 +307,8 @@ class TtsClient:
                 "speaker": speaker,
                 "audio_params": {
                     "format": self.audio_format,
-                    "sample_rate": self.audio_sample_rate
+                    "sample_rate": self.audio_sample_rate,
+                    "channel": 1
                 }
             }
         }))

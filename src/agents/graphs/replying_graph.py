@@ -124,7 +124,6 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
         )
         writer = get_stream_writer()
         # 生成立即回复
-        final_response = ""
         quick_response_point_id = start_performance_point("快速响应")
         async for chunk in chat_model.astream([
             SystemMessage(content=prompt)
@@ -135,7 +134,8 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
                 if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
                     logger.info(f"打断流式响应，继续倾听")  
                     break
-                final_response += chunk.content
+                if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.RUNNING:
+                    await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.STOPPED)
                 writer({"content": chunk.content})
         ChatStreamManager.get_instance().update_chat_stream_checked_at(state["chat_id"])
         # if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.STOPPED:
