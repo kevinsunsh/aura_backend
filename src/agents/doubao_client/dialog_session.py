@@ -30,6 +30,7 @@ class DialogSession:
                  tts_start_callback: Callable[[str], None] = None,
                  tts_response_callback: Callable[[bytes], None] = None,
                  tts_end_callback: Callable[[], None] = None,
+                 chat_response_callback: Callable[[str], None] = None,
                  chat_end_callback: Callable[[str], None] = None,
                  ):
         self.uid = uid or str(uuid.uuid4())
@@ -297,16 +298,11 @@ class DialogSession:
             await self._on_session_failed(payload_msg)
         # TTS类事件 (350-359)
         elif event_id == ServerEvent.TTSSentenceStart:
-            # if payload_msg["tts_type"] in ["chat_tts_text", "default"]:
-            if payload_msg["tts_type"] in ["chat_tts_text"]:
-                await self._on_tts_sentence_start(payload_msg)
-                self.is_tts_sentence_start = True
+            await self._on_tts_sentence_start(payload_msg)
         elif event_id == ServerEvent.TTSSentenceEnd:
             await self._on_tts_sentence_end(payload_msg)
-            self.is_tts_sentence_start = False
         elif event_id == ServerEvent.TTSResponse:
-            if self.is_tts_sentence_start:
-                await self._on_tts_response(payload_msg)
+            await self._on_tts_response(payload_msg)
         elif event_id == ServerEvent.TTSEnded:
             await self._on_tts_ended(payload_msg)
         # ASR类事件 (450-459)

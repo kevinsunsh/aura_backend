@@ -1,7 +1,7 @@
 import time
 import functools
 import threading
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Callable, Any, Tuple
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -10,6 +10,7 @@ import logging
 import atexit
 import sys
 import random
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +251,31 @@ def performance_point_context(name: str, metadata: Optional[Dict[str, Any]] = No
     """
     with _global_monitor.point(name, metadata) as point_id:
         yield point_id
+
+async def safe_call(func: Callable | None, *args, **kwargs) -> Tuple[Any, Optional[Exception]]:
+    """
+    安全调用传入的函数func，支持同步和异步函数，捕获异常并返回结果或异常信息。
+
+    Args:
+        func: 要调用的函数（可以是同步或异步）
+        *args: 位置参数
+        **kwargs: 关键字参数
+
+    Returns:
+        (result, error): 
+            result: 函数返回值（如果调用成功）
+            error: 异常对象（如果发生异常，否则为None）
+    """
+    try:
+        if func is None:
+            return None, None
+        if asyncio.iscoroutinefunction(func):
+            result = await func(*args, **kwargs)
+        else:
+            result = func(*args, **kwargs)
+        return result, None
+    except Exception as e:
+        return None, e
 
 
 # 进程退出时自动输出性能报告

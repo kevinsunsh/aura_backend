@@ -93,8 +93,8 @@ class AudioDeviceManager:
     """音频设备管理类，处理音频输入输出，支持耳机检测和切换"""
 
     def __init__(self, input_config: AudioConfig = None, output_config: AudioConfig = None):
-        self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=3200, bit_size=pyaudio.paInt16, channels=1)  # 麦克风配置
-        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=3200, bit_size=pyaudio.paInt32)  # 播放配置
+        self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=6400, bit_size=pyaudio.paInt16, channels=1)  # 麦克风配置
+        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=6400, bit_size=pyaudio.paFloat32)  # 播放配置
         self.pyaudio = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
