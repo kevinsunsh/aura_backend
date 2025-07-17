@@ -63,7 +63,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
 from api_protocol.constant import *
 from api_protocol.client_protocol import client_generate_request, client_parse_response
 
-async def send_audio_task_request(websocket, audio: bytes, session_id: str = "test_user_123") -> None:
+async def send_audio_task_request(websocket, audio: bytes, session_id: str = "test_user_123444") -> None:
     """发送音频数据，参考RealtimeDialogClient.task_request的简洁方式"""
     task_request = client_generate_request(
         payload_data=audio,
@@ -92,9 +92,9 @@ class AudioConfig:
 class AudioDeviceManager:
     """音频设备管理类，处理音频输入输出，支持耳机检测和切换"""
 
-    def __init__(self, input_config: AudioConfig = None, output_config: AudioConfig = None):
-        self.input_config = input_config or AudioConfig(sample_rate=16000, chunk=6400, bit_size=pyaudio.paInt16, channels=1)  # 麦克风配置
-        self.output_config = output_config or AudioConfig(sample_rate=24000, chunk=6400, bit_size=pyaudio.paFloat32)  # 播放配置
+    def __init__(self, input_config: AudioConfig, output_config: AudioConfig):
+        self.input_config = input_config
+        self.output_config = output_config
         self.pyaudio = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
@@ -410,9 +410,9 @@ class WebSocketTestSession:
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
-            input_config=AudioConfig(sample_rate=16000, channels=1, chunk=800),
-            # output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
+            input_config=AudioConfig(sample_rate=16000, channels=1, chunk=3200, bit_size=pyaudio.paInt16),
             output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
+            # output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
         )
         # 状态控制
         self.is_running = True
@@ -843,7 +843,7 @@ class WebSocketTestSession:
                     )
                     
                     # 🔥 使用简洁的task_request方式发送音频数据
-                    await send_audio_task_request(self.websocket, audio_chunk, "test_user_123")
+                    await send_audio_task_request(self.websocket, audio_chunk, "test_user_123444")
                     logger.debug(f"📤 发送音频块: {len(audio_chunk)} 字节")
                     
                     await asyncio.sleep(0.001)  # 1ms极低延迟
@@ -901,16 +901,16 @@ class WebSocketTestSession:
             elif action == "end_connection":
                 event_id = 2
             elif action == "start_session":
-                session_id = "test_user_123"
+                session_id = "test_user_123444"
                 payload_data = {
                     "chat_info": {
-                        "chat_id": "test_user_123",
-                        "user_id": "test_user_123"
+                        "chat_id": "test_user_123444",
+                        "user_id": "test_user_123444"
                     }
                 }
                 event_id = 100
             elif action == "end_session":
-                session_id = "test_user_123"
+                session_id = "test_user_123444"
                 event_id = 102
             else:
                 event_id = 1001  # 默认事件ID
@@ -1267,7 +1267,7 @@ class WebSocketTestSession:
                 
                 try:
                     # 🔥 使用简洁的task_request方式发送音频数据
-                    await send_audio_task_request(self.websocket, chunk, "test_user_123")
+                    await send_audio_task_request(self.websocket, chunk, "test_user_123444")
                     logger.debug(f"📤 发送音频文件块: {len(chunk)} 字节")
                     
                     # 控制发送频率，模拟真实音频流
@@ -1321,7 +1321,7 @@ class WebSocketTestSession:
                 
                 try:
                     # 🔥 使用简洁的task_request方式发送音频数据
-                    await send_audio_task_request(self.websocket, chunk, "test_user_123")
+                    await send_audio_task_request(self.websocket, chunk, "test_user_123444")
                     logger.debug(f"📤 发送静音音频块: {len(chunk)} 字节")
                     
                     # 控制发送频率，模拟真实音频流

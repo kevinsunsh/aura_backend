@@ -506,10 +506,8 @@ class DialogSession:
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("服务器连接已关闭，尝试重连...")
                     # 不立即退出，让重连逻辑处理
-                    reconnect_success = await self.check_connection_and_reconnect()
-                    if not reconnect_success and not self.is_running:
-                        logger.error("重连失败且系统已停止运行，退出接收循环")
-                        break
+                    self._trigger_reconnect()
+                    break
                 except Exception as e:
                     error_msg = str(e).lower()
                     logger.warning(f"服务器接收响应失败: {e}")
@@ -522,13 +520,8 @@ class DialogSession:
                     
                     # 如果是连接相关错误，尝试重连
                     if "connection" in error_msg or "websocket" in error_msg:
-                        reconnect_success = await self.check_connection_and_reconnect()
-                        if not reconnect_success and not self.is_running:
-                            logger.error("重连失败且系统已停止运行，退出接收循环")
-                            break
-                
-                await asyncio.sleep(0.01)  # 避免CPU过度使用
-                
+                        self._trigger_reconnect()
+                        break
         except asyncio.CancelledError:
             logger.info("服务器接收任务已取消")
         except Exception as e:
@@ -536,15 +529,7 @@ class DialogSession:
             # 只有在出现严重错误时才停止运行
             if not self.is_reconnecting:
                 self.is_running = False
-    async def refresh_session(self) -> None:
-        """刷新会话"""
-        await self.client.finish_session()
-        if not await self.wait_for_server_response(ServerEvent.SessionFinished):
-            raise Exception("重连时会话结束失败")
-        await self.client.start_session()
-        if not await self.wait_for_server_response(ServerEvent.SessionStarted):
-            raise Exception("重连时会话握手失败")
-
+    
     async def process_audio_input(self, audio_data: bytes) -> None:
         """处理音频输入"""
         try:
@@ -780,7 +765,7 @@ class DialogSession:
             self.server_receive_task = asyncio.create_task(self._server_receive_loop())
             
         except Exception as e:
-            logger.error(f"对话会话错误: {e}")
+            logger.error(f"对话会话错误xxxxxx: {e}")
 
     async def cleanup(self) -> None:
         """清理资源"""

@@ -191,8 +191,8 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
                     logger.info(f"打断流式响应，继续倾听")  
                     break
                 # 停止其他说话任务
-                if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.RUNNING:
-                    await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.STOPPED)
+                # if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.RUNNING:
+                #     await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.STOPPED)
                 if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.RUNNING:
                     await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.STOPPED)
                 final_response += chunk.content

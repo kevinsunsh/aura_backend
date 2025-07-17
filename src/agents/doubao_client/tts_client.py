@@ -393,7 +393,7 @@ class TtsClient:
         # 开始连接
         await self._tts_start_connection(self.ws)
         res = self._parse_tts_response(await self.ws.recv())
-        logger.debug(f"TTS连接响应: event={res.optional.event}")
+        logger.info(f"TTS连接响应: event={res.optional.event}")
         
         if res.optional.event != EVENT_ConnectionStarted:
             raise RuntimeError("TTS连接失败")
@@ -404,7 +404,7 @@ class TtsClient:
         self.session_id = str(uuid.uuid4()).replace('-', '')
         await self._tts_start_session(self.ws, self.speaker, self.session_id)
         res = self._parse_tts_response(await self.ws.recv())
-        logger.debug(f"TTS会话响应: event={res.optional.event}")
+        logger.info(f"TTS会话响应: event={res.optional.event}")
         if res.optional.event != EVENT_SessionStarted:
             raise RuntimeError('连接TTS会话启动失败')
         
@@ -428,7 +428,7 @@ class TtsClient:
                 except Exception as e:
                     logger.error(f"TTS重连回调执行失败: {e}")
         
-        logger.debug("TTS连接和会话建立成功")
+        logger.info("TTS连接和会话建立成功")
         
         # 启动接收和发送任务
         self._receive_task = asyncio.create_task(self._receive_loop())

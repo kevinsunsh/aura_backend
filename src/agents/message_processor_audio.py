@@ -22,6 +22,7 @@ from agents.aura_memory.message_store import MessageStore, Message
 from agents.prompts.check_response_prompt import CHECK_RESPONSE_PROMPT
 from configuration.config import get_chat_model_by_type
 from langchain_core.messages import SystemMessage
+from .task_manager import TaskManager, TaskType, TaskStateType
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,10 @@ class DialogSessionType(Enum):
     """音频客户端类型枚举"""
     E2E_SESSION = "e2e_session"  # 端到端语音对话
     ALT_SESSION = "alt_session"  # 集联语音对话
+
+# SESSION_TYPES = [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]
+# SESSION_TYPES = [DialogSessionType.E2E_SESSION]
+SESSION_TYPES = [DialogSessionType.ALT_SESSION]
 
 class IDialogSession(ABC):
     """对话会话抽象接口"""
@@ -255,16 +260,17 @@ class DialogSessionFactory:
         else:
             raise ValueError(f"不支持的客户端类型: {client_type}")
 
-def client_process(client_type, input_queue, output_queue, chat_id, user_id):
-    asyncio.run(client_main(client_type, input_queue, output_queue, chat_id, user_id))
+def client_process(client_type, input_queue, output_queue, chat_id, user_id, should_interrupt_replying):
+    asyncio.run(client_main(client_type, input_queue, output_queue, chat_id, user_id, should_interrupt_replying))
 
-async def client_main(client_type, input_queue, output_queue, chat_id, user_id):
+async def client_main(client_type, input_queue, output_queue, chat_id, user_id, should_interrupt_replying):
     # ALTSession 进程内详细实现
     if client_type == DialogSessionType.ALT_SESSION:
         # 状态变量
         is_chat_start = True
         # 回调适配
         async def asr_start_callback():
+            should_interrupt_replying.value = True
             await text_processor.user_input_interruption()
             output_queue.put({"event": ServerEvent.ASRInfo})
         async def asr_response_callback(asr_text, is_interim):
@@ -282,6 +288,7 @@ async def client_main(client_type, input_queue, output_queue, chat_id, user_id):
         async def tts_end_callback():
             output_queue.put({"event": ServerEvent.TTSSentenceEnd})
         async def chat_response_callback(text):
+            should_interrupt_replying.value = False
             output_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": text}})
         async def chat_end_callback(text):
             output_queue.put({"event": ServerEvent.ChatEnded, "payload_msg": {"content": text}})
@@ -330,8 +337,9 @@ async def client_main(client_type, input_queue, output_queue, chat_id, user_id):
         await text_processor.start()
         await tts_client.start()
         # 主循环
+        loop = asyncio.get_event_loop()
         while True:
-            msg = input_queue.get()
+            msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "stop":
                 break
             elif isinstance(msg, dict) and msg.get("type") == "audio":
@@ -375,8 +383,9 @@ async def client_main(client_type, input_queue, output_queue, chat_id, user_id):
             chat_end_callback=chat_end_callback
         )
         await client.start()
+        loop = asyncio.get_event_loop()
         while True:
-            msg = input_queue.get()
+            msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "stop":
                 break
             elif isinstance(msg, dict) and msg.get("type") == "audio":
@@ -393,7 +402,7 @@ class MessageProcessorAudio:
         self.chat_id = chat_id
         self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
-
+        self.should_interrupt_replying = multiprocessing.Value('b', False)
         self.input_queues = {
             DialogSessionType.E2E_SESSION: multiprocessing.Queue(),
             DialogSessionType.ALT_SESSION: multiprocessing.Queue()
@@ -403,49 +412,57 @@ class MessageProcessorAudio:
             DialogSessionType.ALT_SESSION: multiprocessing.Queue()
         }
         self.processes = {}
-
-    def start(self):
-        for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-            p = multiprocessing.Process(
-                target=client_process,
-                args=(t, self.input_queues[t], self.output_queues[t], self.chat_id, self.user_id)
-            )
-            p.start()
-            self.processes[t] = p
-
+        self.send_message_task = None
+        self.active_client = DialogSessionType.ALT_SESSION
+    
     def send_to_client(self, client_type, msg):
         self.input_queues[client_type].put(msg)
-
-    def get_from_client(self, client_type, timeout=0.1):
-        try:
-            return self.output_queues[client_type].get(timeout=timeout)
-        except Exception:
-            return None
-
-    def cleanup(self):
-        for t in self.processes:
-            self.input_queues[t].put("STOP")
-            self.processes[t].join()
-
-    def handle_message(self, message_data: Dict[str, Any]):
+    
+    async def handle_message(self, message_data: Dict[str, Any]):
         """
         分发消息到两个 client 进程
         """
         if "payload_msg" in message_data and message_data["payload_msg"]:
             payload_msg = message_data["payload_msg"]
-            if message_data.get("event") == "SayHello":
-                for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-                    self.send_to_client(t, payload_msg.get("content", ""))
-            elif message_data.get("event") == "TaskRequest":
-                for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-                    self.send_to_client(t, payload_msg)
+            if message_data.get("event") == ClientEvent.SayHello:
+                for t in SESSION_TYPES:
+                    self.send_to_client(t, {"type": "text", "data": payload_msg.get("content", "")})
+            elif message_data.get("event") == ClientEvent.TaskRequest:
+                for t in SESSION_TYPES:
+                    self.send_to_client(t, {"type": "audio", "data": payload_msg})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
 
-    def poll_clients(self):
+    async def send_message(self):
         """
         轮询两个 client 的输出队列，有消息就发给 websocket
         """
-        for t in [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]:
-            msg = self.get_from_client(t)
-            if msg and self.websocket_send_callback:
-                self.websocket_send_callback(msg)
+        try:
+            loop = asyncio.get_event_loop()
+            while True:
+                msg = await loop.run_in_executor(None, self.output_queues[self.active_client].get)
+                logger.debug(f"收到消息: {msg}")
+                if self.should_interrupt_replying.value:
+                    if msg.get("event") in [ServerEvent.ChatResponse, ServerEvent.ChatEnded, ServerEvent.TTSSentenceStart, ServerEvent.TTSSentenceEnd, ServerEvent.TTSResponse]:
+                        logger.info(f"在发消息处打断流式响应，继续倾听")
+                        continue
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback(msg)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"发送消息失败: {e}")
+    
+    async def start(self):
+        for t in SESSION_TYPES:
+            p = multiprocessing.Process(
+                target=client_process,
+                args=(t, self.input_queues[t], self.output_queues[t], self.chat_id, self.user_id, self.should_interrupt_replying)
+            )
+            p.start()
+            self.processes[t] = p
+        self.send_message_task = asyncio.create_task(self.send_message())
+
+    async def cleanup(self):
+        for t in self.processes:
+            self.input_queues[t].put({"type": "stop"})
+            self.processes[t].join()

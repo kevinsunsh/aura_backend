@@ -22,8 +22,7 @@ from utils.utils import performance_point_context
 
 # 配置LangChain日志
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("langchain")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 class MessageType(Enum):
     """消息类型枚举"""
