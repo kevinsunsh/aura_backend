@@ -61,6 +61,6 @@ tts_config = {
     "audio": {
         "format": "pcm",
         "sample_rate": 24000,
-        "channel": 1
+        "channel": 1,
     }
 }

@@ -338,9 +338,9 @@ class AuraDialogSession:
                 if self.asr_response_callback:
                     try:
                         if asyncio.iscoroutinefunction(self.asr_response_callback):
-                            await self.asr_response_callback(text, is_interim)
+                            await self.asr_response_callback(self.server_asr_result, is_interim)
                         else:
-                            self.asr_response_callback(text, is_interim)
+                            self.asr_response_callback(self.server_asr_result, is_interim)
                     except Exception as e:
                         logger.error(f"ASR响应回调执行失败: {e}")
     
