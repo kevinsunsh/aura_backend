@@ -465,13 +465,23 @@ class MessageProcessorAudio:
         try:
             loop = asyncio.get_event_loop()
             while True:
-                msg = await loop.run_in_executor(None, self.asr_output_queue.get)
-                if self.websocket_send_callback:
-                    await self.websocket_send_callback(msg)
+                try:
+                    msg = await loop.run_in_executor(None, self.asr_output_queue.get)
+                    if self.websocket_send_callback:
+                        await self.websocket_send_callback(msg)
+                except asyncio.TimeoutError:
+                    # 超时继续循环
+                    continue
+                except Exception as e:
+                    logger.error(f"发送ASR消息失败: {e}")
+                    # 短暂等待后继续
+                    await asyncio.sleep(0.1)
         except asyncio.CancelledError:
-            pass
+            logger.info("ASR消息处理任务已取消")
+            raise  # 重新抛出CancelledError
         except Exception as e:
-            logger.error(f"发送ASR消息失败: {e}")
+            logger.error(f"ASR消息处理任务异常: {e}")
+            raise  # 重新抛出异常
 
     async def send_message(self):
         """
@@ -480,14 +490,24 @@ class MessageProcessorAudio:
         try:
             loop = asyncio.get_event_loop()
             while True:
-                msg = await loop.run_in_executor(None, self.llm_output_queue.get)
-                logger.debug(f"收到LLM消息: {msg}")
-                if self.websocket_send_callback:
-                    await self.websocket_send_callback(msg)
+                try:
+                    msg = await loop.run_in_executor(None, self.llm_output_queue.get),
+                    logger.debug(f"收到LLM消息: {msg}")
+                    if self.websocket_send_callback:
+                        await self.websocket_send_callback(msg)
+                except asyncio.TimeoutError:
+                    # 超时继续循环
+                    continue
+                except Exception as e:
+                    logger.error(f"发送LLM消息失败: {e}")
+                    # 短暂等待后继续
+                    await asyncio.sleep(0.1)
         except asyncio.CancelledError:
-            pass
+            logger.info("LLM消息处理任务已取消")
+            raise  # 重新抛出CancelledError
         except Exception as e:
-            logger.error(f"发送LLM消息失败: {e}")
+            logger.error(f"LLM消息处理任务异常: {e}")
+            raise  # 重新抛出异常
 
     # async def send_e2e_message(self):
     #     """
@@ -506,18 +526,35 @@ class MessageProcessorAudio:
     #         logger.error(f"发送E2E消息失败: {e}")
     
     async def start(self):
+        logger.info(f"开始启动MessageProcessorAudio: chat_id={self.chat_id}")
+        
+        # 确保之前的任务已经清理
+        if hasattr(self, 'message_tasks'):
+            try:
+                self.message_tasks.cancel()
+                await self.message_tasks
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"清理之前的任务时出错: {e}")
+        
+        # 启动消息处理任务
+        logger.info("启动消息处理任务")
+        self.message_tasks = asyncio.gather(
+            self.send_asr_message(),
+            self.send_message()
+        )
+        
+        # 启动子进程
+        logger.info("启动子进程")
         self.process = multiprocessing.Process(
             target=e2e_process,
             args=(self.input_queues, self.asr_output_queue, self.llm_output_queue, self.e2e_output_queue, self.chat_id, self.user_id)
         )
         self.process.start()
-        # 使用asyncio.gather并发处理所有消息队列，避免一个任务阻塞另一个
-        self.message_tasks = asyncio.gather(
-            self.send_asr_message(),
-            self.send_message()
-            # self.send_e2e_message()
-        )
-
+        
+        logger.info(f"MessageProcessorAudio启动完成: chat_id={self.chat_id}")
+    
     async def cleanup(self):
         logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")
         
@@ -538,5 +575,39 @@ class MessageProcessorAudio:
             logger.info("子进程已经结束")
         else:
             logger.info("没有子进程需要清理")
+        
+        # 清理队列
+        try:
+            logger.info("清理队列...")
+            # 先清空队列内容
+            while not self.asr_output_queue.empty():
+                try:
+                    self.asr_output_queue.get_nowait()
+                except:
+                    break
+            while not self.llm_output_queue.empty():
+                try:
+                    self.llm_output_queue.get_nowait()
+                except:
+                    break
+            while not self.e2e_output_queue.empty():
+                try:
+                    self.e2e_output_queue.get_nowait()
+                except:
+                    break
+            while not self.input_queues.empty():
+                try:
+                    self.input_queues.get_nowait()
+                except:
+                    break
+            
+            # 关闭队列
+            self.asr_output_queue.close()
+            self.llm_output_queue.close()
+            self.e2e_output_queue.close()
+            self.input_queues.close()
+            logger.info("队列清理完成")
+        except Exception as e:
+            logger.error(f"清理队列时出错: {e}")
         
         logger.info("MessageProcessorAudio清理完成")

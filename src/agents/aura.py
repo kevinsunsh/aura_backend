@@ -415,6 +415,7 @@ class AuraAgent:
             # 移除WebSocket连接（这里会自动清理消息处理器）
             await self.remove_websocket_connection()
             
+            await asyncio.sleep(1)
             logger.info("AuraAgent 资源清理完成")
         except Exception as e:
             logger.error(f"AuraAgent清理资源时出错: {e}")
