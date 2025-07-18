@@ -61,7 +61,7 @@ class AuraAgent:
                         await self.websocket_connection.send_bytes(binary_data)
                     else:
                         await self.websocket_connection.send(binary_data)
-                        
+                    logger.info(f"发送消息成功: {message.get('event')}")
                 except Exception as e:
                     logger.error(f"发送消息失败: {str(e)}")
                     # 标记连接为无效，但不在这里调用remove_websocket_connection避免死锁
