@@ -478,25 +478,13 @@ class TtsClient:
         Args:
             text: 文本片段
         """
-        if not self.is_running or not self.ws:
-            return
-        
-        if not self._tts_session_active:
-            self.buffer_text += text
-            return
-        
         try:
-            # 非阻塞方式放入队列，如果队列满了就记录警告
-            try:
-                self.buffer_text += text
-                await self._send_text_internal(self.buffer_text)
-                self.buffer_text = ""
-                if end:
-                    await self._tts_finish_session(self.ws, self.session_id)
-                logger.info(f"文本已加入发送队列: {text[:50]}...")
-            except asyncio.QueueFull:
-                logger.warning("发送队列已满，文本将被丢弃")
-                
+            self.buffer_text += text
+            await self._send_text_internal(self.buffer_text)
+            self.buffer_text = ""
+            if end:
+                await self._tts_finish_session(self.ws, self.session_id)
+            logger.info(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
             await self._connect()
