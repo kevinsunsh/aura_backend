@@ -85,23 +85,21 @@ class AuraAgent:
             
             # 处理音频数据
             skip_audio_compression = False
-            if "audio_data" in payload_data and isinstance(payload_data["audio_data"], bytes):
+            if isinstance(payload_data, bytes):
                 # 音频数据不需要JSON序列化，直接发送
-                payload_bytes = payload_data["audio_data"]
                 message_type = SERVER_ACK
                 serial_method = NO_SERIALIZATION
                 skip_audio_compression = True
                 compression_type = NO_COMPRESSION
             else:
                 # 其他数据使用JSON序列化，让server_generate_response处理序列化和压缩
-                payload_bytes = payload_data
                 message_type = SERVER_FULL_RESPONSE
                 serial_method = JSON
                 compression_type = GZIP
             
             # 使用统一的协议生成方法
             binary_data = server_generate_response(
-                payload_data=payload_bytes,
+                payload_data=payload_data,
                 message_type=message_type,
                 message_type_specific_flags=MSG_WITH_EVENT,
                 serial_method=serial_method,

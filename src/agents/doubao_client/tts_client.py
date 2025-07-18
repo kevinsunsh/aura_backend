@@ -9,7 +9,7 @@ from enum import Enum
 import websockets
 import aiofiles
 import fastrand
-from utils.utils import start_performance_point, end_performance_point
+from utils.utils import start_performance_point, end_performance_point, safe_call
 from .doubao_config import tts_config
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class TtsClient:
                  app_id: str = None,
                  token: str = None,
                  speaker: str = None,
-                 tts_start_callback: Callable[[str], None] = None,
+                 tts_start_callback: Callable[[dict], None] = None,
                  tts_response_callback: Callable[[bytes], None] = None,
                  tts_end_callback: Callable[[], None] = None,
                  tts_reconnect_callback: Callable[[], None] = None,
@@ -449,36 +449,18 @@ class TtsClient:
                             # 触发TTS响应回调
                             end_performance_point(self.tts_service_performance_point_id)
                             if self.tts_response_callback:
-                                try:
-                                    if asyncio.iscoroutinefunction(self.tts_response_callback):
-                                        await self.tts_response_callback(res.payload)
-                                    else:
-                                        self.tts_response_callback(res.payload)
-                                except Exception as e:
-                                    logger.error(f"TTS响应回调执行失败: {e}")
+                                await safe_call(self.tts_response_callback, res.payload)
                     elif res.optional.event == EVENT_TTSSentenceStart:
                         logger.debug(f"TTS句子事件: {res.optional.event}")
                         json_data = json.loads(res.payload_json)
                         text = json_data.get("text", "")
                         # 第一次开始合成时触发开始回调
                         if self.tts_start_callback:
-                            try:
-                                if asyncio.iscoroutinefunction(self.tts_start_callback):
-                                    await self.tts_start_callback(text)
-                                else:
-                                    self.tts_start_callback(text)
-                            except Exception as e:
-                                logger.error(f"TTS开始回调执行失败: {e}")
+                            await safe_call(self.tts_start_callback, {"text": text})
                     elif res.optional.event == EVENT_TTSSentenceEnd:
                         logger.debug(f"TTS句子结束: {res.optional.event}")
                         if self.tts_end_callback:
-                            try:
-                                if asyncio.iscoroutinefunction(self.tts_end_callback):
-                                    await self.tts_end_callback()
-                                else:
-                                    self.tts_end_callback()
-                            except Exception as e:
-                                logger.error(f"TTS结束回调执行失败: {e}")
+                            await safe_call(self.tts_end_callback)
                     elif res.optional.event == EVENT_SessionStarted:
                         logger.debug(f"TTS会话开始: {res.optional.event}")
                         self._tts_session_active = True

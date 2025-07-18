@@ -4,8 +4,8 @@ import uuid
 ws_connect_config = {
     "base_url": "wss://openspeech.bytedance.com/api/v3/realtime/dialogue",
     "headers": {
-        "X-Api-App-ID": "4427555468",
-        "X-Api-Access-Key": "wo4mooD0lf3nNJlfNoYsnHzrx7Dl5jrl",
+        "X-Api-App-ID": "5859418345",
+        "X-Api-Access-Key": "T8ZFE-6co2c5w-DY7rAf8gDR63sxxzI3",
         "X-Api-Resource-Id": "volc.speech.dialog",
         "X-Api-App-Key": "PlgvMymc7f3tQnJ6",
         "X-Api-Connect-Id": str(uuid.uuid4()),
@@ -55,8 +55,8 @@ asr_config = {
 # TTS API配置
 tts_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
-    "app_id": "8061489244",  # 需要配置实际的app_id
-    "token": "JZxBMqPOV7FYEIp1PlKsTvY71wSGLqj1",   # 需要配置实际的token
+    "app_id": "5859418345",  # 需要配置实际的app_id
+    "token": "T8ZFE-6co2c5w-DY7rAf8gDR63sxxzI3",   # 需要配置实际的token
     "speaker": "zh_female_wanwanxiaohe_moon_bigtts",  # 默认说话人
     "audio": {
         "format": "pcm",

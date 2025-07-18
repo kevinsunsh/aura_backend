@@ -17,6 +17,7 @@ from api_protocol.constant import *
 
 from .realtime_dialog_client import RealtimeDialogClient
 from .doubao_config import ws_connect_config
+from utils.utils import safe_call
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +26,13 @@ class DialogSession:
     def __init__(self, 
                  uid: str = None,
                  asr_start_callback: Callable[[], None] = None,
-                 asr_response_callback: Callable[[str, bool], None] = None,
-                 asr_end_callback: Callable[[str], None] = None,
-                 tts_start_callback: Callable[[str], None] = None,
+                 asr_response_callback: Callable[[dict, bool], None] = None,
+                 asr_end_callback: Callable[[], None] = None,
+                 tts_start_callback: Callable[[dict], None] = None,
                  tts_response_callback: Callable[[bytes], None] = None,
                  tts_end_callback: Callable[[], None] = None,
-                 chat_response_callback: Callable[[str], None] = None,
-                 chat_end_callback: Callable[[str], None] = None,
+                 chat_response_callback: Callable[[dict], None] = None,
+                 chat_end_callback: Callable[[], None] = None,
                  ):
         self.uid = uid or str(uuid.uuid4())
         self.session_id = self.uid
@@ -60,7 +61,7 @@ class DialogSession:
         self.tts_end_callback = tts_end_callback
 
         # 服务器Chat结果
-        self.server_chat_response = ""
+        self.chat_response_callback = chat_response_callback
         self.chat_end_callback = chat_end_callback
 
         # 延迟监控
@@ -298,25 +299,25 @@ class DialogSession:
             await self._on_session_failed(payload_msg)
         # TTS类事件 (350-359)
         elif event_id == ServerEvent.TTSSentenceStart:
-            await self._on_tts_sentence_start(payload_msg)
+            await safe_call(self.tts_start_callback, payload_msg)
         elif event_id == ServerEvent.TTSSentenceEnd:
-            await self._on_tts_sentence_end(payload_msg)
+            await safe_call(self.tts_end_callback)
         elif event_id == ServerEvent.TTSResponse:
-            await self._on_tts_response(payload_msg)
+            await safe_call(self.tts_response_callback, payload_msg)
         elif event_id == ServerEvent.TTSEnded:
-            await self._on_tts_ended(payload_msg)
+            await safe_call(self.tts_end_callback)
         # ASR类事件 (450-459)
         elif event_id == ServerEvent.ASRInfo:
-            await self._on_asr_info(payload_msg)
+            await safe_call(self.asr_start_callback)
         elif event_id == ServerEvent.ASRResponse:
-            await self._on_asr_response(payload_msg)
+            await safe_call(self.asr_response_callback, payload_msg)
         elif event_id == ServerEvent.ASREnded:
-            await self._on_asr_ended(payload_msg)
+            await safe_call(self.asr_end_callback)
         # Chat类事件 (550-559)
         elif event_id == ServerEvent.ChatResponse:
-            await self._on_chat_response(payload_msg)
+            await safe_call(self.chat_response_callback, payload_msg)
         elif event_id == ServerEvent.ChatEnded:
-            await self._on_chat_ended(payload_msg)
+            await safe_call(self.chat_end_callback)
         else:
             logger.warning(f"未知事件ID: {event_id}")
     
@@ -350,122 +351,6 @@ class DialogSession:
         error_msg = payload.get("error", "未知错误")
         logger.error(f"会话失败: {error_msg}")
         self.is_session_finished = True
-
-    # TTS类事件回调方法
-    async def _on_tts_sentence_start(self, payload: Dict[str, Any]) -> None:
-        """TTS句子开始事件回调"""
-        tts_type = payload.get("tts_type", "")
-        text = payload.get("text", "")
-        logger.debug(f"TTS句子开始 - 类型: {tts_type}, 文本: {text[:50]}...")
-        if self.tts_start_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_start_callback):
-                    await self.tts_start_callback(text)
-                else:
-                    self.tts_start_callback(text)
-            except Exception as e:
-                logger.error(f"TTS开始回调执行失败: {e}")
-    
-    async def _on_tts_sentence_end(self, payload: Dict[str, Any]) -> None:
-        """TTS句子结束事件回调"""
-        logger.debug("TTS句子结束")
-        if self.tts_end_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_end_callback):
-                    await self.tts_end_callback()
-                else:
-                    self.tts_end_callback()
-            except Exception as e:
-                logger.error(f"TTS结束回调执行失败: {e}")
-
-    async def _on_tts_response(self, payload: Dict[str, Any]) -> None:
-        """TTS音频响应事件回调"""
-        # 这里payload应该是二进制音频数据
-        audio_data = payload if isinstance(payload, bytes) else b""
-        logger.debug(f"收到TTS音频数据: {len(audio_data)} 字节")
-        if self.tts_response_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_response_callback):
-                    await self.tts_response_callback(audio_data)
-                else:
-                    self.tts_response_callback(audio_data)
-            except Exception as e:
-                logger.error(f"TTS响应回调执行失败: {e}")
-    
-    async def _on_tts_ended(self, payload: Dict[str, Any]) -> None:
-        """TTS结束事件回调"""
-        logger.info("TTS合成结束")
-    
-    # ASR类事件回调方法
-    async def _on_asr_info(self, payload: Dict[str, Any]) -> None:
-        """ASR信息事件回调 - 识别出首字"""
-        logger.info("ASR识别出首字")
-        if self.asr_start_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.asr_start_callback):
-                    await self.asr_start_callback()
-                else:
-                    self.asr_start_callback()
-            except Exception as e:
-                logger.error(f"ASR开始回调执行失败: {e}")
-    
-    async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
-        """ASR响应事件回调 - 识别出文本内容"""
-        results = payload.get("results", [])
-        if results:
-            for result in results:
-                text = result.get("text", "")
-                is_interim = result.get("is_interim", False)
-                logger.debug(f"ASR识别结果: {text} (临时: {is_interim})")
-                
-                self.server_asr_result = text
-                
-                # 调用ASR响应回调
-                if self.asr_response_callback:
-                    try:
-                        if asyncio.iscoroutinefunction(self.asr_response_callback):
-                            await self.asr_response_callback(text, is_interim)
-                        else:
-                            self.asr_response_callback(text, is_interim)
-                    except Exception as e:
-                        logger.error(f"ASR响应回调执行失败: {e}")
-    
-    async def _on_asr_ended(self, payload: Dict[str, Any]) -> None:
-        """ASR结束事件回调"""
-        logger.info(f"ASR识别结束 : {self.server_asr_result}")
-        if self.asr_end_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.asr_end_callback):
-                    await self.asr_end_callback(self.server_asr_result)
-                else:
-                    self.asr_end_callback(self.server_asr_result)
-            except Exception as e:
-                logger.error(f"ASR结束回调执行失败: {e}")
-    
-    # Chat类事件回调方法
-    async def _on_chat_response(self, payload: Dict[str, Any]) -> None:
-        """聊天响应事件回调"""
-        pass
-        # content = payload.get("content", "")
-        # logger.info(f"收到聊天响应: {content[:50]}...")
-        
-        # 缓冲服务器聊天响应
-        # self.server_chat_response += content
-
-    async def _on_chat_ended(self, payload: Dict[str, Any]) -> None:
-        """聊天结束事件回调"""
-        pass
-        # logger.info("聊天响应结束")
-        # if self.chat_end_callback:
-        #     try:
-        #         if asyncio.iscoroutinefunction(self.chat_end_callback):
-        #             await self.chat_end_callback(self.server_chat_response)
-        #         else:
-        #             self.chat_end_callback(self.server_chat_response)
-        #     except Exception as e:
-        #         logger.error(f"聊天结束回调执行失败: {e}")
-        #     # 重置聊天响应缓冲区
-        #     self.server_chat_response = ""
     
     async def _server_receive_loop(self):
         """服务器响应接收循环"""
