@@ -156,7 +156,7 @@ class AuraAgent:
             if self.message_processor_audio:
                 await self.message_processor_audio.cleanup()
                 self.message_processor_audio = None
-
+            logger.info("message_processor_audio清理完成")
             # 释放聊天流锁
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
@@ -230,6 +230,9 @@ class AuraAgent:
                         data = data['bytes']
                     elif 'text' in data:
                         data = data['text'].encode('utf-8')
+                    elif data.get('type') == 'websocket.disconnect':
+                        logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                        return False
                     else:
                         logger.error(f"未知的WebSocket消息格式: {data}")
                         return False
@@ -281,6 +284,9 @@ class AuraAgent:
                         data = data['bytes']
                     elif 'text' in data:
                         data = data['text'].encode('utf-8')
+                    elif data.get('type') == 'websocket.disconnect':
+                        logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                        return False
                     else:
                         logger.error(f"未知的WebSocket消息格式: {data}")
                         return False
@@ -356,8 +362,11 @@ class AuraAgent:
                             data = data['bytes']
                         elif 'text' in data:
                             data = data['text'].encode('utf-8')
+                        elif data.get('type') == 'websocket.disconnect':
+                            logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                            return  # 直接退出循环
                         else:
-                            logger.error(f"未知的WebSocket消息格式: {data}")
+                            logger.error(f"_message_processing_loop 未知的WebSocket消息格式: {data}")
                             continue
                 else:
                     data = await websocket.recv()

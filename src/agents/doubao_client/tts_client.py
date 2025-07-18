@@ -138,15 +138,10 @@ class TtsClient:
                  app_id: str = None,
                  token: str = None,
                  speaker: str = None,
-                 tts_start_callback: Callable[[dict], None] = None,
+                 tts_sentence_start_callback: Callable[[dict], None] = None,
                  tts_response_callback: Callable[[bytes], None] = None,
-                 tts_end_callback: Callable[[], None] = None,
-                 tts_reconnect_callback: Callable[[], None] = None,
-                 tts_disconnect_callback: Callable[[], None] = None,
-                 max_reconnect_attempts: int = 5,
-                 reconnect_interval: float = 2.0,
-                 reconnect_backoff_factor: float = 1.5,
-                 max_reconnect_interval: float = 30.0,
+                 tts_sentence_end_callback: Callable[[], None] = None,
+                 tts_ended_callback: Callable[[], None] = None,
                  **kwargs):
         """
         初始化TTS客户端
@@ -158,12 +153,6 @@ class TtsClient:
             tts_start_callback: TTS开始回调
             tts_response_callback: TTS音频数据回调，参数为音频数据bytes
             tts_end_callback: TTS结束回调
-            tts_reconnect_callback: 重连成功回调
-            tts_disconnect_callback: 连接断开回调
-            max_reconnect_attempts: 最大重连尝试次数，0表示无限重连
-            reconnect_interval: 重连间隔（秒）
-            reconnect_backoff_factor: 重连间隔指数退避因子
-            max_reconnect_interval: 最大重连间隔（秒）
         """
         # 使用配置文件中的设置，也可以通过参数覆盖
         self.app_id = app_id or tts_config["app_id"]
@@ -177,17 +166,10 @@ class TtsClient:
         self.audio_sample_rate = kwargs.get("audio_sample_rate", tts_config["audio"]["sample_rate"])
         
         # 回调函数
-        self.tts_start_callback = tts_start_callback
+        self.tts_sentence_start_callback = tts_sentence_start_callback
         self.tts_response_callback = tts_response_callback
-        self.tts_end_callback = tts_end_callback
-        self.tts_reconnect_callback = tts_reconnect_callback
-        self.tts_disconnect_callback = tts_disconnect_callback
-        
-        # 重连配置
-        self.max_reconnect_attempts = max_reconnect_attempts
-        self.reconnect_interval = reconnect_interval
-        self.reconnect_backoff_factor = reconnect_backoff_factor
-        self.max_reconnect_interval = max_reconnect_interval
+        self.tts_sentence_end_callback = tts_sentence_end_callback
+        self.tts_ended_callback = tts_ended_callback
         
         # 连接状态
         self.ws = None
@@ -195,17 +177,6 @@ class TtsClient:
         self.session_id = None
         self.connection_id = None
         self.connection_lost = False  # 新增：标记连接是否丢失
-        
-        # 重连状态
-        self.is_reconnecting = False
-        self.reconnect_attempts = 0
-        self.current_reconnect_interval = self.reconnect_interval
-        self.should_reconnect = True
-        self.reconnect_task = None
-        
-        # 任务管理
-        self._receive_task = None
-        self._send_task = None  # 新增：发送任务
         
         # TTS会话状态
         self._tts_session_active = False
@@ -369,10 +340,7 @@ class TtsClient:
             await self._connect()
         except Exception as e:
             logger.error(f"启动TTS连接失败: {e}")
-            if self.should_reconnect:
-                await self._handle_reconnect()
-            else:
-                raise
+            raise
 
     async def _connect(self):
         """建立TTS连接和会话"""
@@ -411,33 +379,9 @@ class TtsClient:
         
         self.is_running = True
         self._tts_session_active = True
-        self.buffer_text = ""
-        # 重置重连状态
-        if self.is_reconnecting:
-            self.is_reconnecting = False
-            self.reconnect_attempts = 0
-            self.current_reconnect_interval = self.reconnect_interval
-            self.connection_lost = False  # 重连成功后重置连接丢失标志
-            
-            # 触发重连成功回调
-            if self.tts_reconnect_callback:
-                try:
-                    if asyncio.iscoroutinefunction(self.tts_reconnect_callback):
-                        await self.tts_reconnect_callback()
-                    else:
-                        self.tts_reconnect_callback()
-                except Exception as e:
-                    logger.error(f"TTS重连回调执行失败: {e}")
-        
         logger.info("TTS连接和会话建立成功")
-        
-        # 启动接收和发送任务
-        self._receive_task = asyncio.create_task(self._receive_loop())
-        
-        # 初始化最后发送时间
-        self.last_send_time = time.time()
-
-    async def _receive_loop(self):
+    
+    async def message_receive_loop(self):
         """接收音频数据循环"""
         try:
             while self.is_running and self.ws:
@@ -456,158 +400,52 @@ class TtsClient:
                         json_data = json.loads(res.payload_json)
                         text = json_data.get("text", "")
                         # 第一次开始合成时触发开始回调
-                        if self.tts_start_callback:
-                            await safe_call(self.tts_start_callback, {"text": text})
+                        if self.tts_sentence_start_callback:
+                            await safe_call(self.tts_sentence_start_callback, {"text": text})
                     elif res.optional.event == EVENT_TTSSentenceEnd:
                         logger.debug(f"TTS句子结束: {res.optional.event}")
-                        if self.tts_end_callback:
-                            await safe_call(self.tts_end_callback)
+                        if self.tts_sentence_end_callback:
+                            await safe_call(self.tts_sentence_end_callback)
                     elif res.optional.event == EVENT_SessionStarted:
                         logger.debug(f"TTS会话开始: {res.optional.event}")
                         self._tts_session_active = True
                     elif res.optional.event == EVENT_SessionFailed:
                         logger.error(f"TTS会话失败: {res.optional.event}")
                         self._tts_session_active = False
-                        # 会话失败时只标记断开
-                        self._mark_disconnected()
-                        break
+                        await self._tts_start_session(self.ws, self.speaker, self.session_id)
+                        if self.tts_ended_callback:
+                            await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_SessionFinished:
                         # 会话结束，触发结束回调
                         logger.debug(f"TTS会话结束: {res.optional.event}")
                         self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
+                        if self.tts_ended_callback:
+                            await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_ConnectionFailed:
                         logger.error(f"TTS连接失败: {res.optional.event}")
-                        self._mark_disconnected()
-                        break
-                
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning("TTS WebSocket连接已关闭")
-                    self._mark_disconnected()
-                    break
+                    await self._connect()
+                    continue
                 except websockets.exceptions.ConnectionClosedError:
                     logger.warning("TTS WebSocket连接异常关闭")
-                    self._mark_disconnected()
+                    await self._connect()
                     break
                 except websockets.exceptions.ConnectionClosedOK:
                     logger.debug("TTS WebSocket连接正常关闭")
                     break
                 except Exception as e:
                     logger.error(f"接收TTS音频数据失败: {e}")
-                    self._mark_disconnected()
+                    await self._connect()
                     break
-                    
         except Exception as e:
             logger.error(f"TTS接收循环出现错误: {e}")
-            self._mark_disconnected()
         except asyncio.CancelledError:
             logger.debug("TTS接收任务已取消")
-        finally:
-            # 接收循环结束时，根据连接丢失状态决定是否重连
-            if self.connection_lost and self.should_reconnect:
-                logger.debug("TTS接收循环结束，检测到连接丢失，启动重连逻辑")
-                # 在这里触发重连，避免在循环中创建新的接收任务
-                asyncio.create_task(self._handle_disconnect())
-            
-            # 确保在接收循环结束时设置运行状态为False
-            if self.is_running:
-                self.is_running = False
-
-    def _mark_disconnected(self):
-        """标记连接已断开（同步方法，避免在接收循环中创建新任务）"""
-        if self.is_running:
-            logger.warning("标记TTS连接已断开")
-            self.connection_lost = True  # 标记连接丢失，用于重连判断
-            self._tts_session_active = False
-
-    async def _handle_disconnect(self):
-        """处理连接断开"""
-        if self.is_reconnecting:
-            logger.debug("TTS重连已在进行中，跳过断开处理")
-            return
-            
-        logger.warning("处理TTS连接断开")
-        self.is_running = False
-        self._tts_session_active = False
-        
-        # 调用断开连接回调
-        if self.tts_disconnect_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.tts_disconnect_callback):
-                    await self.tts_disconnect_callback()
-                else:
-                    self.tts_disconnect_callback()
-            except Exception as e:
-                logger.error(f"执行TTS断开连接回调失败: {e}")
-        
-        # 如果应该重连，启动重连逻辑
-        if self.should_reconnect:
-            await self._handle_reconnect()
-            
-    async def _handle_reconnect(self):
-        """处理重连逻辑"""
-        if self.is_reconnecting:
-            return
-            
-        self.is_reconnecting = True
-        
-        # 如果有重连任务在运行，先取消
-        if self.reconnect_task:
-            self.reconnect_task.cancel()
-            
-        self.reconnect_task = asyncio.create_task(self._reconnect_loop())
-        
-    async def _reconnect_loop(self):
-        """重连循环"""
-        while self.should_reconnect and (
-            self.max_reconnect_attempts == 0 or 
-            self.reconnect_attempts < self.max_reconnect_attempts
-        ):
-            self.reconnect_attempts += 1
-            
-            logger.debug(f"尝试TTS重连 ({self.reconnect_attempts}/{self.max_reconnect_attempts if self.max_reconnect_attempts > 0 else '∞'})")
-            
-            try:
-                # 等待重连间隔
-                await asyncio.sleep(self.current_reconnect_interval)
-                
-                # 清理之前的连接
-                await self._cleanup_connection()
-                
-                # 尝试重连
-                await self._connect()
-                
-                logger.debug("TTS重连成功")
-                return
-                
-            except Exception as e:
-                logger.error(f"TTS重连失败: {e}")
-                
-                # 增加重连间隔（指数退避）
-                self.current_reconnect_interval = min(
-                    self.current_reconnect_interval * self.reconnect_backoff_factor,
-                    self.max_reconnect_interval
-                )
-                
-        # 重连失败
-        if self.should_reconnect:
-            logger.error(f"TTS重连达到最大尝试次数 ({self.max_reconnect_attempts})，停止重连")
-            self.is_reconnecting = False
-            
+                    
     async def _cleanup_connection(self):
         """清理连接相关资源（不重置重连状态）"""
-        # 取消并等待接收任务完成
-        if self._receive_task and not self._receive_task.done():
-            logger.debug("取消TTS接收任务...")
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                logger.debug("TTS接收任务已取消")
-            except Exception as e:
-                logger.error(f"等待TTS接收任务结束时出错: {e}")
-        self._receive_task = None
-        
         # 关闭WebSocket连接
         if self.ws:
             try:
@@ -650,7 +488,9 @@ class TtsClient:
         try:
             # 非阻塞方式放入队列，如果队列满了就记录警告
             try:
-                await self._send_text_internal(self.buffer_text + text)
+                self.buffer_text += text
+                await self._send_text_internal(self.buffer_text)
+                self.buffer_text = ""
                 if end:
                     await self._tts_finish_session(self.ws, self.session_id)
                 logger.debug(f"文本已加入发送队列: {text[:50]}...")
@@ -659,9 +499,8 @@ class TtsClient:
                 
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
-            if self.is_running:
-                await self._handle_disconnect()
-
+            await self._connect()
+    
     async def _send_text_internal(self, text: str):
         """内部发送文本方法"""
         if self.tts_service_performance_point_id is None:
@@ -678,9 +517,6 @@ class TtsClient:
         """获取连接状态信息"""
         return {
             "is_running": self.is_running,
-            "is_reconnecting": self.is_reconnecting,
-            "reconnect_attempts": self.reconnect_attempts,
-            "should_reconnect": self.should_reconnect,
             "session_active": self._tts_session_active,
             "has_connection": self.ws is not None
         }
@@ -689,25 +525,7 @@ class TtsClient:
         """清理资源"""
         try:
             self.is_running = False
-            self.should_reconnect = False
-            
-            # 取消重连任务
-            if self.reconnect_task and not self.reconnect_task.done():
-                self.reconnect_task.cancel()
-                try:
-                    await self.reconnect_task
-                except asyncio.CancelledError:
-                    pass
-                    
-            # 清理连接
             await self._cleanup_connection()
-            
-            # 重置所有状态
-            self.is_reconnecting = False
-            self.reconnect_attempts = 0
-            self.current_reconnect_interval = self.reconnect_interval
-            self.connection_lost = False
-                
             logger.debug("TTS客户端已清理")
         except Exception as e:
             logger.error(f"清理TTS客户端时出错: {e}")

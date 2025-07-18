@@ -1041,8 +1041,8 @@ class WebSocketTestSession:
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.uri,
-                ping_interval=30,      # 每30秒发送一次ping（更保守）
-                ping_timeout=15,       # ping超时时间15秒（更宽松）
+                ping_interval=120,      # 每120秒发送一次ping（更保守）
+                ping_timeout=60,       # ping超时时间60秒（更宽松）
                 close_timeout=10,      # 关闭超时时间10秒
                 max_size=1000000000,   # 最大消息大小1GB
                 compression=None,      # 禁用压缩避免问题

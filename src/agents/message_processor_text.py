@@ -444,10 +444,4 @@ class MessageProcessorText:
 
     async def cleanup(self):
         """清理资源"""
-        try:
-            with performance_point_context("取消所有任务"):
-                # 获取所有需要取消的任务类型
-                TaskManager.get_instance().cleanup()
-                logger.info("MessageProcessorText资源清理完成")
-        except Exception as e:
-            logger.error(f"清理资源时发生异常: {e}")
+        logger.info("MessageProcessorText资源清理完成")

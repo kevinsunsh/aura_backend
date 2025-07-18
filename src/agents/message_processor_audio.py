@@ -83,9 +83,10 @@ class E2ESessionClient(IDialogSession):
             asr_start_callback=self._on_asr_info,
             asr_response_callback=self._on_asr_response,
             asr_end_callback=self._on_asr_ended,
-            tts_start_callback=self._e2e_on_tts_sentence_start,
+            tts_sentence_start_callback=self._e2e_on_tts_sentence_start,
             tts_response_callback=self._e2e_on_tts_response,
-            tts_end_callback=self._e2e_on_tts_ended,
+            tts_sentence_end_callback=self._e2e_on_tts_sentence_end,
+            tts_ended_callback=self._e2e_on_tts_ended,
             chat_response_callback=self._e2e_on_chat_response,
             chat_end_callback=self._e2e_on_chat_ended
         )
@@ -99,20 +100,25 @@ class E2ESessionClient(IDialogSession):
         # 创建TTS客户端
         self.tts_client = TtsClient(
             uid=self.user_id,
-            tts_start_callback=self._llm_on_tts_sentence_start,
+            tts_sentence_start_callback=self._llm_on_tts_sentence_start,
             tts_response_callback=self._llm_on_tts_response,
-            tts_end_callback=self._llm_on_tts_sentence_end
+            tts_sentence_end_callback=self._llm_on_tts_sentence_end,
+            tts_ended_callback=self._llm_on_tts_ended
         )
         self.is_chat_start = True
+        self.is_llm_tts_running = False
+        self.recv_message_tasks = None
+    
     # TTS类事件回调方法
     async def _e2e_on_tts_sentence_start(self, payload: Dict[str, Any]) -> None:
         """TTS句子开始事件回调"""
         text = payload.get("text", "")
+        logger.info(f"E2E TTS句子开始: {text}")
         self.e2e_output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
     
-    async def _e2e_on_tts_sentence_end(self, payload: Dict[str, Any]) -> None:
+    async def _e2e_on_tts_sentence_end(self) -> None:
         """TTS句子结束事件回调"""
-        logger.debug("TTS句子结束")
+        logger.info("E2E TTS句子结束")
         self.e2e_output_queue.put({"event": ServerEvent.TTSSentenceEnd})
 
     async def _e2e_on_tts_response(self, payload: bytes) -> None:
@@ -120,9 +126,9 @@ class E2ESessionClient(IDialogSession):
         # 这里payload应该是二进制音频数据
         self.e2e_output_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload})
     
-    async def _e2e_on_tts_ended(self, payload: Dict[str, Any]) -> None:
+    async def _e2e_on_tts_ended(self) -> None:
         """TTS结束事件回调"""
-        logger.info("TTS合成结束")
+        logger.info("E2E TTS合成结束")
         self.e2e_output_queue.put({"event": ServerEvent.TTSEnded})
     
     # TTS类事件回调方法
@@ -130,6 +136,7 @@ class E2ESessionClient(IDialogSession):
         """TTS句子开始事件回调"""
         text = payload.get("text", "")
         logger.info(f"LLM TTS句子开始: {text}")
+        self.is_llm_tts_running = True
         self.llm_output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
     
     async def _llm_on_tts_sentence_end(self) -> None:
@@ -144,7 +151,8 @@ class E2ESessionClient(IDialogSession):
     
     async def _llm_on_tts_ended(self) -> None:
         """TTS结束事件回调"""
-        logger.info("TTS合成结束")
+        logger.info("LLM TTS合成结束")
+        self.is_llm_tts_running = False
         self.llm_output_queue.put({"event": ServerEvent.TTSEnded})
     
     # ASR类事件回调方法
@@ -178,12 +186,12 @@ class E2ESessionClient(IDialogSession):
     async def _e2e_on_chat_response(self, payload: Dict[str, Any]) -> None:
         """聊天响应事件回调"""
         content = payload.get("content", "")
-        logger.info(f"收到聊天响应: {content[:10]}...")
+        logger.info(f"E2E收到聊天响应: {content[:10]}...")
         self.e2e_output_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": content}})
     
     async def _e2e_on_chat_ended(self) -> None:
         """聊天结束事件回调"""
-        logger.info("聊天响应结束")
+        logger.info("E2E聊天响应结束")
         self.e2e_output_queue.put({"event": ServerEvent.ChatEnded})
         
     async def _text_processor_callback(self, message: Dict[str, Any]):
@@ -216,11 +224,23 @@ class E2ESessionClient(IDialogSession):
         await self.dialog_session.start()
         await self.text_processor.start()
         await self.tts_client.start()
+        self.recv_message_tasks = asyncio.gather(
+            self.dialog_session.message_receive_loop(),
+            self.tts_client.message_receive_loop()
+        )
     
     async def cleanup(self) -> None:
         await self.dialog_session.cleanup()
         await self.text_processor.cleanup()
         await self.tts_client.cleanup()
+        # 取消所有消息处理任务
+        if hasattr(self, 'recv_message_tasks'):
+            self.recv_message_tasks.cancel()
+            try:
+                await self.recv_message_tasks
+            except asyncio.CancelledError:
+                pass
+        logger.info("E2ESessionClient清理完成")
     
     async def process_audio_input(self, audio_chunk: bytes) -> None:
         await self.dialog_session.process_audio_chunk(audio_chunk)
@@ -385,10 +405,10 @@ class E2ESessionClient(IDialogSession):
 #         else:
 #             raise ValueError(f"不支持的客户端类型: {client_type}")
 
-def client_process(input_queue, asr_output_queue, llm_output_queue, e2e_output_queue, chat_id, user_id):
-    asyncio.run(client_main(input_queue, asr_output_queue, llm_output_queue, e2e_output_queue, chat_id, user_id))
+def e2e_process(input_queue, asr_output_queue, llm_output_queue, e2e_output_queue, chat_id, user_id):
+    asyncio.run(e2e_main(input_queue, asr_output_queue, llm_output_queue, e2e_output_queue, chat_id, user_id))
 
-async def client_main(input_queue, asr_output_queue, llm_output_queue, e2e_output_queue, chat_id, user_id):
+async def e2e_main(input_queue, asr_output_queue, llm_output_queue, e2e_output_queue, chat_id, user_id):
     # E2E_SESSION 逻辑保持不变
     client = E2ESessionClient(
         user_id=user_id,
@@ -440,7 +460,7 @@ class MessageProcessorAudio:
 
     async def send_asr_message(self):
         """
-        轮询两个 client 的输出队列，有消息就发给 websocket
+        轮询ASR输出队列，有消息就发给 websocket
         """
         try:
             loop = asyncio.get_event_loop()
@@ -452,33 +472,64 @@ class MessageProcessorAudio:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"发送消息失败: {e}")
+            logger.error(f"发送ASR消息失败: {e}")
 
     async def send_message(self):
         """
-        轮询两个 client 的输出队列，有消息就发给 websocket
+        轮询LLM输出队列，有消息就发给 websocket
         """
         try:
             loop = asyncio.get_event_loop()
             while True:
                 msg = await loop.run_in_executor(None, self.llm_output_queue.get)
-                logger.debug(f"收到消息: {msg}")
+                logger.debug(f"收到LLM消息: {msg}")
                 if self.websocket_send_callback:
                     await self.websocket_send_callback(msg)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"发送消息失败: {e}")
+            logger.error(f"发送LLM消息失败: {e}")
+
+    # async def send_e2e_message(self):
+    #     """
+    #     轮询E2E输出队列，有消息就发给 websocket
+    #     """
+    #     try:
+    #         loop = asyncio.get_event_loop()
+    #         while True:
+    #             msg = await loop.run_in_executor(None, self.e2e_output_queue.get)
+    #             logger.debug(f"收到E2E消息: {msg}")
+    #             if self.websocket_send_callback:
+    #                 await self.websocket_send_callback(msg)
+    #     except asyncio.CancelledError:
+    #         pass
+    #     except Exception as e:
+    #         logger.error(f"发送E2E消息失败: {e}")
     
     async def start(self):
         self.process = multiprocessing.Process(
-            target=client_process,
+            target=e2e_process,
             args=(self.input_queues, self.asr_output_queue, self.llm_output_queue, self.e2e_output_queue, self.chat_id, self.user_id)
         )
         self.process.start()
-        self.send_asr_message_task = asyncio.create_task(self.send_asr_message())
-        self.send_message_task = asyncio.create_task(self.send_message())
+        # 使用asyncio.gather并发处理所有消息队列，避免一个任务阻塞另一个
+        self.message_tasks = asyncio.gather(
+            self.send_asr_message(),
+            self.send_message()
+            # self.send_e2e_message()
+        )
 
     async def cleanup(self):
+        # 取消所有消息处理任务
+        if hasattr(self, 'message_tasks'):
+            self.message_tasks.cancel()
+            try:
+                await self.message_tasks
+            except asyncio.CancelledError:
+                pass
+        logger.info("message_tasks清理完成")
+        # 停止子进程
         self.input_queues.put({"type": "stop"})
-        self.process.join()
+        if self.process:
+            self.process.join()
+        logger.info("process清理完成")
