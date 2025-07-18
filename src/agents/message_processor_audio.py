@@ -445,7 +445,8 @@ class MessageProcessorAudio:
         self.send_message_task = None
         self.send_asr_message_task = None
         self.active_client = None
-    
+        self.message_tasks = None
+
     async def handle_message(self, message_data: Dict[str, Any]):
         """
         分发消息到两个 client 进程
@@ -566,7 +567,7 @@ class MessageProcessorAudio:
             except asyncio.CancelledError:
                 pass
         logger.info("消息处理任务已取消")
-        
+        self.message_tasks = None
         # 直接杀死子进程
         if self.process and self.process.is_alive():
             logger.info("直接杀死子进程")
