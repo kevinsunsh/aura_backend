@@ -493,7 +493,7 @@ class TtsClient:
                 self.buffer_text = ""
                 if end:
                     await self._tts_finish_session(self.ws, self.session_id)
-                logger.debug(f"文本已加入发送队列: {text[:50]}...")
+                logger.info(f"文本已加入发送队列: {text[:50]}...")
             except asyncio.QueueFull:
                 logger.warning("发送队列已满，文本将被丢弃")
                 
