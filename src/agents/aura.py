@@ -53,6 +53,7 @@ class AuraAgent:
             if self.websocket_connection:
                 try:
                     # 使用统一的协议构造方法
+                    logger.info(f"发送消息: {message}")
                     binary_data = self._construct_protocol_message(message)
                     
                     # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
@@ -110,8 +111,6 @@ class AuraAgent:
             
         except Exception as e:
             logger.error(f"构造协议消息失败: {e}")
-            # 降级到JSON发送
-            return str.encode(json.dumps(message))
 
     async def remove_websocket_connection(self):
         """移除WebSocket连接"""
