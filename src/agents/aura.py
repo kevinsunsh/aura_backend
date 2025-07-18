@@ -42,9 +42,8 @@ class AuraAgent:
         self.chat_stream = None
         
         # WebSocket相关
-        self.websocket_connection: Optional[WebSocket] = None  # 存储WebSocket连接
+        self.websocket_connection = None  # 存储WebSocket连接
         # self.websocket_lock = asyncio.Lock()  # 移除锁
-
         self.message_processor_audio = None
     
     async def send_websocket_message(self, message: dict):
@@ -64,8 +63,6 @@ class AuraAgent:
                     logger.info(f"发送消息成功: {message.get('event')}")
                 except Exception as e:
                     logger.error(f"发送消息失败: {str(e)}")
-                    # 标记连接为无效，但不在这里调用remove_websocket_connection避免死锁
-                    self.websocket_connection = None
         except asyncio.TimeoutError:
             logger.error("send_websocket_message获取websocket_lock超时，可能存在死锁")
         except Exception as e:
@@ -116,13 +113,6 @@ class AuraAgent:
             # 降级到JSON发送
             return str.encode(json.dumps(message))
 
-    # WebSocket连接管理方法
-    async def set_websocket_connection(self, websocket):
-        """设置WebSocket连接"""
-        self.websocket_connection = websocket
-        logger.info(f"WebSocket连接已设置")
-
-    
     async def remove_websocket_connection(self):
         """移除WebSocket连接"""
         try:
@@ -165,7 +155,8 @@ class AuraAgent:
     async def handle_websocket_connection(self, websocket):
         """处理WebSocket连接，包括连接和session生命周期管理"""
         await websocket.accept()
-        await self.set_websocket_connection(websocket)
+        self.websocket_connection = websocket
+        logger.info(f"WebSocket连接已设置")
         
         try:
             # 第一步：等待客户端发送开始连接消息

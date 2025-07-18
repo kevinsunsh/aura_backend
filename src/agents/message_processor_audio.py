@@ -466,7 +466,6 @@ class MessageProcessorAudio:
             loop = asyncio.get_event_loop()
             while True:
                 msg = await loop.run_in_executor(None, self.asr_output_queue.get)
-                logger.debug(f"收到ASR消息: {msg}")
                 if self.websocket_send_callback:
                     await self.websocket_send_callback(msg)
         except asyncio.CancelledError:
