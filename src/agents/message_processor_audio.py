@@ -520,6 +520,8 @@ class MessageProcessorAudio:
         )
 
     async def cleanup(self):
+        logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")
+        
         # 取消所有消息处理任务
         if hasattr(self, 'message_tasks'):
             self.message_tasks.cancel()
@@ -527,9 +529,15 @@ class MessageProcessorAudio:
                 await self.message_tasks
             except asyncio.CancelledError:
                 pass
-        logger.info("message_tasks清理完成")
-        # 停止子进程
-        self.input_queues.put({"type": "stop"})
-        if self.process:
-            self.process.join()
-        logger.info("process清理完成")
+        logger.info("消息处理任务已取消")
+        
+        # 直接杀死子进程
+        if self.process and self.process.is_alive():
+            logger.info("直接杀死子进程")
+            self.process.kill()
+        elif self.process:
+            logger.info("子进程已经结束")
+        else:
+            logger.info("没有子进程需要清理")
+        
+        logger.info("MessageProcessorAudio清理完成")

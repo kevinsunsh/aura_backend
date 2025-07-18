@@ -6,7 +6,7 @@ vars:
   sid: "aurabk"
   region: "cn-beijing"
   functionName: "aura-backend-function"
-  version: "0.0.11"
+  version: "0.0.12"
 
 resources:
   aura_backend:
@@ -17,12 +17,12 @@ resources:
       function:
         Name: ${vars.functionName}
         Description: aura-backend
-        ExclusiveMode: true
         RequestTimeout: 900
+        MaxConcurrency: 10
         Runtime: native/v1
         SourceType: image # 支持 image / zip
         Source: mengs-cn-beijing.cr.volces.com/aura/aura_backend:${vars.version}
-        MemoryMB: 1024
+        MemoryMB: 4096
         Processor: cpu
         Envs:
           - Key: TOS_ENDPOINT
