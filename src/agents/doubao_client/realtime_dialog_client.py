@@ -59,6 +59,7 @@ class RealtimeDialogClient:
 
     async def start_session(self) -> None:
         """StartSession - 客户端事件ID: 100"""
+        default_session_req["dialog"]["dialog_id"] = self.session_id
         start_session_request = client_generate_request(
             payload_data=default_session_req,
             message_type=CLIENT_FULL_REQUEST,

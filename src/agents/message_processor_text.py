@@ -38,15 +38,15 @@ history_check_interval = 20000 #ms
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
     def __init__(self, 
-                 chat_id: str,
-                 user_id: str,
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
-        self.chat_id = chat_id
-        self.user_id = user_id
+        self.chat_id = None
+        self.user_id = None
         self.websocket_send_callback = websocket_send_callback
         self.replying_task_handle: asyncio.Task = None
 
-    async def start(self):
+    async def start(self, chat_id: str, user_id: str):
+        self.chat_id = chat_id
+        self.user_id = user_id
         TaskManager.initialize()
         # await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
@@ -104,7 +104,7 @@ class MessageProcessorText:
             MessageStore.get_instance().add_message(message)
             await self.user_input_resume()
 
-            logger.info(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
+            logger.debug(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
             
             return {
                 "success": True,
@@ -125,7 +125,7 @@ class MessageProcessorText:
     async def _muttering_process_task(self):
         """自言自语任务"""
         try:
-            logger.info(f"开始自言自语任务: chat_id={self.chat_id}")
+            logger.debug(f"开始自言自语任务: chat_id={self.chat_id}")
                         # 处理输入数据
             input_data = {
                 "chat_id": self.chat_id,
@@ -172,7 +172,7 @@ class MessageProcessorText:
             
             # 更新观察信息
             chat_history_str = _build_chat_history_str(history_messages)
-            logger.info(f"observe_conversation chat_history_str: {chat_history_str}")
+            logger.debug(f"observe_conversation chat_history_str: {chat_history_str}")
 
             # plan_model = get_chat_model_by_type("pfc_action_planner")
             # check_prompt = REPLYING_CHECK_PROMPT.format(chat_history_str=chat_history_str)
@@ -206,7 +206,7 @@ class MessageProcessorText:
                 if hasattr(chunk, 'content'):
                     end_performance_point(quick_response_point_id)
                     if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
-                        logger.info(f"打断流式响应，继续倾听")  
+                        logger.debug(f"打断流式响应，继续倾听")  
                         break
                     final_response += chunk.content
                     if self.websocket_send_callback:

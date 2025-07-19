@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 class DialogSession:
     """对话会话管理类，集成RealtimeDialogClient和aura流式聊天"""
     def __init__(self, 
-                 uid: str = None,
                  asr_start_callback: Callable[[], None] = None,
                  asr_response_callback: Callable[[dict, bool], None] = None,
                  asr_end_callback: Callable[[], None] = None,
@@ -35,8 +34,8 @@ class DialogSession:
                  chat_response_callback: Callable[[dict], None] = None,
                  chat_end_callback: Callable[[], None] = None,
                  ):
-        self.uid = uid or str(uuid.uuid4())
-        self.session_id = self.uid
+        self.uid = None
+        self.session_id = None
         self.client = None
 
         # 状态管理
@@ -88,9 +87,11 @@ class DialogSession:
             logger.error(f"连接失败: {e}")
             return False
     
-    async def start(self) -> None:
+    async def start(self, chat_id: str, user_id: str) -> None:
         """启动对话会话"""
         try:
+            self.session_id = chat_id
+            self.uid = chat_id
             logger.info(f"启动对话会话: {self.session_id}")
             await self._connect()
         except Exception as e:
@@ -338,5 +339,7 @@ class DialogSession:
             self.is_running = False
             self.is_session_started = False
             logger.info(f"对话会话已清理: {self.session_id}")
+            self.session_id = None
+            self.uid = None
         except Exception as e:
             logger.error(f"DoubaoClient清理资源时出错: {e}")

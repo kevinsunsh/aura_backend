@@ -134,7 +134,6 @@ class TtsClient:
     """TTS客户端，支持双向流式语音合成和断线重连"""
     
     def __init__(self, 
-                 uid: str = None,
                  app_id: str = None,
                  token: str = None,
                  speaker: str = None,
@@ -159,7 +158,8 @@ class TtsClient:
         self.token = token or tts_config["token"] 
         self.speaker = speaker or tts_config["speaker"]
         self.ws_url = kwargs.get("ws_url", tts_config["ws_url"])
-        self.uid = uid
+        self.uid = None
+        self.chat_id = None
 
         # 音频配置
         self.audio_format = kwargs.get("audio_format", tts_config["audio"]["format"])
@@ -331,11 +331,11 @@ class TtsClient:
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
 
-    async def start(self):
+    async def start(self, chat_id: str, user_id: str):
         """启动TTS连接并建立会话"""
-        if self.is_running:
-            return
-            
+        self.uid = user_id
+        self.chat_id = chat_id
+        
         try:
             await self._connect()
         except Exception as e:
@@ -484,7 +484,7 @@ class TtsClient:
             self.buffer_text = ""
             if end:
                 await self._tts_finish_session(self.ws, self.session_id)
-            logger.info(f"文本已加入发送队列: {text[:50]}...")
+            logger.debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
             await self._connect()

@@ -68,7 +68,7 @@ class MessageStore:
             )
             session.add(db_message)
             session.commit()
-            logger.info(f"添加消息成功: {message.content}")
+            logger.debug(f"添加消息成功: {message.content}")
             return True
         except Exception as e:
             session.rollback()

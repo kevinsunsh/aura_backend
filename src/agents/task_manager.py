@@ -73,7 +73,7 @@ class TaskManager:
         if task_type in self._task_map:
             async with self._task_map[task_type].task_lock:
                 self._task_map[task_type].metadata.task_state = state
-                logger.info(f"任务状态已设置: {task_type.value}, 状态: {state.value}")
+                logger.debug(f"任务状态已设置: {task_type.value}, 状态: {state.value}")
     
     def get_task_state(self, task_type: TaskType) -> TaskStateType:
         """获取任务状态（线程安全）"""
