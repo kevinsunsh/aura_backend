@@ -15,12 +15,21 @@ logger = logging.getLogger(__name__)
 class BaseClient:
     """实时对话客户端，基于参考代码实现"""
     
-    def __init__(self, config: Dict[str, Any], session_id: str):
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logid = ""
-        self.session_id = session_id
+        self.session_id = None
         self.ws = None
         self.recv_lock = asyncio.Lock()  # 防止并发recv调用
+
+    async def start(self, chat_id: str, user_id: str) -> None:
+        """启动客户端"""
+        self.session_id = chat_id
+        try:
+            await self.connect()
+        except Exception as e:
+            logger.error(f"启动客户端失败: {e}")
+            raise e
 
     async def connect(self) -> None:
         """建立WebSocket连接"""
@@ -30,6 +39,20 @@ class BaseClient:
             additional_headers=self.config['headers'],
             open_timeout=5
         )
+        
+        # 执行连接握手
+        await self.start_connection()
+        response = await self.receive_server_response()
+        if response.get("event") != ServerEvent.ConnectionStarted:
+            logger.error(f"连接握手失败: {response}")
+            raise Exception("连接握手失败")
+        
+        await self.start_session({})
+        response = await self.receive_server_response()
+        if response.get("event") != ServerEvent.SessionStarted:
+            logger.error(f"会话握手失败: {response}")
+            raise Exception("会话握手失败")
+        logger.debug(f"连接握手响应: {response}")
         
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
@@ -132,37 +155,29 @@ class BaseClient:
     
     async def receive_server_response(self) -> Dict[str, Any]:
         """接收服务器响应"""
-        async def _receive_with_lock():
-            async with self.recv_lock:
-                try:
-                    # 详细检查连接状态
-                    if not self.ws:
-                        logger.warning("WebSocket连接对象为空")
-                        raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is None")
-                    
-                    if self._is_websocket_closed():
-                        logger.warning("WebSocket连接已关闭")
-                        raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
-                    
-                    response = await self.ws.recv()
-                    data = client_parse_response(response, skip_audio_decompression=True)
-                    return data
-                except websockets.exceptions.ConnectionClosed:
-                    # 重新抛出连接关闭异常
-                    raise
-                except Exception as e:
-                    if "SSL connection is closed" in str(e):
-                        logger.error(f"SSL连接已关闭: {e}")
-                        raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection is closed: {e}")
-                    else:
-                        raise Exception(f"接收消息失败: {e}")
-        
         try:
-            # 使用超时机制防止长时间阻塞
-            return await asyncio.wait_for(_receive_with_lock(), timeout=10.0)
-        except asyncio.TimeoutError:
-            raise Exception("接收服务器响应超时")
-    
+            # 详细检查连接状态
+            if not self.ws:
+                logger.warning("WebSocket连接对象为空")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is None")
+            
+            if self._is_websocket_closed():
+                logger.warning("WebSocket连接已关闭")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
+            
+            response = await self.ws.recv()
+            data = client_parse_response(response, skip_audio_decompression=True)
+            return data
+        except websockets.exceptions.ConnectionClosed:
+            # 重新抛出连接关闭异常
+            raise
+        except Exception as e:
+            if "SSL connection is closed" in str(e):
+                logger.error(f"SSL连接已关闭: {e}")
+                raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection is closed: {e}")
+            else:
+                raise Exception(f"接收消息失败: {e}")
+        
     def _is_websocket_closed(self) -> bool:
         """检查WebSocket是否已关闭"""
         try:
@@ -195,7 +210,7 @@ class BaseClient:
         except Exception as e:
             logger.debug(f"检查WebSocket关闭状态时出错: {e}")
             return True  # 出错时假设连接已关闭
-
+    
     async def close(self) -> None:
         """关闭WebSocket连接"""
         if self.ws:
@@ -209,11 +224,28 @@ class BaseClient:
                 # 强制清理连接对象
                 self.ws = None
                 logger.info("WebSocket连接对象已清理")
+    
+    async def cleanup(self) -> None:
+        """清理资源"""
+        try:
+            await self.finish_session()
+            response = await self.receive_server_response()
+            logger.debug(f"会话结束握手响应: {response}")
+            if response.get("event") != ServerEvent.SessionFinished:
+                raise Exception("会话结束握手失败")
 
+            await self.finish_connection()
+            response = await self.receive_server_response()
+            if response.get("event") != ServerEvent.ConnectionFinished:
+                raise Exception("连接结束握手失败")
+            await self.close()
+        except Exception as e:
+            logger.error(f"清理资源失败: {e}")
+    
 class AsrClient(BaseClient):
     """ASR客户端"""
-    def __init__(self, config: Dict[str, Any], session_id: str):
-        super().__init__(config, session_id)
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
     
     async def task_request(self, audio: bytes) -> None:
         """TaskRequest - 客户端事件ID: 200"""

@@ -1,11 +1,10 @@
 import multiprocessing
 import asyncio
 import logging
-import uuid
-import base64
 import json
+import time
+import queue
 from typing import Dict, Any, Callable, Optional
-from datetime import datetime
 from enum import Enum
 from abc import ABC, abstractmethod
 
@@ -75,10 +74,17 @@ class E2ESessionClient(IDialogSession):
         self.llm_output_queue = llm_output_queue
         self.e2e_output_queue = e2e_output_queue
 
+        self.is_asr_started = False
+        self.asr_client = AuraDialogSession(
+            asr_start_callback=None,
+            asr_response_callback=None,
+            asr_end_callback=self._on_asr_ended
+        )
+        
         self.dialog_session = DialogSession(
             asr_start_callback=self._on_asr_info,
             asr_response_callback=self._on_asr_response,
-            asr_end_callback=self._on_asr_ended,
+            asr_end_callback=None,
             tts_sentence_start_callback=self._e2e_on_tts_sentence_start,
             tts_response_callback=self._e2e_on_tts_response,
             tts_sentence_end_callback=self._e2e_on_tts_sentence_end,
@@ -152,6 +158,7 @@ class E2ESessionClient(IDialogSession):
     async def _on_asr_info(self) -> None:
         """ASR信息事件回调 - 识别出首字"""
         logger.debug("ASR识别出首字")
+        self.is_asr_started = True
         await self.text_processor.user_input_interruption()
         self.asr_output_queue.put({"event": ServerEvent.ASRInfo})
     
@@ -171,7 +178,10 @@ class E2ESessionClient(IDialogSession):
     
     async def _on_asr_ended(self) -> None:
         """ASR结束事件回调"""
+        if self.is_asr_started == False:
+            return
         logger.debug(f"ASR识别结束 : {self.server_asr_result}")
+        self.is_asr_started = False
         await self.text_processor.handle_text_message({"message": self.server_asr_result})
         self.asr_output_queue.put({"event": ServerEvent.ASREnded})
     
@@ -214,18 +224,21 @@ class E2ESessionClient(IDialogSession):
         self.llm_output_queue.put(message)
     
     async def start(self, chat_id: str, user_id: str) -> None:
+        await self.asr_client.start(chat_id, user_id)
         await self.dialog_session.start(chat_id, user_id)
         await self.text_processor.start(chat_id, user_id)
         await self.tts_client.start(chat_id, user_id)
         self.recv_message_tasks = asyncio.gather(
             self.dialog_session.message_receive_loop(),
-            self.tts_client.message_receive_loop()
+            self.tts_client.message_receive_loop(),
+            self.asr_client.message_receive_loop()
         )
     
     async def cleanup(self) -> None:
         await self.dialog_session.cleanup()
         await self.text_processor.cleanup()
         await self.tts_client.cleanup()
+        await self.asr_client.cleanup()
         # 取消所有消息处理任务
         if hasattr(self, 'recv_message_tasks'):
             self.recv_message_tasks.cancel()
@@ -236,13 +249,14 @@ class E2ESessionClient(IDialogSession):
         logger.info("E2ESessionClient清理完成")
     
     async def process_audio_input(self, audio_chunk: bytes) -> None:
+        await self.asr_client.process_audio_chunk(audio_chunk)
         await self.dialog_session.process_audio_chunk(audio_chunk)
     
     async def process_text_input(self, text: str) -> None:
         pass
-    
+        
     def is_connected(self) -> bool:
-        return self.dialog_session.is_connected() and self.tts_client.is_connected()
+        return self.dialog_session.is_connected() and self.tts_client.is_connected() and self.asr_client.is_connected()
 
 # class ALTSessionClient(IDialogSession):
 #     """集联语音对话客户端包装器"""
@@ -449,11 +463,11 @@ class MessageProcessorAudio:
         logger.info("启动消息处理任务")
         self.message_tasks = asyncio.gather(
             self.send_asr_message(),
-            self.send_message()
+            self.send_message(),
         )
         
-        # 启动子进程
-        logger.info("启动子进程")
+        # 启动E2E子进程
+        logger.info("启动E2E子进程")
         self.process = multiprocessing.Process(
             target=e2e_process,
             args=(self.input_queues, self.asr_output_queue, self.llm_output_queue, self.e2e_output_queue, self.is_process_running)
@@ -472,7 +486,7 @@ class MessageProcessorAudio:
             elif message_data.get("event") == ClientEvent.TaskRequest:
                 self.input_queues.put({"type": "audio", "data": payload_msg})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
-
+    
     async def send_asr_message(self):
         """
         轮询ASR输出队列，有消息就发给 websocket
@@ -523,7 +537,7 @@ class MessageProcessorAudio:
         except Exception as e:
             logger.error(f"LLM消息处理任务异常: {e}")
             raise  # 重新抛出异常
-
+    
     # async def send_e2e_message(self):
     #     """
     #     轮询E2E输出队列，有消息就发给 websocket
