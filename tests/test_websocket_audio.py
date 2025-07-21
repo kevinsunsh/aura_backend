@@ -37,6 +37,9 @@ from statistics import mean, median
 from datetime import datetime
 import sys
 import tempfile
+import struct
+import multiprocessing as mp
+import ctypes
 # import opuslib
 
 # 配置日志（提前）
@@ -72,6 +75,19 @@ async def send_audio_task_request(websocket, audio: bytes, session_id: str = "te
         serial_method=NO_SERIALIZATION,
         compression_type=GZIP,
         event=ClientEvent.TaskRequest,
+        session_id=session_id
+    )
+    await websocket.send(task_request)
+
+async def send_speak_ended_request(websocket, session_id: str = "test_user_123444") -> None:
+    """发送音频数据，参考RealtimeDialogClient.task_request的简洁方式"""
+    task_request = client_generate_request(
+        payload_data={},
+        message_type=CLIENT_FULL_REQUEST,
+        message_type_specific_flags=MSG_WITH_EVENT,
+        serial_method=JSON,
+        compression_type=GZIP,
+        event=ClientEvent.SpeakEnded,
         session_id=session_id
     )
     await websocket.send(task_request)
@@ -400,7 +416,369 @@ class AudioDeviceManager:
         self.input_stream = None
         self.output_stream = None
 
+class VoiceActivityDetector:
+    """语音活动检测器"""
+    
+    def __init__(self, 
+                 sample_rate=16000,
+                 frame_duration_ms=20,
+                 silence_threshold_db=-45,
+                 speech_threshold_db=-35,
+                 silence_duration_ms=500,
+                 speech_duration_ms=100):
+        self.sample_rate = sample_rate
+        self.frame_duration_ms = frame_duration_ms
+        self.silence_threshold_db = silence_threshold_db
+        self.speech_threshold_db = speech_threshold_db
+        self.silence_duration_ms = silence_duration_ms
+        self.speech_duration_ms = speech_duration_ms
+        
+        # 计算帧大小
+        self.frame_size = int(sample_rate * frame_duration_ms / 1000)
+        
+        # 状态跟踪
+        self.is_speaking = False
+        self.speech_start_time = None
+        self.silence_start_time = None
+        self.last_volume_db = -100
+        self.volume_history = []
+        self.max_history_size = 10
+        
+        # 音量统计
+        self.min_volume_db = -100
+        self.max_volume_db = -100
+        self.avg_volume_db = -100
+        
+        # 实时音量可视化
+        self.volume_bar_length = 30
+        self.last_volume_bar = ""
+        
+        logger.info(f"🎤 VAD初始化: 静音阈值={silence_threshold_db}dB, 语音阈值={speech_threshold_db}dB")
+    
+    def calculate_volume_db(self, audio_data):
+        """计算音频数据的音量分贝值"""
+        try:
+            # 将字节数据转换为numpy数组
+            if len(audio_data) == 0:
+                return -100
+            
+            # 假设是16位PCM数据
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            
+            if len(audio_array) == 0:
+                return -100
+            
+            # 计算RMS值
+            rms = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+            
+            # 转换为分贝值 (参考值: 16位PCM的最大值32767)
+            if rms > 0:
+                db = 20 * np.log10(rms / 32767.0)
+            else:
+                db = -100
+            
+            return db
+            
+        except Exception as e:
+            logger.debug(f"计算音量失败: {e}")
+            return -100
+    
+    def calculate_energy(self, audio_data):
+        """计算音频能量"""
+        try:
+            if len(audio_data) == 0:
+                return 0
+            
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            if len(audio_array) == 0:
+                return 0
+            
+            # 计算能量
+            energy = np.sum(audio_array.astype(np.float32) ** 2)
+            return energy
+            
+        except Exception as e:
+            logger.debug(f"计算能量失败: {e}")
+            return 0
+    
+    def calculate_zero_crossing_rate(self, audio_data):
+        """计算过零率"""
+        try:
+            if len(audio_data) == 0:
+                return 0
+            
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            if len(audio_array) == 0:
+                return 0
+            
+            # 计算过零率
+            zero_crossings = np.sum(np.diff(np.sign(audio_array)) != 0)
+            rate = zero_crossings / len(audio_array)
+            return rate
+            
+        except Exception as e:
+            logger.debug(f"计算过零率失败: {e}")
+            return 0
+    
+    def update_volume_history(self, volume_db):
+        """更新音量历史记录"""
+        self.volume_history.append(volume_db)
+        if len(self.volume_history) > self.max_history_size:
+            self.volume_history.pop(0)
+        
+        # 更新统计值
+        if self.volume_history:
+            self.min_volume_db = min(self.volume_history)
+            self.max_volume_db = max(self.volume_history)
+            self.avg_volume_db = sum(self.volume_history) / len(self.volume_history)
+    
+    def detect_speech_start(self, audio_data):
+        """检测语音开始 - 增强版，结合能量和过零率"""
+        current_time = time.time()
+        volume_db = self.calculate_volume_db(audio_data)
+        energy = self.calculate_energy(audio_data)
+        zero_crossing_rate = self.calculate_zero_crossing_rate(audio_data)
+        
+        self.last_volume_db = volume_db
+        self.update_volume_history(volume_db)
+        
+        # 动态阈值调整（基于历史音量）
+        if len(self.volume_history) >= 5:
+            recent_avg = sum(self.volume_history[-5:]) / 5
+            dynamic_speech_threshold = max(self.speech_threshold_db, recent_avg + 5)
+            dynamic_silence_threshold = min(self.silence_threshold_db, recent_avg - 5)
+        else:
+            dynamic_speech_threshold = self.speech_threshold_db
+            dynamic_silence_threshold = self.silence_threshold_db
+        
+        # 检测语音开始 - 使用多个特征
+        speech_detected = False
+        if not self.is_speaking:
+            # 音量检测
+            volume_ok = volume_db > dynamic_speech_threshold
+            # 能量检测（降低阈值）
+            energy_ok = energy > 100000  # 降低能量阈值从100万到10万
+            # 过零率检测（放宽条件）
+            zcr_ok = 0.05 < zero_crossing_rate < 0.5  # 放宽过零率范围
+            
+            # 调试信息
+            if volume_db > -50:  # 只在音量较高时打印调试信息
+                logger.debug(f"🔍 VAD调试: 音量={volume_db:.1f}dB(阈值={dynamic_speech_threshold:.1f}dB) 能量={energy:.0f}(阈值=100000) 过零率={zero_crossing_rate:.3f}(范围=0.05-0.5)")
+                logger.debug(f"🔍 检测结果: 音量={volume_ok} 能量={energy_ok} 过零率={zcr_ok}")
+            
+            # 放宽检测条件：只需要满足音量或能量条件
+            if (volume_ok or energy_ok) and zcr_ok:
+                if self.speech_start_time is None:
+                    self.speech_start_time = current_time
+                
+                if current_time - self.speech_start_time >= self.speech_duration_ms / 1000.0:
+                    self.is_speaking = True
+                    self.silence_start_time = None
+                    logger.info(f"🎤 检测到语音开始! 音量: {volume_db:.1f}dB, 能量: {energy:.0f}, 过零率: {zero_crossing_rate:.3f}")
+                    speech_detected = True
+            else:
+                self.speech_start_time = None
+        elif self.is_speaking:
+            # 检测语音结束
+            if volume_db < dynamic_silence_threshold or energy < 500000:
+                if self.silence_start_time is None:
+                    self.silence_start_time = current_time
+                
+                if current_time - self.silence_start_time >= self.silence_duration_ms / 1000.0:
+                    self.is_speaking = False
+                    self.speech_start_time = None
+                    logger.info(f"🔇 检测到语音结束! 音量: {volume_db:.1f}dB, 能量: {energy:.0f}")
+            else:
+                self.silence_start_time = None
+        
+        return speech_detected
+    
+    def get_volume_info(self):
+        """获取音量信息"""
+        return {
+            'current_db': self.last_volume_db,
+            'avg_db': self.avg_volume_db,
+            'min_db': self.min_volume_db,
+            'max_db': self.max_volume_db,
+            'is_speaking': self.is_speaking
+        }
+    
+    def get_volume_bar(self, volume_db):
+        """生成音量可视化条"""
+        try:
+            # 将分贝值映射到0-1范围 (-60dB到0dB)
+            normalized_volume = max(0, min(1, (volume_db + 60) / 60))
+            
+            # 计算填充长度
+            filled_length = int(normalized_volume * self.volume_bar_length)
+            
+            # 生成音量条
+            if self.is_speaking:
+                # 说话时使用红色
+                bar = "█" * filled_length + "░" * (self.volume_bar_length - filled_length)
+                return f"\033[91m{bar}\033[0m"  # 红色
+            else:
+                # 静音时使用绿色
+                bar = "█" * filled_length + "░" * (self.volume_bar_length - filled_length)
+                return f"\033[92m{bar}\033[0m"  # 绿色
+                
+        except Exception as e:
+            logger.debug(f"生成音量条失败: {e}")
+            return "░" * self.volume_bar_length
+    
+    def print_volume_bar(self, volume_db):
+        """打印音量可视化条"""
+        volume_bar = self.get_volume_bar(volume_db)
+        status_emoji = "🎤" if self.is_speaking else "🔇"
+        print(f"\r{status_emoji} 音量: {volume_db:6.1f}dB [{volume_bar}]", end="", flush=True)
 
+class AudioProcessor:
+    """音频处理进程类 - 在独立进程中处理音频和语音检测"""
+    
+    def __init__(self, 
+                 sample_rate=16000,
+                 silence_threshold_db=-35,
+                 speech_threshold_db=-25,
+                 silence_duration_ms=300,
+                 speech_duration_ms=50,
+                 shared_variables=None):
+        
+        # 音频队列
+        self.mp_audio_queue = mp.Queue()  # 音频数据队列
+        
+        # 共享变量（由主进程传入）
+        if shared_variables is None:
+            # 如果没有传入，创建默认的共享变量
+            self.last_speech_end_time = mp.Value(ctypes.c_double, 0.0)
+            self.is_speaking = mp.Value(ctypes.c_bool, False)
+        else:
+            # 使用主进程传入的共享变量
+            self.last_speech_end_time = shared_variables['last_speech_end_time']
+            self.is_speaking = shared_variables['is_speaking']
+        
+        # 进程锁（仅在写入时使用）
+        self.process_lock = mp.Lock()
+        
+        # 语音检测器（在子进程中创建）
+        self.vad = None
+        self.vad_config = {
+            'sample_rate': sample_rate,
+            'silence_threshold_db': silence_threshold_db,
+            'speech_threshold_db': speech_threshold_db,
+            'silence_duration_ms': silence_duration_ms,
+            'speech_duration_ms': speech_duration_ms
+        }
+        
+        # 进程控制
+        self.process = None
+        self.is_running = False
+        
+        # 统计信息
+        self.speech_detection_count = 0
+        self.last_speech_start_time = None
+        
+        logger.info("🎤 音频处理器已初始化")
+    
+    def start(self):
+        """启动音频处理进程"""
+        if self.process is not None:
+            logger.warning("音频处理进程已在运行")
+            return
+        
+        self.is_running = True
+        self.process = mp.Process(target=self._audio_processing_worker, daemon=True)
+        self.process.start()
+        logger.info("🎤 音频处理进程已启动")
+    
+    def stop(self):
+        """停止音频处理进程"""
+        if self.process is None:
+            return
+        
+        self.is_running = False
+        
+        # 清空队列
+        while not self.mp_audio_queue.empty():
+            try:
+                self.mp_audio_queue.get_nowait()
+            except:
+                break
+        
+        # 等待进程结束
+        if self.process.is_alive():
+            self.process.terminate()
+            self.process.join(timeout=2)
+            if self.process.is_alive():
+                self.process.kill()
+        
+        self.process = None
+        logger.info("🎤 音频处理进程已停止")
+    
+    def put_audio_data(self, audio_data, timestamp):
+        """向音频队列添加音频数据"""
+        try:
+            if not self.mp_audio_queue.full():
+                self.mp_audio_queue.put((audio_data, timestamp), timeout=0.1)
+                return True
+            else:
+                # 队列满了，丢弃最旧的数据
+                try:
+                    self.mp_audio_queue.get_nowait()
+                    self.mp_audio_queue.put((audio_data, timestamp), timeout=0.1)
+                    return True
+                except:
+                    return False
+        except Exception as e:
+            logger.debug(f"添加音频数据到队列失败: {e}")
+            return False
+    
+    def get_last_speech_end_time(self):
+        """获取最后说话结束时间（读取不需要加锁）"""
+        return self.last_speech_end_time.value
+    
+    def get_is_speaking(self):
+        """获取当前说话状态（读取不需要加锁）"""
+        return self.is_speaking.value
+    
+    def _audio_processing_worker(self):
+        """音频处理工作进程"""
+        logger.info("🎤 音频处理工作进程已启动")
+        
+        # 在子进程中创建VAD对象
+        self.vad = VoiceActivityDetector(**self.vad_config)
+        logger.info("🎤 VAD对象已在子进程中创建")
+        
+        try:
+            while self.is_running:
+                try:
+                    # 从队列获取音频数据
+                    audio_data, timestamp = self.mp_audio_queue.get(timeout=0.1)
+                    
+                    # 语音检测
+                    speech_detected = self.vad.detect_speech_start(audio_data)
+                    
+                    if speech_detected:
+                        self.speech_detection_count += 1
+                        self.last_speech_start_time = timestamp
+                        logger.info(f"🎤 第{self.speech_detection_count}次检测到语音开始! 时间: {timestamp}")
+                    
+                    # 更新共享状态
+                    if self.is_speaking.value != self.vad.is_speaking:
+                        if self.vad.is_speaking == False:
+                            self.last_speech_end_time.value = timestamp
+                        with self.process_lock:
+                            self.is_speaking.value = self.vad.is_speaking
+                    
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.error(f"音频处理出错: {e}")
+                    continue
+            
+        except Exception as e:
+            logger.error(f"音频处理工作进程异常: {e}")
+        finally:
+            logger.info("🎤 音频处理工作进程已结束")
 
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
@@ -414,6 +792,23 @@ class WebSocketTestSession:
             output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
             # output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paFloat32)
         )
+        
+        # 创建共享变量（由主进程管理）
+        self.shared_variables = {
+            'last_speech_end_time': mp.Value(ctypes.c_double, 0.0),
+            'is_speaking': mp.Value(ctypes.c_bool, False)
+        }
+        
+        # 音频处理器（多进程）
+        self.audio_processor = AudioProcessor(
+            sample_rate=16000,
+            silence_threshold_db=-40,  # 静音阈值（更宽松）
+            speech_threshold_db=-35,   # 语音阈值（更宽松）
+            silence_duration_ms=300,   # 静音持续时间
+            speech_duration_ms=50,     # 语音持续时间
+            shared_variables=self.shared_variables
+        )
+        
         # 状态控制
         self.is_running = True
         self.is_playing = True
@@ -457,6 +852,61 @@ class WebSocketTestSession:
         self.is_recording_tts = False
         self.current_tts_audio_data = bytearray()
         self.tts_recording_start_time = None
+        
+        # 多进程语音检测统计
+        self.last_speech_end_time = 0.0
+        
+        # VAD到TTS延迟监测
+        self.vad_to_tts_delays = []  # 存储VAD结束到TTS开始的延迟
+        self.last_vad_end_time = None  # 最后一次VAD检测到语音结束的时间
+        self.vad_end_count = 0  # VAD结束次数统计
+        
+        # 性能监控
+        self.receive_loop_start_time = None
+        self.microphone_loop_start_time = None
+        self.performance_stats = {
+            'receive_messages': 0,
+            'microphone_frames': 0,
+            'last_stats_time': time.time()
+        }
+        
+    # 直接访问共享变量的方法
+    def get_shared_last_speech_end_time(self):
+        """直接获取共享的最后说话结束时间（无锁读取）"""
+        return self.shared_variables['last_speech_end_time'].value
+    
+    def get_shared_is_speaking(self):
+        """直接获取共享的说话状态（无锁读取）"""
+        return self.shared_variables['is_speaking'].value
+    
+    def monitor_vad_end_time(self):
+        """监测VAD结束时间，用于计算VAD到TTS的延迟"""
+        current_vad_end_time = self.get_shared_last_speech_end_time()
+        
+        # 检查是否有新的VAD结束时间
+        if current_vad_end_time > self.last_speech_end_time:
+            self.last_vad_end_time = current_vad_end_time
+            self.vad_end_count += 1
+            self.last_speech_end_time = current_vad_end_time
+            
+            logger.info(f"🎤 VAD检测到语音结束 #{self.vad_end_count}: {datetime.fromtimestamp(current_vad_end_time).strftime('%H:%M:%S.%f')[:-3]}")
+            
+            return current_vad_end_time
+        
+        return None
+    
+    def update_performance_stats(self, task_name: str, count: int = 1):
+        """更新性能统计"""
+        if task_name == "receive":
+            self.performance_stats['receive_messages'] += count
+        elif task_name == "microphone":
+            self.performance_stats['microphone_frames'] += count
+        
+        # 每5秒输出一次性能统计
+        current_time = time.time()
+        if current_time - self.performance_stats['last_stats_time'] > 5.0:
+            logger.info(f"📊 性能统计: 接收消息={self.performance_stats['receive_messages']}, 麦克风帧数={self.performance_stats['microphone_frames']}")
+            self.performance_stats['last_stats_time'] = current_time
 
     def _save_tts_audio_file(self):
         """保存录制的TTS音频文件 - 三个版本测试"""
@@ -646,6 +1096,12 @@ class WebSocketTestSession:
                 
                 # 计算ASREnded到TTSSentenceStart的延迟（只计算第一个TTSSentenceStart）
                 if self.asr_ended_time is not None:
+                    total_delay = self.tts_sentence_start_time - self.get_shared_last_speech_end_time()
+                    self.vad_to_tts_delays.append(total_delay)
+                    logger.info(f"⏱️ VAD到TTSSentenceStart总延迟: {total_delay:.3f}秒")
+                    asr_delay = self.asr_ended_time - self.get_shared_last_speech_end_time()
+                    self.asr_to_tts_delays.append(asr_delay)
+                    logger.info(f"⏱️ VAD到ASREnded延迟: {asr_delay:.3f}秒")
                     delay = self.tts_sentence_start_time - self.asr_ended_time
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个TTSSentenceStart延迟: {delay:.3f}秒")
@@ -658,7 +1114,7 @@ class WebSocketTestSession:
                         avg_delay = sum(self.asr_to_tts_delays) / len(self.asr_to_tts_delays)
                         min_delay = min(self.asr_to_tts_delays)
                         max_delay = max(self.asr_to_tts_delays)
-                        logger.info(f"📊 延迟统计 (共{len(self.asr_to_tts_delays)}次): 平均={avg_delay:.3f}s, 最小={min_delay:.3f}s, 最大={max_delay:.3f}s")
+                        logger.info(f"📊 ASR到TTS延迟统计 (共{len(self.asr_to_tts_delays)}次): 平均={avg_delay:.3f}s, 最小={min_delay:.3f}s, 最大={max_delay:.3f}s")
                 
                 # 开始录制TTS音频
                 self.is_recording_tts = False
@@ -715,6 +1171,8 @@ class WebSocketTestSession:
                 logger.info("服务器一次回复结束，等待用户继续说话...")
             elif event_id == 999:  # Error
                 logger.error(f"发生错误: {data.get('message', '未知错误')}")
+                # 发生错误时也设置响应完成标志
+                self.response_completed = True
 
     def _is_websocket_closed(self) -> bool:
         """检查WebSocket是否已关闭，兼容不同版本的websockets库"""
@@ -750,7 +1208,8 @@ class WebSocketTestSession:
             return True  # 出错时假设连接已关闭
 
     async def receive_loop(self):
-        """接收消息循环"""
+        """接收消息循环 - 使用run_in_executor避免阻塞"""
+        logger.info("🔄 receive_loop 已启动，开始监听WebSocket消息...")
         try:
             while self.is_running and not self.response_completed:
                 try:
@@ -764,65 +1223,45 @@ class WebSocketTestSession:
                             logger.error("重连失败，停止接收")
                             self.response_completed = True
                             break
-                    
-                    # logger.info("🔍 开始接收消息")
-                    # 添加短超时，让循环能定期检查退出条件
-                    response_data = await asyncio.wait_for(self.websocket.recv(), timeout=0.5)
-                    data = client_parse_response(response_data)
-                    self.handle_websocket_response(data)
-                    
-                except asyncio.TimeoutError:
-                    # 超时时检查退出条件和连接状态
-                    if not self.is_running or self._is_websocket_closed():
-                        break
-                    continue
-                except websockets.exceptions.ConnectionClosed:
-                    logger.info("WebSocket连接已关闭，尝试重连...")
-                    if await self._reconnect_websocket():
-                        logger.info("重连成功，继续接收消息")
-                        continue
                     else:
-                        logger.error("重连失败，停止接收")
-                        self.response_completed = True
-                        break
-                except websockets.exceptions.ConnectionClosedError:
-                    logger.info("WebSocket连接异常关闭，尝试重连...")
-                    if await self._reconnect_websocket():
-                        logger.info("重连成功，继续接收消息")
+                        logger.debug(f"🔍 WebSocket连接状态正常")
+                    
+                    # 使用run_in_executor来处理websocket.recv()，避免阻塞事件循环
+                    try:
+                        # 使用run_in_executor来处理websocket.recv()
+                        response_data = await asyncio.wait_for(self.websocket.recv(), timeout=0.1)
+                        data = client_parse_response(response_data)
+                        self.handle_websocket_response(data)
+                    except asyncio.TimeoutError:
                         continue
-                    else:
-                        logger.error("重连失败，停止接收")
-                        self.response_completed = True
-                        break
-                except websockets.exceptions.ConnectionClosedOK:
-                    logger.info("WebSocket连接正常关闭")
-                    self.response_completed = True
-                    break
+                    except Exception as e:
+                        logger.error(f"🔍 receive_loop 接收消息时出错: {e}")
+                        continue
                 except Exception as e:
-                    logger.error(f"接收消息时发生错误: {str(e)}")
-                    # 检查是否是连接相关的错误
-                    error_msg = str(e).lower()
-                    if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection", "ping", "timeout"]):
-                        logger.info("检测到连接断开相关错误，尝试重连...")
-                        if await self._reconnect_websocket():
-                            logger.info("重连成功，继续接收消息")
-                            continue
-                        else:
-                            logger.error("重连失败，停止接收")
-                            self.response_completed = True
-                            break
-                    # 其他错误则继续尝试
-                    await asyncio.sleep(0.1)
+                    logger.error(f"接收消息时发生错误: {e}")
+                    continue
                     
         except Exception as e:
             logger.error(f"接收任务异常: {str(e)}")
             self.response_completed = True
+        finally:
+            logger.info("🔄 receive_loop 已结束")
     
     async def microphone_input_loop(self):
-        """麦克风输入循环，纯音频录制和发送（打断由450事件控制）"""
+        """麦克风输入循环，带多进程语音活动检测"""
+        logger.info("🎤 microphone_input_loop 已启动，开始录制音频...")
         try:
             input_stream = self.audio_device.open_input_stream()
             logger.info("🎤 已打开麦克风，开始录制音频流...")
+            logger.info("🎤 多进程语音检测已启用，将实时监测说话开始瞬间")
+            
+            # 启动音频处理进程
+            self.audio_processor.start()
+            logger.info("🎤 音频处理进程已启动")
+            
+            # 音量显示计数器
+            volume_display_counter = 0
+            last_speech_end_time = 0.0
             
             while self.is_running and not self.response_completed:
                 try:
@@ -835,19 +1274,21 @@ class WebSocketTestSession:
                         else:
                             logger.error("重连失败，停止录制")
                             break
-                        
+                    
                     # 读取麦克风数据
                     audio_chunk = input_stream.read(
                         self.audio_device.input_config.chunk, 
                         exception_on_overflow=False
                     )
                     
+                    # 获取当前时间戳
+                    current_timestamp = time.time()
                     # 🔥 使用简洁的task_request方式发送音频数据
                     await send_audio_task_request(self.websocket, audio_chunk, "test_user_123444")
-                    logger.debug(f"📤 发送音频块: {len(audio_chunk)} 字节")
                     
-                    await asyncio.sleep(0.001)  # 1ms极低延迟
-                    
+                    # 向音频处理进程发送音频数据
+                    self.audio_processor.put_audio_data(audio_chunk, current_timestamp)
+                    await asyncio.sleep(0.01)
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("WebSocket连接关闭，尝试重连...")
                     if await self._reconnect_websocket():
@@ -878,11 +1319,35 @@ class WebSocketTestSession:
                             break
                     await asyncio.sleep(0.1)
             
+            # 停止音频处理进程
+            self.audio_processor.stop()
+            
+            # 显示多进程语音检测统计
+            logger.info(f"🎤 多进程语音检测统计: 最后语音结束时间: {last_speech_end_time:.3f}")
+            if last_speech_end_time > 0:
+                logger.info(f"🎤 最后语音结束时间: {datetime.fromtimestamp(last_speech_end_time).strftime('%H:%M:%S.%f')[:-3]}")
+            
+            # 显示VAD到TTS延迟统计
+            if self.vad_to_tts_delays:
+                avg_delay = sum(self.vad_to_tts_delays) / len(self.vad_to_tts_delays)
+                min_delay = min(self.vad_to_tts_delays)
+                max_delay = max(self.vad_to_tts_delays)
+                logger.info(f"📊 VAD到TTS延迟统计 (共{len(self.vad_to_tts_delays)}次):")
+                logger.info(f"  平均延迟: {avg_delay:.3f}秒")
+                logger.info(f"  最小延迟: {min_delay:.3f}秒")
+                logger.info(f"  最大延迟: {max_delay:.3f}秒")
+                logger.info(f"  VAD结束次数: {self.vad_end_count}")
+            else:
+                logger.info("📊 未检测到VAD到TTS延迟数据")
+            
             logger.info("🔇 麦克风录制已停止")
                     
         except Exception as e:
             logger.error(f"麦克风录制失败: {str(e)}")
-            pass
+            # 确保停止音频处理进程
+            self.audio_processor.stop()
+        finally:
+            logger.info("🎤 microphone_input_loop 已结束")
     
     async def auto_stop_after_timeout(self, timeout_seconds=20):
         """自动停止录制的超时处理"""
@@ -932,52 +1397,6 @@ class WebSocketTestSession:
             logger.error(f"发送控制消息失败: {e}")
             return False
         return True
-    
-    async def wait_for_server_response(self, expected_event_id: int, timeout: float = 5.0):
-        """等待服务端特定响应 - 使用事件等待机制避免并发recv冲突"""
-        try:
-            # 创建一个事件来等待特定响应
-            response_event = asyncio.Event()
-            response_data = None
-            
-            # 临时保存原始的处理函数
-            original_handler = self.handle_websocket_response
-            
-            def temp_handler(data: dict):
-                """临时处理函数，检查是否是期望的响应"""
-                nonlocal response_data, response_event
-                if "event" in data and data["event"] == expected_event_id:
-                    response_data = data
-                    response_event.set()
-                else:
-                    # 调用原始处理函数处理其他消息
-                    original_handler(data)
-            
-            # 替换处理函数
-            self.handle_websocket_response = temp_handler
-            
-            try:
-                # 等待响应事件
-                await asyncio.wait_for(response_event.wait(), timeout=timeout)
-                
-                event_id = response_data.get("event", "unknown")
-                logger.info(f"📥 收到服务端响应: 事件ID={event_id}")
-                
-                status = response_data.get("status", "unknown")
-                message = response_data.get("message", "")
-                logger.info(f"✅ 事件{expected_event_id} 成功: {status} - {message}")
-                return True
-                
-            finally:
-                # 恢复原始处理函数
-                self.handle_websocket_response = original_handler
-                
-        except asyncio.TimeoutError:
-            logger.error(f"❌ 等待事件ID {expected_event_id} 响应超时")
-            return False
-        except Exception as e:
-            logger.error(f"❌ 等待服务端响应时出错: {e}")
-            return False
 
     async def start_connection_handshake(self):
         """执行连接握手流程"""
@@ -988,7 +1407,13 @@ class WebSocketTestSession:
             return False
             
         # 等待连接确认
-        if not await self.wait_for_server_response(ServerEvent.ConnectionStarted):
+        logger.info("⏳ 等待连接确认消息...")
+        response_data = await self.websocket.recv()
+        logger.info(f"📥 握手收到消息: {len(response_data)} 字节")
+        data = client_parse_response(response_data)
+        logger.info(f"📋 握手消息: event={data.get('event', 'N/A')}")
+        if data.get("event") != ServerEvent.ConnectionStarted:
+            logger.error(f"❌ 连接确认失败，期望事件: {ServerEvent.ConnectionStarted}, 实际: {data.get('event')}")
             return False
         
         # 第二步：发送开始session消息
@@ -996,7 +1421,13 @@ class WebSocketTestSession:
             return False
             
         # 等待session确认
-        if not await self.wait_for_server_response(ServerEvent.SessionStarted):
+        logger.info("⏳ 等待session确认消息...")
+        response_data = await self.websocket.recv()
+        logger.info(f"📥 握手收到消息: {len(response_data)} 字节")
+        data = client_parse_response(response_data)
+        logger.info(f"📋 握手消息: event={data.get('event', 'N/A')}")
+        if data.get("event") != ServerEvent.SessionStarted:
+            logger.error(f"❌ session确认失败，期望事件: {ServerEvent.SessionStarted}, 实际: {data.get('event')}")
             return False
             
         logger.info("🎉 连接和Session握手完成！")
@@ -1015,7 +1446,10 @@ class WebSocketTestSession:
             # 第一步：结束session
             try:
                 if await self.send_control_message("end_session"):
-                    await self.wait_for_server_response(ServerEvent.SessionFinished, timeout=3.0)
+                    data = client_parse_response(await self.websocket.recv())
+                    if data.get("event") != ServerEvent.SessionFinished:
+                        logger.warning("⚠️ 结束session失败")
+                        return
                 else:
                     logger.warning("⚠️ 发送end_session消息失败")
             except Exception as e:
@@ -1024,7 +1458,10 @@ class WebSocketTestSession:
             # 第二步：结束连接
             try:
                 if await self.send_control_message("end_connection"):
-                    await self.wait_for_server_response(ServerEvent.ConnectionFinished, timeout=3.0)
+                    data = client_parse_response(await self.websocket.recv())
+                    if data.get("event") != ServerEvent.ConnectionFinished:
+                        logger.warning("⚠️ 结束connection失败")
+                        return
                 else:
                     logger.warning("⚠️ 发送end_connection消息失败")
             except Exception as e:
@@ -1052,45 +1489,64 @@ class WebSocketTestSession:
                 logger.info("已连接到WebSocket服务器")
                 logger.info("=== 开始麦克风音频测试 ===")
                 
-                # 先启动接收消息的任务，确保握手消息能被处理
-                receive_task = asyncio.create_task(self.receive_loop())
-                
-                # 等待一小段时间确保receive_loop已启动
-                await asyncio.sleep(0.1)
-                
                 # 执行连接和session握手
                 if not await self.start_connection_handshake():
                     logger.error("❌ 连接握手失败，退出测试")
-                    receive_task.cancel()
                     return
-                
-                # 初始化异步打断队列
-                self.interrupt_queue = asyncio.Queue(maxsize=10)
-                logger.info("🎛️ 异步打断控制系统已初始化")
                 
                 # 在会话开始时就初始化TTS播放器，准备接收音频
                 self.initialize_tts_player()
                 logger.info("🎵 TTS播放器已预先初始化，准备接收多轮对话...")
                 
-                # 创建其他异步任务
-                microphone_task = asyncio.create_task(self.microphone_input_loop())
-                interrupt_task = asyncio.create_task(self.interrupt_handler())
-                # timeout_task = asyncio.create_task(self.auto_stop_after_timeout(20))
-                
                 # 等待任务完成或者程序停止
-                tasks = [receive_task, microphone_task, interrupt_task]
                 try:
-                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    logger.info("🚀 开始高并发异步任务执行...")
                     
-                    # 如果程序需要停止，取消所有待处理的任务
-                    if not self.is_running:
-                        for task in pending:
-                            task.cancel()
-                        # 等待任务真正取消
-                        await asyncio.gather(*pending, return_exceptions=True)
+                    # 创建任务，使用更高效的方式
+                    tasks = [
+                        asyncio.create_task(self.receive_loop(), name="receive_loop"),
+                        asyncio.create_task(self.microphone_input_loop(), name="microphone_loop")
+                    ]
+                    
+                    logger.info(f"📋 已创建 {len(tasks)} 个并发任务")
+                    
+                    # 使用asyncio.gather进行高并发执行
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # 检查任务执行结果
+                    task_names = ["receive_loop", "microphone_loop"]
+                    for i, (name, result) in enumerate(zip(task_names, results)):
+                        if isinstance(result, Exception):
+                            logger.error(f"❌ 任务 {name} 执行出错: {result}")
+                        else:
+                            logger.info(f"✅ 任务 {name} 执行完成")
+                    
+                    logger.info("🎉 所有高并发任务执行完成")
+                except Exception as e:
+                    logger.error(f"❌ 任务执行出错: {e}")
                         
                 except asyncio.CancelledError:
                     logger.info("任务被取消")
+                
+                finally:
+                    # 确保清理资源
+                    logger.info("🧹 开始清理资源...")
+                    self.is_running = False
+                    self.response_completed = True
+                    
+                    # 停止音频处理进程
+                    if hasattr(self, 'audio_processor'):
+                        self.audio_processor.stop()
+                    
+                    # 清理音频设备
+                    if hasattr(self, 'audio_device'):
+                        self.audio_device.cleanup()
+                    
+                    # 关闭WebSocket连接
+                    if self.websocket and not self._is_websocket_closed():
+                        await self.websocket.close()
+                    
+                    logger.info("✅ 资源清理完成")
                 
                 print(f"\n=== 麦克风音频会话结束，总共收到 {self.chunk_count} 个内容片段 ===")
                 logger.info(f"完整响应内容: {self.full_response}")
@@ -1198,6 +1654,8 @@ class WebSocketTestSession:
                 logger.error("发送第一个请求音频失败")
                 return
             
+            await send_speak_ended_request(self.websocket, "test_user_123444")
+            
             # 记录第一个request发送完成时间
             self.first_request_send_time = time.time()
             logger.info(f"⏱️ 第一个request发送完成时间: {self.first_request_send_time}")
@@ -1206,21 +1664,23 @@ class WebSocketTestSession:
             logger.info("⏳ 等待TTS回复开始...")
             await self._wait_for_tts_start()
             
+            logger.info(f"延迟等待TTS开始播放: {time.time() - self.first_request_send_time}")
             # # 等待一小段时间让TTS开始播放
             await asyncio.sleep(3.0)
             
-            # 第二步：发送打断音频（确保已收到第一个TTS）
-            logger.info("📤 第二步：发送打断音频 (interrupt_audio)")
-            if not await self._send_audio_file(test_audio_files["interrupt_audio"]):
-                logger.error("发送打断音频失败")
-                return
+            # # 第二步：发送打断音频（确保已收到第一个TTS）
+            # logger.info("📤 第二步：发送打断音频 (interrupt_audio)")
+            # if not await self._send_audio_file(test_audio_files["interrupt_audio"]):
+            #     logger.error("发送打断音频失败")
+            #     return
+            # await send_speak_ended_request(self.websocket, "test_user_123444")
+
+            # # 记录打断音频发送完成时间
+            # self.interrupt_audio_send_time = time.time()
+            # logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
             
-            # 记录打断音频发送完成时间
-            self.interrupt_audio_send_time = time.time()
-            logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
-            
-            # 发送1秒静音（使用缓存的静音音频）
-            await self._send_silence_audio()
+            # # 发送1秒静音（使用缓存的静音音频）
+            # await self._send_silence_audio()
 
             while True:
                 if self.second_tts_audio_received_time is not None and self.second_asr_info_received_time is not None:
@@ -1286,7 +1746,7 @@ class WebSocketTestSession:
                     if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
                         logger.info("检测到连接断开相关错误，停止文件发送")
                         return False
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
             
             logger.info(f"音频文件发送完成: {audio_file_path}")
             return True
@@ -1375,9 +1835,6 @@ class WebSocketTestSession:
                 logger.info("已连接到WebSocket服务器")
                 logger.info("=== 开始打断测试模式 ===")
                 
-                # 先启动接收消息的任务，确保握手消息能被处理
-                receive_task = asyncio.create_task(self.receive_loop())
-                
                 # 等待一小段时间确保receive_loop已启动
                 await asyncio.sleep(0.1)
                 
@@ -1387,6 +1844,8 @@ class WebSocketTestSession:
                     receive_task.cancel()
                     return
                 
+                # 先启动接收消息的任务，确保握手消息能被处理
+                receive_task = asyncio.create_task(self.receive_loop())
                 # 在会话开始时就初始化TTS播放器，准备接收音频
                 self.initialize_tts_player()
                 logger.info("🎵 TTS播放器已预先初始化，准备接收音频...")
@@ -1550,20 +2009,276 @@ async def test_microphone_websocket_stream():
     # session = WebSocketTestSession()
     await session.start()
 
+async def test_voice_detection_only():
+    """仅测试语音检测功能，不连接WebSocket"""
+    logger.info("🎤 开始语音检测测试...")
+    logger.info("💡 请对着麦克风说话，程序将检测语音开始瞬间")
+    logger.info("💡 按 Ctrl+C 停止测试")
+    
+    try:
+        # 创建音频设备管理器
+        audio_device = AudioDeviceManager(
+            input_config=AudioConfig(sample_rate=16000, channels=1, chunk=3200, bit_size=pyaudio.paInt16),
+            output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
+        )
+        
+        # 创建语音检测器
+        vad = VoiceActivityDetector(
+            sample_rate=16000,
+            silence_threshold_db=-35,
+            speech_threshold_db=-25,
+            silence_duration_ms=300,
+            speech_duration_ms=50
+        )
+        
+        # 打开麦克风
+        input_stream = audio_device.open_input_stream()
+        logger.info("🎤 麦克风已打开，开始检测语音...")
+        
+        speech_count = 0
+        frame_count = 0
+        
+        while True:
+            try:
+                # 读取音频数据
+                audio_chunk = input_stream.read(
+                    audio_device.input_config.chunk,
+                    exception_on_overflow=False
+                )
+                
+                frame_count += 1
+                
+                # 语音检测
+                speech_detected = vad.detect_speech_start(audio_chunk)
+                if speech_detected:
+                    speech_count += 1
+                    logger.info(f"🎤 第{speech_count}次检测到语音开始!")
+                
+                # 实时显示音量条
+                volume_info = vad.get_volume_info()
+                current_db = volume_info['current_db']
+                vad.print_volume_bar(current_db)
+                
+                # 每200帧显示一次详细信息
+                if frame_count % 200 == 0:
+                    print()  # 换行
+                    logger.info(f"📊 帧数: {frame_count}, 语音检测次数: {speech_count}")
+                
+            except KeyboardInterrupt:
+                logger.info("用户中断测试")
+                break
+            except Exception as e:
+                logger.error(f"语音检测测试出错: {e}")
+                break
+        
+        # 显示统计信息
+        logger.info(f"🎤 语音检测测试结束")
+        logger.info(f"📊 总帧数: {frame_count}")
+        logger.info(f"🎤 语音检测次数: {speech_count}")
+        
+        # 清理资源
+        audio_device.cleanup()
+        
+    except Exception as e:
+        logger.error(f"语音检测测试失败: {e}")
+        if 'audio_device' in locals():
+            audio_device.cleanup()
+
+async def test_multiprocess_voice_detection():
+    """测试多进程语音检测功能"""
+    logger.info("🎤 开始多进程语音检测测试...")
+    logger.info("💡 请对着麦克风说话，程序将在独立进程中检测语音")
+    logger.info("💡 按 Ctrl+C 停止测试")
+    
+    try:
+        # 创建音频设备管理器
+        audio_device = AudioDeviceManager(
+            input_config=AudioConfig(sample_rate=16000, channels=1, chunk=3200, bit_size=pyaudio.paInt16),
+            output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
+        )
+        
+        # 创建音频处理器
+        audio_processor = AudioProcessor(
+            sample_rate=16000,
+            silence_threshold_db=-35,
+            speech_threshold_db=-25,
+            silence_duration_ms=300,
+            speech_duration_ms=50
+        )
+        
+        # 打开麦克风
+        input_stream = audio_device.open_input_stream()
+        logger.info("🎤 麦克风已打开，开始多进程语音检测...")
+        
+        # 启动音频处理进程
+        audio_processor.start()
+        logger.info("🎤 音频处理进程已启动")
+        
+        frame_count = 0
+        last_speech_end_time = 0.0
+        
+        while True:
+            try:
+                # 读取音频数据
+                audio_chunk = input_stream.read(
+                    audio_device.input_config.chunk,
+                    exception_on_overflow=False
+                )
+                
+                frame_count += 1
+                current_timestamp = time.time()
+                
+                # 向音频处理进程发送音频数据
+                audio_processor.put_audio_data(audio_chunk, current_timestamp)
+                
+                # 检查共享的语音结束时间
+                shared_speech_end_time = audio_processor.get_last_speech_end_time()
+                if shared_speech_end_time > last_speech_end_time:
+                    last_speech_end_time = shared_speech_end_time
+                    logger.info(f"🎤 检测到语音结束! 时间: {datetime.fromtimestamp(shared_speech_end_time).strftime('%H:%M:%S.%f')[:-3]}")
+                
+                # 获取当前说话状态
+                is_speaking = audio_processor.get_is_speaking()
+                
+                # 实时显示状态
+                status_emoji = "🎤" if is_speaking else "🔇"
+                print(f"\r{status_emoji} 多进程语音检测 - 说话状态: {'是' if is_speaking else '否'} | 帧数: {frame_count}", end="", flush=True)
+                
+                # 每200帧显示一次详细信息
+                if frame_count % 200 == 0:
+                    print()  # 换行
+                    logger.info(f"📊 帧数: {frame_count}, 最后语音结束时间: {last_speech_end_time:.3f}")
+                
+            except KeyboardInterrupt:
+                logger.info("用户中断测试")
+                break
+            except Exception as e:
+                logger.error(f"多进程语音检测测试出错: {e}")
+                break
+        
+        # 停止音频处理进程
+        audio_processor.stop()
+        
+        # 显示统计信息
+        logger.info(f"🎤 多进程语音检测测试结束")
+        logger.info(f"📊 总帧数: {frame_count}")
+        logger.info(f"🎤 最后语音结束时间: {last_speech_end_time:.3f}")
+        
+        # 清理资源
+        audio_device.cleanup()
+        
+    except Exception as e:
+        logger.error(f"多进程语音检测测试失败: {e}")
+        if 'audio_device' in locals():
+            audio_device.cleanup()
+        if 'audio_processor' in locals():
+            audio_processor.stop()
+
+async def test_vad_to_tts_delay():
+    """测试VAD到TTS延迟监测"""
+    logger.info("🎤 开始VAD到TTS延迟监测测试")
+    logger.info("💡 请对着麦克风说话，程序将监测从VAD检测到语音结束到TTS开始的时间间隔")
+    logger.info("💡 按 Ctrl+C 停止测试")
+    
+    # 创建测试会话
+    session = WebSocketTestSession()
+    
+    try:
+        # 启动音频处理器
+        session.audio_processor.start()
+        logger.info("🎤 音频处理器已启动")
+        
+        # 等待一段时间让用户说话
+        logger.info("🎤 请说话测试VAD到TTS延迟监测（15秒）...")
+        await asyncio.sleep(15)
+        
+        # 检查结果
+        speech_end_time = session.get_shared_last_speech_end_time()
+        is_speaking = session.get_shared_is_speaking()
+        
+        logger.info(f"🎤 检测结果: 说话状态={is_speaking}, 最后说话结束时间={speech_end_time}")
+        
+        # 显示VAD到TTS延迟统计
+        if session.vad_to_tts_delays:
+            avg_delay = sum(session.vad_to_tts_delays) / len(session.vad_to_tts_delays)
+            min_delay = min(session.vad_to_tts_delays)
+            max_delay = max(session.vad_to_tts_delays)
+            logger.info(f"📊 VAD到TTS延迟统计 (共{len(session.vad_to_tts_delays)}次):")
+            logger.info(f"  平均延迟: {avg_delay:.3f}秒")
+            logger.info(f"  最小延迟: {min_delay:.3f}秒")
+            logger.info(f"  最大延迟: {max_delay:.3f}秒")
+            logger.info(f"  VAD结束次数: {session.vad_end_count}")
+        else:
+            logger.info("📊 未检测到VAD到TTS延迟数据")
+        
+    except Exception as e:
+        logger.error(f"VAD到TTS延迟测试出错: {e}")
+    finally:
+        # 停止音频处理器
+        session.audio_processor.stop()
+        logger.info("🎤 音频处理器已停止")
+
+async def test_receive_loop_only():
+    """仅测试receive_loop功能"""
+    logger.info("🔍 开始仅测试receive_loop功能...")
+    session = WebSocketTestSession()
+    
+    try:
+        # 添加WebSocket连接配置
+        async with websockets.connect(
+            session.uri,
+            ping_interval=120,
+            ping_timeout=60,
+            close_timeout=10,
+            max_size=1000000000,
+            compression=None,
+            max_queue=32
+        ) as websocket:
+            session.websocket = websocket
+            logger.info("✅ 已连接到WebSocket服务器")
+            
+            # 执行连接握手
+            if not await session.start_connection_handshake():
+                logger.error("❌ 连接握手失败")
+                return
+            
+            logger.info("🎉 握手完成，开始测试receive_loop...")
+            
+            # 只运行receive_loop
+            try:
+                await session.receive_loop()
+            except Exception as e:
+                logger.error(f"receive_loop执行出错: {e}")
+                
+    except Exception as e:
+        logger.error(f"测试失败: {e}")
+
 if __name__ == "__main__":
     import sys
     
     # 检查命令行参数选择测试模式
-    mode = "mic"  # 默认文件模式
+    mode = "mic"  # 默认麦克风模式
     if len(sys.argv) > 1:
         if sys.argv[1].lower() in ["mic", "microphone", "麦克风"]:
             mode = "microphone"
         elif sys.argv[1].lower() in ["file", "files", "文件"]:
             mode = "file"
+        elif sys.argv[1].lower() in ["vad", "voice", "语音检测"]:
+            mode = "voice_detection"
+        elif sys.argv[1].lower() in ["mp", "multiprocess", "多进程"]:
+            mode = "multiprocess"
+        elif sys.argv[1].lower() in ["vad2tts", "vad-tts", "延迟"]:
+            mode = "vad_to_tts"
+        elif sys.argv[1].lower() in ["receive", "接收", "接收测试"]:
+            mode = "receive_only"
         else:
-            print("使用方法: python test_websocket_audio.py [file|mic]")
-            print("  file/文件: 测试预处理音频文件输入 (默认)")
-            print("  mic/microphone/麦克风: 测试麦克风输入")
+            print("使用方法: python test_websocket_audio.py [file|mic|vad|mp|vad2tts|receive]")
+            print("  file/文件: 测试预处理音频文件输入")
+            print("  mic/microphone/麦克风: 测试麦克风输入 (默认)")
+            print("  vad/voice/语音检测: 仅测试语音检测功能")
+            print("  mp/multiprocess/多进程: 测试多进程语音检测功能")
+            print("  vad2tts/vad-tts/延迟: 测试VAD到TTS延迟监测")
+            print("  receive/接收测试: 仅测试receive_loop功能")
             sys.exit(1)
     
     if mode == "file":
@@ -1572,10 +2287,38 @@ if __name__ == "__main__":
         print("📁 将发送 audio_test_data/ 目录下的测试音频文件")
         print("🎵 使用新的 AudioDeviceManager 播放TTS音频")
         asyncio.run(test_audio_websocket_stream())
+    elif mode == "voice_detection":
+        # 仅测试语音检测功能
+        print("=== 语音检测测试 ===")
+        print("🎤 仅测试语音检测功能，不连接WebSocket")
+        print("💡 请对着麦克风说话，程序将检测语音开始瞬间")
+        print("💡 按 Ctrl+C 停止测试")
+        asyncio.run(test_voice_detection_only())
+    elif mode == "multiprocess":
+        # 测试多进程语音检测功能
+        print("=== 多进程语音检测测试 ===")
+        print("🎤 测试多进程语音检测功能，音频数据在独立进程中处理")
+        print("💡 请对着麦克风说话，程序将检测语音结束时刻")
+        print("💡 按 Ctrl+C 停止测试")
+        asyncio.run(test_multiprocess_voice_detection())
+    elif mode == "vad_to_tts":
+        # 测试VAD到TTS延迟监测
+        print("=== VAD到TTS延迟监测测试 ===")
+        print("🎤 测试VAD检测到语音结束到TTS开始的时间间隔")
+        print("💡 请对着麦克风说话，程序将监测延迟时间")
+        print("💡 按 Ctrl+C 停止测试")
+        asyncio.run(test_vad_to_tts_delay())
+    elif mode == "receive_only":
+        # 仅测试receive_loop功能
+        print("=== 仅测试receive_loop功能 ===")
+        print("🔍 仅测试WebSocket消息接收功能，不发送音频")
+        print("💡 按 Ctrl+C 停止测试")
+        asyncio.run(test_receive_loop_only())
     else:
         # 测试麦克风输入
         print("=== 测试麦克风输入 ===")
         print("🎤 请准备好麦克风，程序将实时录制并发送音频")
         print("🎵 使用新的 AudioDeviceManager 播放TTS音频")
+        print("🎤 多进程语音检测已启用，将实时监测说话结束时刻")
         print("💡 提示: 按 Ctrl+C 停止录制")
         asyncio.run(test_microphone_websocket_stream())

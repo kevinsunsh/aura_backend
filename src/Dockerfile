@@ -1,4 +1,4 @@
-FROM mengs-cn-shanghai.cr.volces.com/aura/aura_backend:basev1
+FROM mengs-cn-beijing.cr.volces.com/aura/aura_backend:basev1
 
 WORKDIR /opt/application
 USER root

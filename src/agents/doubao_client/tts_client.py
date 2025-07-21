@@ -60,8 +60,10 @@ EVENT_ConnectionStarted = 50
 EVENT_ConnectionFailed = 51
 EVENT_ConnectionFinished = 52
 EVENT_StartSession = 100
+EVENT_CancelSession = 101
 EVENT_FinishSession = 102
 EVENT_SessionStarted = 150
+EVENT_SessionCanceled = 151
 EVENT_SessionFinished = 152
 EVENT_SessionFailed = 153
 EVENT_TaskRequest = 200
@@ -134,7 +136,6 @@ class TtsClient:
     """TTS客户端，支持双向流式语音合成和断线重连"""
     
     def __init__(self, 
-                 uid: str = None,
                  app_id: str = None,
                  token: str = None,
                  speaker: str = None,
@@ -159,7 +160,8 @@ class TtsClient:
         self.token = token or tts_config["token"] 
         self.speaker = speaker or tts_config["speaker"]
         self.ws_url = kwargs.get("ws_url", tts_config["ws_url"])
-        self.uid = uid
+        self.uid = None
+        self.chat_id = None
 
         # 音频配置
         self.audio_format = kwargs.get("audio_format", tts_config["audio"]["format"])
@@ -183,6 +185,7 @@ class TtsClient:
         self.buffer_text = ""
         # 性能指标
         self.tts_service_performance_point_id = None
+        self.message_loop = None
         
     def _gen_log_id(self):
         """生成logID"""
@@ -250,7 +253,8 @@ class TtsClient:
                     optional.response_meta_json, offset = self._read_tts_content(res, offset)
                 elif (optional.event == EVENT_SessionStarted
                       or optional.event == EVENT_SessionFailed
-                      or optional.event == EVENT_SessionFinished):
+                      or optional.event == EVENT_SessionFinished
+                      or optional.event == EVENT_SessionCanceled):
                     optional.sessionId, offset = self._read_tts_content(res, offset)
                     optional.response_meta_json, offset = self._read_tts_content(res, offset)
                 elif optional.event == EVENT_TTSResponse:
@@ -294,7 +298,7 @@ class TtsClient:
 
     async def _tts_start_session(self, websocket, speaker, session_id):
         """TTS开始会话"""
-        logger.debug(f"===========TTS开始会话: {session_id}")
+        logger.info(f"===========TTS开始会话: {session_id}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -313,7 +317,7 @@ class TtsClient:
 
     async def _tts_finish_session(self, ws, session_id):
         """TTS结束会话"""
-        logger.debug(f"===========TTS结束会话: {session_id}")
+        logger.info(f"===========TTS结束会话: {session_id}")
         self._tts_session_active = False
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
@@ -321,7 +325,18 @@ class TtsClient:
         optional = TTSOptional(event=EVENT_FinishSession, sessionId=session_id).as_bytes()
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
-
+    
+    async def _tts_cancel_session(self, ws, session_id):
+        """TTS取消会话"""
+        logger.info(f"===========TTS取消会话: {session_id}")
+        self._tts_session_active = False
+        header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
+                          message_type_specific_flags=MsgTypeFlagWithEvent,
+                          serial_method=JSON).as_bytes()
+        optional = TTSOptional(event=EVENT_CancelSession, sessionId=session_id).as_bytes()
+        payload = str.encode('{}')
+        return await self._send_tts_event(ws, header, optional, payload)
+    
     async def _tts_finish_connection(self, ws):
         """TTS结束连接"""
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
@@ -331,33 +346,38 @@ class TtsClient:
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
 
-    async def start(self):
+    async def start(self, chat_id: str, user_id: str):
         """启动TTS连接并建立会话"""
-        if self.is_running:
-            return
-            
+        self.uid = user_id
+        self.chat_id = chat_id
+        
         try:
             await self._connect()
+            self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:
             logger.error(f"启动TTS连接失败: {e}")
             raise
 
     async def _connect(self):
         """建立TTS连接和会话"""
-        logger.debug(f"建立TTS连接: {self.ws_url}")
-        
-        log_id = self._gen_log_id()
+        logger.info(f"建立TTS连接: {self.ws_url}")
+        self._tts_session_active = False
+        self.is_running = False
+        self.log_id = self._gen_log_id()
         
         ws_header = {
             "X-Api-App-Key": self.app_id,
             "X-Api-Access-Key": self.token,
             "X-Api-Resource-Id": 'volc.service_type.10029',
             "X-Api-Connect-Id": str(uuid.uuid4()),
-            "X-Tt-Logid": log_id,
+            "X-Tt-Logid": self.log_id,
         }
         
         # 建立WebSocket连接
-        self.ws = await websockets.connect(self.ws_url, additional_headers=ws_header, max_size=1000000000)
+        self.ws = await websockets.connect(self.ws_url, additional_headers=ws_header,
+                                           ping_interval=10,      # 每10秒发送一次ping（更保守）
+                                           ping_timeout=5       # ping超时时间5秒（更宽松）
+                                           )
         
         # 开始连接
         await self._tts_start_connection(self.ws)
@@ -384,8 +404,11 @@ class TtsClient:
     async def message_receive_loop(self):
         """接收音频数据循环"""
         try:
-            while self.is_running and self.ws:
+            while True:
                 try:
+                    if self.is_running == False:
+                        await asyncio.sleep(0.1)
+                        continue
                     res = self._parse_tts_response(await self.ws.recv())
                     logger.debug(f"TTS响应: event={res.optional.event}, type={res.header.message_type}")
                     
@@ -407,16 +430,21 @@ class TtsClient:
                         if self.tts_sentence_end_callback:
                             await safe_call(self.tts_sentence_end_callback)
                     elif res.optional.event == EVENT_SessionStarted:
-                        logger.debug(f"TTS会话开始: {res.optional.event}")
+                        logger.info(f"TTS会话开始: {res.optional.event}")
                         self._tts_session_active = True
+                    elif res.optional.event == EVENT_SessionCanceled:
+                        logger.info(f"TTS会话取消: {res.optional.event}")
+                        self._tts_session_active = False
+                        self.session_id = str(uuid.uuid4()).replace('-', '')
+                        await self._tts_start_session(self.ws, self.speaker, self.session_id)
                     elif res.optional.event == EVENT_SessionFailed:
                         logger.error(f"TTS会话失败: {res.optional.event}")
                         self._tts_session_active = False
+                        self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_SessionFinished:
-                        # 会话结束，触发结束回调
                         logger.debug(f"TTS会话结束: {res.optional.event}")
                         self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
@@ -424,8 +452,8 @@ class TtsClient:
                             await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_ConnectionFailed:
                         logger.error(f"TTS连接失败: {res.optional.event}")
-                except websockets.exceptions.ConnectionClosed:
-                    logger.warning("TTS WebSocket连接已关闭")
+                except websockets.exceptions.ConnectionClosed as e:
+                    logger.warning(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
                     await self._connect()
                     continue
                 except websockets.exceptions.ConnectionClosedError:
@@ -465,6 +493,7 @@ class TtsClient:
             self.ws = None
             
         # 重置会话相关状态
+        logger.info(f"重置TTS会话相关状态: {self.session_id}")
         self._tts_session_active = False
         self.buffer_text = ""
         self.session_id = None
@@ -480,15 +509,18 @@ class TtsClient:
         """
         try:
             self.buffer_text += text
+            if self._tts_session_active == False:
+                return
+            if self.is_connected() == False:
+                return
             await self._send_text_internal(self.buffer_text)
             self.buffer_text = ""
             if end:
                 await self._tts_finish_session(self.ws, self.session_id)
-            logger.info(f"文本已加入发送队列: {text[:50]}...")
+            logger.debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
-            await self._connect()
-    
+        
     async def _send_text_internal(self, text: str):
         """内部发送文本方法"""
         if self.tts_service_performance_point_id is None:
@@ -496,28 +528,73 @@ class TtsClient:
         if len(text) > 0:
             await self._tts_send_text(self.ws, self.speaker, text, self.session_id)
             logger.debug(f"已发送文本片段: {text[:50]}...")
-
-    def enable_reconnect(self):
-        """启用自动重连"""
-        self.should_reconnect = True
-
-    def get_connection_status(self) -> Dict[str, Any]:
-        """获取连接状态信息"""
-        return {
-            "is_running": self.is_running,
-            "session_active": self._tts_session_active,
-            "has_connection": self.ws is not None
-        }
-
+    
+    async def user_input_interruption(self):
+        """用户输入中断"""
+        if self.is_connected() == False:
+            return
+        if self.is_running == False:
+            return
+        if self._tts_session_active == False:
+            return
+        await self._tts_cancel_session(self.ws, self.session_id)
+    
     async def cleanup(self):
         """清理资源"""
         try:
             self.is_running = False
             await self._cleanup_connection()
+            if self.message_loop:
+                self.message_loop.cancel()
+                self.message_loop = None
             logger.debug("TTS客户端已清理")
         except Exception as e:
             logger.error(f"清理TTS客户端时出错: {e}")
-
+    
     def is_connected(self) -> bool:
         """检查连接状态"""
-        return self.is_running and self.ws is not None
+        try:
+            return self.ws is not None and self._is_websocket_open()
+        except Exception as e:
+            logger.debug(f"检查连接状态时出错: {e}")
+            return False
+    
+    def _is_websocket_open(self) -> bool:
+        """检查WebSocket是否开启"""
+        try:
+            if self.ws is None:
+                return False
+            
+            # 检查是否有state属性 (新版websockets)
+            if hasattr(self.ws, 'state'):
+                # 导入State枚举
+                try:
+                    from websockets.protocol import State
+                    if self.ws.state == State.OPEN:
+                        return True
+                    else:
+                        return False
+                except ImportError:
+                    # 如果导入失败，尝试其他方法
+                    pass
+            
+            # 检查是否有closed属性 (旧版websockets)
+            if hasattr(self.ws, 'closed'):
+                return not self.ws.closed
+            
+            # 检查是否有open属性 (某些版本)
+            if hasattr(self.ws, 'open'):
+                return self.ws.open
+            
+            # 如果以上都没有，尝试通过其他方式检查
+            # 检查是否有close_code属性，如果有且不为None，说明连接已关闭
+            if hasattr(self.ws, 'close_code'):
+                return self.ws.close_code is None
+            
+            # 最后的兜底方案，假设连接是开启的
+            logger.warning("无法确定WebSocket连接状态，假设连接正常")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"检查WebSocket状态时出错: {e}")
+            return False

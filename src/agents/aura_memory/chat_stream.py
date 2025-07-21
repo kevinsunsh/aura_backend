@@ -74,7 +74,7 @@ class ChatStreamManager:
             self.heartbeat_thread = threading.Thread(target=self._heartbeat_worker, daemon=True)
             self.heartbeat_thread.start()
             
-            logger.info("ChatStreamManager初始化完成，心跳线程已启动")
+            logger.debug("ChatStreamManager初始化完成，心跳线程已启动")
 
     def _heartbeat_worker(self):
         """心跳工作线程"""
@@ -117,7 +117,7 @@ class ChatStreamManager:
         self.heartbeat_running = False
         if self.heartbeat_thread.is_alive():
             self.heartbeat_thread.join(timeout=5)
-        logger.info("心跳线程已停止")
+        logger.debug("心跳线程已停止")
 
     def get_current_locked_chat(self) -> Optional[str]:
         """获取当前进程持有的锁"""
@@ -134,7 +134,7 @@ class ChatStreamManager:
     def set_heartbeat_interval(self, interval_seconds: float):
         """设置心跳间隔（秒）"""
         self.heartbeat_interval = interval_seconds
-        logger.info(f"心跳间隔已设置为 {interval_seconds} 秒")
+        logger.debug(f"心跳间隔已设置为 {interval_seconds} 秒")
 
     def get_heartbeat_interval(self) -> float:
         """获取当前心跳间隔（秒）"""
@@ -191,7 +191,7 @@ class ChatStreamManager:
                 )
                 
                 if result.rowcount > 0:
-                    logger.info(f"更新聊天流 {chat_id} 预处理器检查时间成功")
+                    logger.debug(f"更新聊天流 {chat_id} 预处理器检查时间成功")
                     return True
                 else:
                     logger.warning(f"聊天流不存在，无法更新预处理器检查时间: {chat_id}")
@@ -218,7 +218,7 @@ class ChatStreamManager:
                 ).fetchone()
                 
                 if result:
-                    # logger.info(f"获取聊天流成功: {chat_id}")
+                    # logger.debug(f"获取聊天流成功: {chat_id}")
                     return ChatStream(
                         chat_id=result.chat_id,
                         chatstream_checked_at=result.chatstream_checked_at,
@@ -247,7 +247,7 @@ class ChatStreamManager:
                     }
                 )
                 
-                logger.info(f"创建聊天流成功: {chat_id}")
+                logger.debug(f"创建聊天流成功: {chat_id}")
                 return ChatStream(
                     chat_id=chat_id,
                     chatstream_checked_at=current_time,
@@ -287,7 +287,7 @@ class ChatStreamManager:
                 current_time = int(datetime.now().timestamp() * 1000)
                 if locked:
                     if current_time - heartbeat > self.heartbeat_timeout:
-                        logger.info(f"处理器锁已超时，强制获取: {chat_id}")
+                        logger.debug(f"处理器锁已超时，强制获取: {chat_id}")
                     else:
                         logger.warning(f"处理器锁被其他进程持有且未超时: {chat_id}")
                         return False
@@ -300,7 +300,7 @@ class ChatStreamManager:
                     {"chat_id": chat_id, "heartbeat": current_time}
                 )
                 self._set_locked_chat(chat_id)
-                logger.info(f"成功获取处理器锁: {chat_id}")
+                logger.debug(f"成功获取处理器锁: {chat_id}")
                 return True
         except Exception as e:
             logger.error(f"获取处理器锁失败: {e}")
@@ -325,7 +325,7 @@ class ChatStreamManager:
                     {"chat_id": chat_id}
                 )
                 self._clear_locked_chat()
-                logger.info(f"成功释放处理器锁: {chat_id}")
+                logger.debug(f"成功释放处理器锁: {chat_id}")
                 return True
         except Exception as e:
             logger.error(f"释放处理器锁失败: {e}")
@@ -350,7 +350,7 @@ class ChatStreamManager:
                 locked, heartbeat = result
                 current_time = int(datetime.now().timestamp() * 1000)
                 if locked and current_time - heartbeat > self.heartbeat_timeout:
-                    logger.info(f"处理器锁已超时: {chat_id}")
+                    logger.debug(f"处理器锁已超时: {chat_id}")
                     return False
                 return locked
         except Exception as e:
@@ -367,7 +367,7 @@ class ChatStreamManager:
                 )
                 
                 if result.rowcount > 0:
-                    logger.info(f"删除聊天流成功: {chat_id}")
+                    logger.debug(f"删除聊天流成功: {chat_id}")
                     return True
                 else:
                     logger.warning(f"聊天流不存在，无法删除: {chat_id}")

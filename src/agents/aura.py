@@ -40,11 +40,9 @@ class AuraAgent:
     
     def __init__(self):
         self.chat_stream = None
-        
         # WebSocket相关
         self.websocket_connection = None  # 存储WebSocket连接
-        # self.websocket_lock = asyncio.Lock()  # 移除锁
-        self.message_processor_audio = None
+
     
     async def send_websocket_message(self, message: dict):
         """发送WebSocket消息，使用统一的协议格式"""
@@ -53,7 +51,7 @@ class AuraAgent:
             if self.websocket_connection:
                 try:
                     # 使用统一的协议构造方法
-                    logger.info(f"发送消息: {message}")
+                    logger.debug(f"发送消息: {message}")
                     binary_data = self._construct_protocol_message(message)
                     
                     # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
@@ -61,7 +59,7 @@ class AuraAgent:
                         await self.websocket_connection.send_bytes(binary_data)
                     else:
                         await self.websocket_connection.send(binary_data)
-                    logger.info(f"发送消息成功: {message.get('event')}")
+                    logger.debug(f"发送消息成功: {message.get('event')}")
                 except Exception as e:
                     logger.error(f"发送消息失败: {str(e)}")
         except asyncio.TimeoutError:
@@ -120,10 +118,8 @@ class AuraAgent:
             logger.error(f"关闭WebSocket连接时出错: {e}")
         # 清理消息分发器和聊天流锁
         try:
-            if self.message_processor_audio:
-                await self.message_processor_audio.cleanup()
-                self.message_processor_audio = None
-            logger.info("message_processor_audio清理完成")
+            MessageProcessorAudio.get_instance().cleanup()
+            logger.info("MessageProcessorAudio清理完成")
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
                     ChatStreamManager.get_instance().release_lock(self.chat_stream.chat_id)
@@ -286,12 +282,7 @@ class AuraAgent:
                         })
                         return False
                 
-                self.message_processor_audio = MessageProcessorAudio(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    websocket_send_callback=self.send_websocket_message
-                )
-                await self.message_processor_audio.start()
+                await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
                 # 发送session确认
                 await self.send_websocket_message({
                     "event": ServerEvent.SessionStarted,
@@ -348,10 +339,9 @@ class AuraAgent:
                         "payload_msg": {"status": "ended", "message": "Session已结束"}
                     })
                     break
-                    
+                
                 logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
-                await self.message_processor_audio.handle_message(message_data)
-
+                await MessageProcessorAudio.get_instance().handle_message(message_data)
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break
