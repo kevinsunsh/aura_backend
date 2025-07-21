@@ -249,6 +249,7 @@ class LLM_TTSClient(IConnectClient):
                     client.timestamp = int(time.time() * 1000)
                     logger.info(f"input: {msg['data']} at {client.timestamp}ms")
                     await client.text_processor.handle_text_message({"message": msg["data"]})
+                    logger.info(f"handle_text_message delay: {int(time.time() * 1000) - client.timestamp}ms")
     
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any]) -> None:
@@ -703,6 +704,9 @@ class MessageProcessorAudio:
         # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        while not self.asr_is_process_running.value or not self.e2e_is_process_running.value or not self.llm_tts_is_process_running.value:
+            await asyncio.sleep(0.1)
+        logger.info("MessageProcessorAudio启动完成")
     
     async def cleanup(self):
         logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")

@@ -390,7 +390,7 @@ class TtsClient:
         self.connection_id = res.optional.connectionId
         
         # 开始会话
-        self.session_id = self.chat_id
+        self.session_id = str(uuid.uuid4()).replace('-', '')
         await self._tts_start_session(self.ws, self.speaker, self.session_id)
         res = self._parse_tts_response(await self.ws.recv())
         logger.info(f"TTS会话响应: event={res.optional.event}")
@@ -435,18 +435,18 @@ class TtsClient:
                     elif res.optional.event == EVENT_SessionCanceled:
                         logger.info(f"TTS会话取消: {res.optional.event}")
                         self._tts_session_active = False
-                        self.session_id = self.chat_id
+                        self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
                     elif res.optional.event == EVENT_SessionFailed:
                         logger.error(f"TTS会话失败: {res.optional.event}")
                         self._tts_session_active = False
-                        self.session_id = self.chat_id
+                        self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_SessionFinished:
                         logger.debug(f"TTS会话结束: {res.optional.event}")
-                        self.session_id = self.chat_id
+                        self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback)
@@ -532,6 +532,10 @@ class TtsClient:
     async def user_input_interruption(self):
         """用户输入中断"""
         if self.is_connected() == False:
+            return
+        if self.is_running == False:
+            return
+        if self._tts_session_active == False:
             return
         await self._tts_cancel_session(self.ws, self.session_id)
     

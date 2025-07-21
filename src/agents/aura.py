@@ -339,10 +339,9 @@ class AuraAgent:
                         "payload_msg": {"status": "ended", "message": "Session已结束"}
                     })
                     break
-                    
-                logger.info(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
+                
+                logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
                 await MessageProcessorAudio.get_instance().handle_message(message_data)
-
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break

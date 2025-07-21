@@ -1731,7 +1731,7 @@ class WebSocketTestSession:
                     logger.debug(f"📤 发送音频文件块: {len(chunk)} 字节")
                     
                     # 控制发送频率，模拟真实音频流
-                    await asyncio.sleep(0.1)  # 200ms间隔，匹配音频块时长
+                    await asyncio.sleep(0.2)  # 200ms间隔，匹配音频块时长
                     
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("WebSocket连接关闭，停止文件发送")
@@ -1844,7 +1844,6 @@ class WebSocketTestSession:
                     receive_task.cancel()
                     return
                 
-                await asyncio.sleep(2)
                 # 先启动接收消息的任务，确保握手消息能被处理
                 receive_task = asyncio.create_task(self.receive_loop())
                 # 在会话开始时就初始化TTS播放器，准备接收音频

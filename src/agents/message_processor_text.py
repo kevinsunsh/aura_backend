@@ -67,7 +67,7 @@ class MessageProcessorText:
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
-
+    
     async def handle_text_message(self, 
                                 message_data: Dict[str, Any]) -> Dict[str, Any]:
         """处理文本消息"""
@@ -86,8 +86,8 @@ class MessageProcessorText:
                 }
             
             await self.user_input_resume()
-            final_response = await self._replying_response(user_input)
-            asyncio.create_task(self._save_message_task(user_input, final_response))
+            asyncio.create_task(self._save_message_task(self.user_id, user_input))
+            self.replying_task_handle = asyncio.create_task(self._replying_response_task(user_input))
             logger.debug(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
             
             return {
@@ -105,35 +105,24 @@ class MessageProcessorText:
                 "message_type": "text"
             }
     
-    async def _save_message_task(self, user_input: str, final_response: str):
+    async def _save_message_task(self, user_id: str, message_str: str, update_checked_at: bool = False):
         """保存消息任务"""
         try:
             # 创建消息对象
             message = Message(
                 msg_id=str(uuid.uuid4()),
                 chat_id=self.chat_id,
-                user_id=self.user_id,
+                user_id=user_id,
                 platform="default",
                 m_type="text",
-                content=user_input,
+                content=message_str,
                 data={},
                 created_at=int(datetime.now().timestamp() * 1000)
             )
             # 存储到消息存储
             MessageStore.get_instance().add_message(message)
-            ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
-            message = Message(
-                msg_id=str(uuid.uuid4()),
-                chat_id=self.chat_id,
-                user_id="aura",
-                platform="default",
-                m_type="text",
-                content=final_response,
-                data={},
-                created_at=int(datetime.now().timestamp() * 1000)
-            )
-            # 存储到消息存储
-            MessageStore.get_instance().add_message(message)
+            if update_checked_at:
+                ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
         except Exception as e:
             logger.error(f"保存消息任务失败: {e}")
     
@@ -175,7 +164,7 @@ class MessageProcessorText:
         except Exception as e:
             logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
-    async def _replying_response(self, user_input: str):
+    async def _replying_response_task(self, user_input: str):
         try:
             # 获取新消息
             now_timestamp = int(datetime.now().timestamp() * 1000)
@@ -199,7 +188,7 @@ class MessageProcessorText:
             #     return
             
             # 使用LLM生成立即回复
-            chat_model = get_chat_model_by_type("pfc_chat")
+            chat_model = get_chat_model_by_type("pfc_action_planner")
             thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
             goals_str = thinking_task_shared_data.get("goals_str", "")
             knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
@@ -213,13 +202,13 @@ class MessageProcessorText:
             )
             # 生成立即回复
             final_response = ""
-            quick_response_point_id = start_performance_point("快速响应")
+            logger.debug(f"开始回复 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
             async for chunk in chat_model.astream([
                 SystemMessage(content=prompt)
             ],
             extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
-                    end_performance_point(quick_response_point_id)
+                    logger.debug(f"生成回复内容 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
                     if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
                         logger.debug(f"打断流式响应，继续倾听")  
                         break
@@ -236,7 +225,7 @@ class MessageProcessorText:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
                 })
-            return final_response
+            asyncio.create_task(self._save_message_task("aura", final_response, update_checked_at=True))
         except asyncio.CancelledError:
             logger.info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:
