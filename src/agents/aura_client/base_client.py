@@ -160,7 +160,7 @@ class BaseClient:
             data = client_parse_response(response, skip_audio_decompression=True)
             return data
         except Exception as e:
-            self.connect()
+            await self.connect()
         
     def _is_websocket_closed(self) -> bool:
         """检查WebSocket是否已关闭"""

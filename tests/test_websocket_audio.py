@@ -79,6 +79,19 @@ async def send_audio_task_request(websocket, audio: bytes, session_id: str = "te
     )
     await websocket.send(task_request)
 
+async def send_speak_ended_request(websocket, session_id: str = "test_user_123444") -> None:
+    """发送音频数据，参考RealtimeDialogClient.task_request的简洁方式"""
+    task_request = client_generate_request(
+        payload_data={},
+        message_type=CLIENT_FULL_REQUEST,
+        message_type_specific_flags=MSG_WITH_EVENT,
+        serial_method=JSON,
+        compression_type=GZIP,
+        event=ClientEvent.SpeakEnded,
+        session_id=session_id
+    )
+    await websocket.send(task_request)
+
 class AudioConfig:
     """音频配置类"""
     def __init__(self, 
@@ -1641,6 +1654,8 @@ class WebSocketTestSession:
                 logger.error("发送第一个请求音频失败")
                 return
             
+            await send_speak_ended_request(self.websocket, "test_user_123444")
+            
             # 记录第一个request发送完成时间
             self.first_request_send_time = time.time()
             logger.info(f"⏱️ 第一个request发送完成时间: {self.first_request_send_time}")
@@ -1649,21 +1664,23 @@ class WebSocketTestSession:
             logger.info("⏳ 等待TTS回复开始...")
             await self._wait_for_tts_start()
             
+            logger.info(f"延迟等待TTS开始播放: {time.time() - self.first_request_send_time}")
             # # 等待一小段时间让TTS开始播放
             await asyncio.sleep(3.0)
             
-            # 第二步：发送打断音频（确保已收到第一个TTS）
-            logger.info("📤 第二步：发送打断音频 (interrupt_audio)")
-            if not await self._send_audio_file(test_audio_files["interrupt_audio"]):
-                logger.error("发送打断音频失败")
-                return
+            # # 第二步：发送打断音频（确保已收到第一个TTS）
+            # logger.info("📤 第二步：发送打断音频 (interrupt_audio)")
+            # if not await self._send_audio_file(test_audio_files["interrupt_audio"]):
+            #     logger.error("发送打断音频失败")
+            #     return
+            # await send_speak_ended_request(self.websocket, "test_user_123444")
+
+            # # 记录打断音频发送完成时间
+            # self.interrupt_audio_send_time = time.time()
+            # logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
             
-            # 记录打断音频发送完成时间
-            self.interrupt_audio_send_time = time.time()
-            logger.info(f"⏱️ 打断音频发送完成时间: {self.interrupt_audio_send_time}")
-            
-            # 发送1秒静音（使用缓存的静音音频）
-            await self._send_silence_audio()
+            # # 发送1秒静音（使用缓存的静音音频）
+            # await self._send_silence_audio()
 
             while True:
                 if self.second_tts_audio_received_time is not None and self.second_asr_info_received_time is not None:
@@ -1714,7 +1731,7 @@ class WebSocketTestSession:
                     logger.debug(f"📤 发送音频文件块: {len(chunk)} 字节")
                     
                     # 控制发送频率，模拟真实音频流
-                    await asyncio.sleep(0.2)  # 200ms间隔，匹配音频块时长
+                    await asyncio.sleep(0.1)  # 200ms间隔，匹配音频块时长
                     
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("WebSocket连接关闭，停止文件发送")
@@ -1729,7 +1746,7 @@ class WebSocketTestSession:
                     if any(keyword in error_msg for keyword in ["disconnect", "closed", "connection"]):
                         logger.info("检测到连接断开相关错误，停止文件发送")
                         return False
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.01)
             
             logger.info(f"音频文件发送完成: {audio_file_path}")
             return True
@@ -1818,9 +1835,6 @@ class WebSocketTestSession:
                 logger.info("已连接到WebSocket服务器")
                 logger.info("=== 开始打断测试模式 ===")
                 
-                # 先启动接收消息的任务，确保握手消息能被处理
-                receive_task = asyncio.create_task(self.receive_loop())
-                
                 # 等待一小段时间确保receive_loop已启动
                 await asyncio.sleep(0.1)
                 
@@ -1830,6 +1844,9 @@ class WebSocketTestSession:
                     receive_task.cancel()
                     return
                 
+                await asyncio.sleep(2)
+                # 先启动接收消息的任务，确保握手消息能被处理
+                receive_task = asyncio.create_task(self.receive_loop())
                 # 在会话开始时就初始化TTS播放器，准备接收音频
                 self.initialize_tts_player()
                 logger.info("🎵 TTS播放器已预先初始化，准备接收音频...")

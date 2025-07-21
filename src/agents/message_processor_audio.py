@@ -196,6 +196,99 @@ class TTSClient(IConnectClient):
         self.is_llm_tts_running = False
         self.output_queue.put({"event": ServerEvent.TTSEnded})
 
+class LLM_TTSClient(IConnectClient):
+    """TTS客户端包装器"""
+    def __init__(self, 
+                 input_queue,
+                 output_queue,
+                 is_process_running):
+        self.input_queue = input_queue
+        self.output_queue = output_queue
+        self.is_process_running = is_process_running
+        self.text_processor = MessageProcessorText(
+            websocket_send_callback=self._text_processor_callback
+        )
+        self.tts_client = TtsClient(
+            tts_sentence_start_callback=self._llm_on_tts_sentence_start,
+            tts_response_callback=self._llm_on_tts_response,
+            tts_sentence_end_callback=self._llm_on_tts_sentence_end,
+            tts_ended_callback=self._llm_on_tts_ended
+        )
+        self.is_llm_tts_running = True
+        self.llm_is_chat_started = False
+        self.timestamp = 0
+    
+    @staticmethod
+    def process_entry(input_queue, output_queue, is_process_running):
+        asyncio.run(LLM_TTSClient.main(input_queue, output_queue, is_process_running))
+    
+    @staticmethod
+    async def main(input_queue, output_queue, is_process_running):
+        loop = asyncio.get_event_loop()
+        client = LLM_TTSClient(
+            input_queue=input_queue,
+            output_queue=output_queue,
+            is_process_running=is_process_running
+        )
+        while True:
+            msg = await loop.run_in_executor(None, input_queue.get)
+            if isinstance(msg, dict) and msg.get("type") == "start":
+                await client.text_processor.start(msg["data"]["chat_id"], msg["data"]["user_id"])
+                await client.tts_client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
+                client.is_process_running.value = True
+            elif isinstance(msg, dict) and msg.get("type") == "stop":
+                await client.tts_client.cleanup()
+                await client.text_processor.cleanup()
+                client.is_process_running.value = False
+            elif isinstance(msg, dict) and msg.get("type") == "interruption":
+                if client.is_process_running.value:
+                    await client.text_processor.user_input_interruption()
+                    await client.tts_client.user_input_interruption()
+            elif isinstance(msg, dict) and msg.get("type") == "input":
+                if client.is_process_running.value:
+                    client.timestamp = int(time.time() * 1000)
+                    logger.info(f"input: {msg['data']} at {client.timestamp}ms")
+                    await client.text_processor.handle_text_message({"message": msg["data"]})
+    
+    # TTS类事件回调方法
+    async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any]) -> None:
+        """TTS句子开始事件回调"""
+        text = payload.get("text", "")
+        logger.debug(f"LLM TTS句子开始: {text}")
+        self.is_llm_tts_running = True
+        self.output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
+        logger.info(f"LLM TTS delay: {int(time.time() * 1000) - self.timestamp}ms")
+    
+    async def _llm_on_tts_sentence_end(self) -> None:
+        """TTS句子结束事件回调"""
+        logger.debug("LLM TTS句子结束")
+        self.output_queue.put({"event": ServerEvent.TTSSentenceEnd})
+    
+    async def _llm_on_tts_response(self, payload: bytes) -> None:
+        """TTS音频响应事件回调"""
+        # 这里payload应该是二进制音频数据
+        self.output_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload})
+    
+    async def _llm_on_tts_ended(self) -> None:
+        """TTS结束事件回调"""
+        logger.debug("LLM TTS合成结束")
+        self.is_llm_tts_running = False
+        self.output_queue.put({"event": ServerEvent.TTSEnded})
+    
+    async def _text_processor_callback(self, message: Dict[str, Any]):
+        """文本处理器回调，用于处理聊天响应"""
+        if message.get("event") == ServerEvent.ChatResponse:
+            if self.llm_is_chat_started:
+                await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
+            else:
+                self.llm_is_chat_started = True
+                logger.info(f"LLM delay: {int(time.time() * 1000) - self.timestamp}ms")
+                await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
+        elif message.get("event") == ServerEvent.ChatEnded:
+            self.llm_is_chat_started = False
+            await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=False, end=True)
+        self.output_queue.put(message)
+
 class E2EClient(IConnectClient):
     """端到端语音对话客户端包装器"""
     
@@ -326,8 +419,9 @@ class MessageProcessorAudio:
         self.message_tasks = asyncio.gather(
             self.send_asr_message(),
             self.send_e2e_asr_message(),
-            self.send_llm_message(),
-            self.send_tts_message(),
+            # self.send_llm_message(),
+            # self.send_tts_message(),
+            self.send_llm_tts_message()
         )
 
         # 启动ASR子进程
@@ -341,27 +435,38 @@ class MessageProcessorAudio:
         )
         self.asr_process.start()
 
-        # 启动LLM子进程
-        self.llm_input_queues = multiprocessing.Queue()
-        self.llm_output_queue = multiprocessing.Queue()
-        self.llm_is_process_running = multiprocessing.Value('b', False)
-        logger.info("启动LLM子进程")
-        self.llm_process = multiprocessing.Process(
-            target=LLMClient.process_entry,
-            args=(self.llm_input_queues, self.llm_output_queue, self.llm_is_process_running)
-        )
-        self.llm_process.start()
+        # # 启动LLM子进程
+        # self.llm_input_queues = multiprocessing.Queue()
+        # self.llm_output_queue = multiprocessing.Queue()
+        # self.llm_is_process_running = multiprocessing.Value('b', False)
+        # logger.info("启动LLM子进程")
+        # self.llm_process = multiprocessing.Process(
+        #     target=LLMClient.process_entry,
+        #     args=(self.llm_input_queues, self.llm_output_queue, self.llm_is_process_running)
+        # )
+        # self.llm_process.start()
 
-        # 启动TTS子进程
-        self.tts_input_queues = multiprocessing.Queue()
-        self.tts_output_queue = multiprocessing.Queue()
-        self.tts_is_process_running = multiprocessing.Value('b', False)
-        logger.info("启动TTS子进程")
-        self.tts_process = multiprocessing.Process(
-            target=TTSClient.process_entry,
-            args=(self.tts_input_queues, self.tts_output_queue, self.tts_is_process_running)
+        # # 启动TTS子进程
+        # self.tts_input_queues = multiprocessing.Queue()
+        # self.tts_output_queue = multiprocessing.Queue()
+        # self.tts_is_process_running = multiprocessing.Value('b', False)
+        # logger.info("启动TTS子进程")
+        # self.tts_process = multiprocessing.Process(
+        #     target=TTSClient.process_entry,
+        #     args=(self.tts_input_queues, self.tts_output_queue, self.tts_is_process_running)
+        # )
+        # self.tts_process.start()
+
+        # 启动LLM_TTS子进程
+        self.llm_tts_input_queues = multiprocessing.Queue()
+        self.llm_tts_output_queue = multiprocessing.Queue()
+        self.llm_tts_is_process_running = multiprocessing.Value('b', False)
+        logger.info("启动LLM_TTS子进程")
+        self.llm_tts_process = multiprocessing.Process(
+            target=LLM_TTSClient.process_entry,
+            args=(self.llm_tts_input_queues, self.llm_tts_output_queue, self.llm_tts_is_process_running)
         )
-        self.tts_process.start()
+        self.llm_tts_process.start()
 
         # 启动E2E子进程
         self.e2e_input_queues = multiprocessing.Queue()
@@ -382,22 +487,33 @@ class MessageProcessorAudio:
         self.asr_lock = asyncio.Lock()
 
         self.llm_is_chat_started = False
-        self.llm_chat_lock = asyncio.Lock()
         self.active_client = None
     
     async def handle_message(self, message_data: Dict[str, Any]):
         """
         分发消息到两个 client 进程
         """
-        if "payload_msg" in message_data and message_data["payload_msg"]:
-            payload_msg = message_data["payload_msg"]
-            if message_data.get("event") == ClientEvent.SayHello:
-                pass
-            elif message_data.get("event") == ClientEvent.TaskRequest:
-                asr_input_data = payload_msg
-                self.asr_input_queues.put({"type": "input", "data": asr_input_data})
-                e2e_input_data = payload_msg
-                self.e2e_input_queues.put({"type": "input", "data": e2e_input_data})
+        if message_data.get("event") == ClientEvent.SayHello:
+            pass
+        elif message_data.get("event") == ClientEvent.TaskRequest:
+            if "payload_msg" in message_data and message_data["payload_msg"]:
+                payload_msg = message_data["payload_msg"]
+            else:
+                return {"success": False, "error": "payload_msg is required"}
+            asr_input_data = payload_msg
+            self.asr_input_queues.put({"type": "input", "data": asr_input_data})
+            e2e_input_data = payload_msg
+            self.e2e_input_queues.put({"type": "input", "data": e2e_input_data})
+        elif message_data.get("event") == ClientEvent.SpeakEnded:
+            if self.asr_is_started:
+                async with self.asr_lock:
+                    self.asr_is_started = False
+                # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
+                self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({"event": ServerEvent.ASREnded})
+            else:
+                logger.info("SpeakEnded，但ASR未开始")
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     async def send_e2e_asr_message(self):
@@ -412,14 +528,16 @@ class MessageProcessorAudio:
                     if msg.get("event") == ServerEvent.ASRInfo:
                         async with self.asr_lock:
                             self.asr_is_started = True
-                        self.llm_input_queues.put({"type": "interruption"})
+                        # self.llm_input_queues.put({"type": "interruption"})
+                        self.llm_tts_input_queues.put({"type": "interruption"})
                     elif msg.get("event") == ServerEvent.ASRResponse:
                         self.asr_result = msg.get("payload_msg", {}).get("results", [{}])[0].get("text", "")
                     elif msg.get("event") == ServerEvent.ASREnded:
                         if self.asr_is_started:
                             async with self.asr_lock:
                                 self.asr_is_started = False
-                            self.llm_input_queues.put({"type": "input", "data": self.asr_result})
+                            # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
+                            self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
                         else:
                             logger.info("E2E ASR识别结束，但ASR未开始")
                             continue
@@ -452,7 +570,8 @@ class MessageProcessorAudio:
                         if self.asr_is_started:
                             async with self.asr_lock:
                                 self.asr_is_started = False
-                            self.llm_input_queues.put({"type": "input", "data": self.asr_result})
+                            # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
+                            self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
                         else:
                             logger.info("ASR识别结束，但ASR未开始")
                             continue
@@ -472,44 +591,68 @@ class MessageProcessorAudio:
             logger.error(f"ASR消息处理任务异常: {e}")
             raise  # 重新抛出异常
 
-    async def send_llm_message(self):
-        """
-        轮询LLM输出队列，有消息就发给 websocket
-        """
-        try:
-            loop = asyncio.get_event_loop()
-            while True:
-                try:
-                    msg = await loop.run_in_executor(None, self.llm_output_queue.get)
-                    if msg.get("event") == ServerEvent.ChatResponse:
-                        if self.llm_is_chat_started:
-                            self.llm_input_queues.put({"type": "input_chunk", "data": msg.get("payload_msg", {}).get("content", "")})
-                        else:
-                            async with self.llm_chat_lock:
-                                self.llm_is_chat_started = True
-                            self.tts_input_queues.put({"type": "input_start", "data": msg.get("payload_msg", {}).get("content", "")})
-                    elif msg.get("event") == ServerEvent.ChatEnded:
-                        async with self.llm_chat_lock:
-                            self.llm_is_chat_started = False
-                        self.tts_input_queues.put({"type": "input_end", "data": msg.get("payload_msg", {}).get("content", "")})
-                    logger.debug(f"收到LLM消息: {msg}")
-                    if self.websocket_send_callback:
-                        await self.websocket_send_callback(msg)
-                except asyncio.TimeoutError:
-                    # 超时继续循环
-                    continue
-                except Exception as e:
-                    logger.error(f"发送LLM消息失败: {e}")
-                    # 短暂等待后继续
-                    await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            logger.info("LLM消息处理任务已取消")
-            raise  # 重新抛出CancelledError
-        except Exception as e:
-            logger.error(f"LLM消息处理任务异常: {e}")
-            raise  # 重新抛出异常
+    # async def send_llm_message(self):
+    #     """
+    #     轮询LLM输出队列，有消息就发给 websocket
+    #     """
+    #     try:
+    #         loop = asyncio.get_event_loop()
+    #         while True:
+    #             try:
+    #                 msg = await loop.run_in_executor(None, self.llm_output_queue.get)
+    #                 if msg.get("event") == ServerEvent.ChatResponse:
+    #                     if self.llm_is_chat_started:
+    #                         self.llm_input_queues.put({"type": "input_chunk", "data": msg.get("payload_msg", {}).get("content", "")})
+    #                     else:
+    #                         self.llm_is_chat_started = True
+    #                         self.tts_input_queues.put({"type": "input_start", "data": msg.get("payload_msg", {}).get("content", "")})
+    #                 elif msg.get("event") == ServerEvent.ChatEnded:
+    #                     self.llm_is_chat_started = False
+    #                     self.tts_input_queues.put({"type": "input_end", "data": msg.get("payload_msg", {}).get("content", "")})
+    #                 logger.debug(f"收到LLM消息: {msg}")
+    #                 if self.websocket_send_callback:
+    #                     await self.websocket_send_callback(msg)
+    #             except asyncio.TimeoutError:
+    #                 # 超时继续循环
+    #                 continue
+    #             except Exception as e:
+    #                 logger.error(f"发送LLM消息失败: {e}")
+    #                 # 短暂等待后继续
+    #                 await asyncio.sleep(0.1)
+    #     except asyncio.CancelledError:
+    #         logger.info("LLM消息处理任务已取消")
+    #         raise  # 重新抛出CancelledError
+    #     except Exception as e:
+    #         logger.error(f"LLM消息处理任务异常: {e}")
+    #         raise  # 重新抛出异常
     
-    async def send_tts_message(self):
+    # async def send_tts_message(self):
+    #     """
+    #     轮询TTS输出队列，有消息就发给 websocket
+    #     """
+    #     try:
+    #         loop = asyncio.get_event_loop()
+    #         while True:
+    #             try:
+    #                 msg = await loop.run_in_executor(None, self.tts_output_queue.get)
+    #                 logger.debug(f"收到TTS消息: {msg}")
+    #                 if self.websocket_send_callback:
+    #                     await self.websocket_send_callback(msg)
+    #             except asyncio.TimeoutError:
+    #                 # 超时继续循环
+    #                 continue
+    #             except Exception as e:
+    #                 logger.error(f"发送TTS消息失败: {e}")
+    #                 # 短暂等待后继续
+    #                 await asyncio.sleep(0.1)
+    #     except asyncio.CancelledError:
+    #         logger.info("TTS消息处理任务已取消")
+    #         raise  # 重新抛出CancelledError
+    #     except Exception as e:
+    #         logger.error(f"TTS消息处理任务异常: {e}")
+    #         raise  # 重新抛出异常
+
+    async def send_llm_tts_message(self):
         """
         轮询TTS输出队列，有消息就发给 websocket
         """
@@ -517,24 +660,23 @@ class MessageProcessorAudio:
             loop = asyncio.get_event_loop()
             while True:
                 try:
-                    msg = await loop.run_in_executor(None, self.tts_output_queue.get)
-                    logger.debug(f"收到TTS消息: {msg}")
+                    msg = await loop.run_in_executor(None, self.llm_tts_output_queue.get)
+                    logger.debug(f"收到LLM_TTS消息: {msg}")
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)
                 except asyncio.TimeoutError:
                     # 超时继续循环
                     continue
                 except Exception as e:
-                    logger.error(f"发送TTS消息失败: {e}")
+                    logger.error(f"发送LLM_TTS消息失败: {e}")
                     # 短暂等待后继续
                     await asyncio.sleep(0.1)
         except asyncio.CancelledError:
-            logger.info("TTS消息处理任务已取消")
+            logger.info("LLM_TTS消息处理任务已取消")
             raise  # 重新抛出CancelledError
         except Exception as e:
-            logger.error(f"TTS消息处理任务异常: {e}")
+            logger.error(f"LLM_TTS消息处理任务异常: {e}")
             raise  # 重新抛出异常
-
     # async def send_e2e_message(self):
     #     """
     #     轮询E2E输出队列，有消息就发给 websocket
@@ -558,16 +700,20 @@ class MessageProcessorAudio:
         logger.info(f"MessageProcessorAudio启动完成: chat_id={self.chat_id}")
         self.asr_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.e2e_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
-        self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
-        self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
     
     async def cleanup(self):
         logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")
         self.websocket_send_callback = None
         self.asr_input_queues.put({"type": "stop"})
         self.e2e_input_queues.put({"type": "stop"})
-        self.llm_input_queues.put({"type": "stop"})
-        self.tts_input_queues.put({"type": "stop"}) 
-        while self.asr_is_process_running.value or self.e2e_is_process_running.value or self.llm_is_process_running.value or self.tts_is_process_running.value:
+        # self.llm_input_queues.put({"type": "stop"})
+        # self.tts_input_queues.put({"type": "stop"})
+        self.llm_tts_input_queues.put({"type": "stop"})
+        # while self.asr_is_process_running.value or self.e2e_is_process_running.value or self.llm_is_process_running.value or self.tts_is_process_running.value:
+        #     await asyncio.sleep(0.1)
+        while self.asr_is_process_running.value or self.e2e_is_process_running.value or self.llm_tts_is_process_running.value:
             await asyncio.sleep(0.1)
         logger.info("MessageProcessorAudio清理完成")

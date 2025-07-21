@@ -340,7 +340,7 @@ class AuraAgent:
                     })
                     break
                     
-                logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
+                logger.info(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
                 await MessageProcessorAudio.get_instance().handle_message(message_data)
 
             except WebSocketDisconnect:

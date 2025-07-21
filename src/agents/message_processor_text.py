@@ -65,9 +65,6 @@ class MessageProcessorText:
     
     async def user_input_resume(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
-        self.replying_task_handle = asyncio.create_task(
-            self._replying_response_task()
-        )
         # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
 
@@ -88,6 +85,29 @@ class MessageProcessorText:
                     "message_type": "text"
                 }
             
+            await self.user_input_resume()
+            final_response = await self._replying_response(user_input)
+            asyncio.create_task(self._save_message_task(user_input, final_response))
+            logger.debug(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
+            
+            return {
+                "success": True,
+                "message_type": "text",
+                "msg_id": str(uuid.uuid4()),
+                "content": user_input,
+                "action": "process_text"
+            }
+        except Exception as e:
+            logger.error(f"处理文本消息失败: {e}")
+            return {
+                "success": False,
+                "error": f"处理文本消息失败: {str(e)}",
+                "message_type": "text"
+            }
+    
+    async def _save_message_task(self, user_input: str, final_response: str):
+        """保存消息任务"""
+        try:
             # 创建消息对象
             message = Message(
                 msg_id=str(uuid.uuid4()),
@@ -96,31 +116,26 @@ class MessageProcessorText:
                 platform="default",
                 m_type="text",
                 content=user_input,
-                data=message_data.get("data", {}),
+                data={},
                 created_at=int(datetime.now().timestamp() * 1000)
             )
-            
             # 存储到消息存储
             MessageStore.get_instance().add_message(message)
-            await self.user_input_resume()
-
-            logger.debug(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
-            
-            return {
-                "success": True,
-                "message_type": "text",
-                "msg_id": message.msg_id,
-                "content": user_input,
-                "action": "process_text"
-            }
-            
+            ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
+            message = Message(
+                msg_id=str(uuid.uuid4()),
+                chat_id=self.chat_id,
+                user_id="aura",
+                platform="default",
+                m_type="text",
+                content=final_response,
+                data={},
+                created_at=int(datetime.now().timestamp() * 1000)
+            )
+            # 存储到消息存储
+            MessageStore.get_instance().add_message(message)
         except Exception as e:
-            logger.error(f"处理文本消息失败: {e}")
-            return {
-                "success": False,
-                "error": f"处理文本消息失败: {str(e)}",
-                "message_type": "text"
-            }
+            logger.error(f"保存消息任务失败: {e}")
     
     async def _muttering_process_task(self):
         """自言自语任务"""
@@ -160,7 +175,7 @@ class MessageProcessorText:
         except Exception as e:
             logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
-    async def _replying_response_task(self):
+    async def _replying_response(self, user_input: str):
         try:
             # 获取新消息
             now_timestamp = int(datetime.now().timestamp() * 1000)
@@ -172,6 +187,7 @@ class MessageProcessorText:
             
             # 更新观察信息
             chat_history_str = _build_chat_history_str(history_messages)
+            chat_history_str += f"{self.user_id}说: {user_input}\n"
             logger.debug(f"observe_conversation chat_history_str: {chat_history_str}")
 
             # plan_model = get_chat_model_by_type("pfc_action_planner")
@@ -188,7 +204,6 @@ class MessageProcessorText:
             goals_str = thinking_task_shared_data.get("goals_str", "")
             knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
             persona_text = _get_persona_text()
-
             # 格式化提示词
             prompt = REPLYING_GENERATOR_DIRECT_PROMPT.format(
                 persona_text=persona_text,
@@ -217,24 +232,11 @@ class MessageProcessorText:
                             }
                         })
             
-            ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
-            message = Message(
-                msg_id=str(uuid.uuid4()),
-                chat_id=self.chat_id,
-                user_id="aura",
-                platform="default",
-                m_type="text",
-                content=final_response,
-                data={},
-                created_at=int(datetime.now().timestamp() * 1000)
-            )
-            
-            # 存储到消息存储
-            MessageStore.get_instance().add_message(message)
             if self.websocket_send_callback:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
                 })
+            return final_response
         except asyncio.CancelledError:
             logger.info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:
