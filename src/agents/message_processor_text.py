@@ -3,7 +3,7 @@ import logging
 import uuid
 import json
 import random
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, List
 from datetime import datetime
 from enum import Enum
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -43,7 +43,8 @@ class MessageProcessorText:
         self.user_id = None
         self.websocket_send_callback = websocket_send_callback
         self.replying_task_handle: asyncio.Task = None
-
+        self.save_message_tasks: List[asyncio.Task] = []
+    
     async def start(self, chat_id: str, user_id: str):
         self.chat_id = chat_id
         self.user_id = user_id
@@ -60,6 +61,7 @@ class MessageProcessorText:
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
         # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
         # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.PAUSED)
+        logger.info(f"用户输入打断，取消回复任务")
         if self.replying_task_handle:
             self.replying_task_handle.cancel()
     
@@ -86,9 +88,18 @@ class MessageProcessorText:
                 }
             
             await self.user_input_resume()
-            asyncio.create_task(self._save_message_task(self.user_id, user_input))
-            self.replying_task_handle = asyncio.create_task(self._replying_response_task(user_input))
-            logger.debug(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
+            if self.replying_task_handle and not self.replying_task_handle.done():
+                self.replying_task_handle.cancel()
+                try:
+                    await self.replying_task_handle
+                except asyncio.CancelledError:
+                    pass
+            save_message_task_handle = asyncio.create_task(self._save_message_task(self.user_id, user_input))
+            self.save_message_tasks.append(save_message_task_handle)
+            self.save_message_tasks = [task for task in self.save_message_tasks if not task.done()]
+            replying_task_handle = asyncio.create_task(self._replying_response_task(user_input))
+            self.replying_task_handle = replying_task_handle
+            logger.info(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
             
             return {
                 "success": True,
@@ -225,7 +236,8 @@ class MessageProcessorText:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
                 })
-            asyncio.create_task(self._save_message_task("aura", final_response, update_checked_at=True))
+            save_message_task_handle = asyncio.create_task(self._save_message_task("aura", final_response, update_checked_at=True))
+            self.save_message_tasks.append(save_message_task_handle)
         except asyncio.CancelledError:
             logger.info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:

@@ -32,9 +32,8 @@ class AuraDialogSession:
         self.client = None
 
         # 状态管理
-        self.is_running = True
-        self.is_session_finished = False
-                
+        self.is_running = False
+
         # 服务器ASR结果
         self.asr_start_callback = asr_start_callback
         self.asr_response_callback = asr_response_callback
@@ -49,16 +48,17 @@ class AuraDialogSession:
             self.client = AsrClient(config=asr_config)
             await self.client.start(chat_id, user_id)
             self.message_loop = asyncio.create_task(self.message_receive_loop())
+            self.is_running = True
         except Exception as e:
             logger.error(f"对话会话错误: {e}")
     
     async def _connect(self) -> bool:
         """执行重连逻辑"""
         try:
-            # 创建新的客户端实例
-            self.client = AsrClient(config=asr_config)
+            self.is_running = False
             # 重新连接
             await self.client.connect()
+            self.is_running = True
             return True
         except Exception as e:
             return False
@@ -101,7 +101,7 @@ class AuraDialogSession:
     # Connect类事件回调方法
     async def _on_connection_started(self) -> None:
         """连接建立成功事件回调"""
-        logger.debug("连接建立成功")
+        logger.info("连接建立成功")
     
     async def _on_connection_failed(self) -> None:
         """连接建立失败事件回调"""
@@ -109,16 +109,16 @@ class AuraDialogSession:
     
     async def _on_connection_finished(self) -> None:
         """连接结束事件回调"""
-        logger.debug("连接已结束")
+        logger.info("连接已结束")
     
     # Session类事件回调方法
     async def _on_session_started(self) -> None:
         """会话启动成功事件回调"""
-        logger.debug("会话启动成功")
+        logger.info("会话启动成功")
     
     async def _on_session_finished(self) -> None:
         """会话结束事件回调"""
-        logger.debug("会话已结束")
+        logger.info("会话已结束")
     
     async def _on_session_failed(self) -> None:
         """会话失败事件回调"""
@@ -127,25 +127,28 @@ class AuraDialogSession:
     # ASR类事件回调方法
     async def _on_asr_info(self) -> None:
         """ASR信息事件回调 - 识别出首字"""
-        logger.debug("ASR识别出首字")
+        logger.info("ASR识别出首字")
         await safe_call(self.asr_start_callback)
     
     async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
         """ASR响应事件回调 - 识别出文本内容"""
-        logger.debug("ASR响应事件回调")
+        logger.info("ASR响应事件回调")
         await safe_call(self.asr_response_callback, payload)
     
     async def _on_asr_ended(self) -> None:
         """ASR结束事件回调"""
-        logger.debug("ASR识别结束")
+        logger.info("ASR识别结束")
         await safe_call(self.asr_end_callback)
     
     async def message_receive_loop(self):
         """服务器响应接收循环"""
         try:
-            while self.is_running:
+            while True:
                 # 尝试从客户端接收响应
                 try:
+                    if not self.is_running:
+                        await asyncio.sleep(0.1)
+                        continue
                     response = await self.client.receive_server_response()
                     await self._handle_server_response(response)
                 except Exception as e:
@@ -158,10 +161,13 @@ class AuraDialogSession:
     async def process_audio_chunk(self, audio_data: bytes) -> None:
         """处理音频输入"""
         try:
+            if not self.is_running:
+                return
+            if not self.is_connected():
+                return
             await self.client.task_request(audio_data)
         except Exception as e:
             logger.error(f"发送音频数据失败: {e}")
-            await self._connect()
     
     def is_connected(self) -> bool:
         """检查连接状态"""
