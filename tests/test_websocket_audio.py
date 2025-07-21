@@ -39,7 +39,6 @@ import sys
 import tempfile
 import struct
 import multiprocessing as mp
-from multiprocessing import Process, Queue, Value, Lock
 import ctypes
 # import opuslib
 
@@ -632,20 +631,20 @@ class AudioProcessor:
                  shared_variables=None):
         
         # 音频队列
-        self.audio_queue = Queue(maxsize=100)  # 音频数据队列
+        self.mp_audio_queue = mp.Queue()  # 音频数据队列
         
         # 共享变量（由主进程传入）
         if shared_variables is None:
             # 如果没有传入，创建默认的共享变量
-            self.last_speech_end_time = Value(ctypes.c_double, 0.0)
-            self.is_speaking = Value(ctypes.c_bool, False)
+            self.last_speech_end_time = mp.Value(ctypes.c_double, 0.0)
+            self.is_speaking = mp.Value(ctypes.c_bool, False)
         else:
             # 使用主进程传入的共享变量
             self.last_speech_end_time = shared_variables['last_speech_end_time']
             self.is_speaking = shared_variables['is_speaking']
         
         # 进程锁（仅在写入时使用）
-        self.process_lock = Lock()
+        self.process_lock = mp.Lock()
         
         # 语音检测器（在子进程中创建）
         self.vad = None
@@ -674,7 +673,7 @@ class AudioProcessor:
             return
         
         self.is_running = True
-        self.process = Process(target=self._audio_processing_worker, daemon=True)
+        self.process = mp.Process(target=self._audio_processing_worker, daemon=True)
         self.process.start()
         logger.info("🎤 音频处理进程已启动")
     
@@ -686,9 +685,9 @@ class AudioProcessor:
         self.is_running = False
         
         # 清空队列
-        while not self.audio_queue.empty():
+        while not self.mp_audio_queue.empty():
             try:
-                self.audio_queue.get_nowait()
+                self.mp_audio_queue.get_nowait()
             except:
                 break
         
@@ -705,14 +704,14 @@ class AudioProcessor:
     def put_audio_data(self, audio_data, timestamp):
         """向音频队列添加音频数据"""
         try:
-            if not self.audio_queue.full():
-                self.audio_queue.put((audio_data, timestamp), timeout=0.1)
+            if not self.mp_audio_queue.full():
+                self.mp_audio_queue.put((audio_data, timestamp), timeout=0.1)
                 return True
             else:
                 # 队列满了，丢弃最旧的数据
                 try:
-                    self.audio_queue.get_nowait()
-                    self.audio_queue.put((audio_data, timestamp), timeout=0.1)
+                    self.mp_audio_queue.get_nowait()
+                    self.mp_audio_queue.put((audio_data, timestamp), timeout=0.1)
                     return True
                 except:
                     return False
@@ -740,7 +739,7 @@ class AudioProcessor:
             while self.is_running:
                 try:
                     # 从队列获取音频数据
-                    audio_data, timestamp = self.audio_queue.get(timeout=0.1)
+                    audio_data, timestamp = self.mp_audio_queue.get(timeout=0.1)
                     
                     # 语音检测
                     speech_detected = self.vad.detect_speech_start(audio_data)
@@ -751,14 +750,11 @@ class AudioProcessor:
                         logger.info(f"🎤 第{self.speech_detection_count}次检测到语音开始! 时间: {timestamp}")
                     
                     # 更新共享状态
-                    with self.process_lock:
-                        self.is_speaking.value = self.vad.is_speaking
-                        
-                        # 如果检测到语音结束，更新最后说话结束时间
-                        if not self.vad.is_speaking and self.last_speech_start_time is not None:
+                    if self.is_speaking.value != self.vad.is_speaking:
+                        if self.vad.is_speaking == False:
                             self.last_speech_end_time.value = timestamp
-                            logger.info(f"🔇 检测到语音结束! 结束时间: {timestamp}")
-                            self.last_speech_start_time = None
+                        with self.process_lock:
+                            self.is_speaking.value = self.vad.is_speaking
                     
                 except queue.Empty:
                     continue
@@ -786,8 +782,8 @@ class WebSocketTestSession:
         
         # 创建共享变量（由主进程管理）
         self.shared_variables = {
-            'last_speech_end_time': Value(ctypes.c_double, 0.0),
-            'is_speaking': Value(ctypes.c_bool, False)
+            'last_speech_end_time': mp.Value(ctypes.c_double, 0.0),
+            'is_speaking': mp.Value(ctypes.c_bool, False)
         }
         
         # 音频处理器（多进程）

@@ -36,10 +36,10 @@ class AuraDialogSession:
         self.is_session_finished = False
                 
         # 服务器ASR结果
-        self.server_asr_result = ""
         self.asr_start_callback = asr_start_callback
         self.asr_response_callback = asr_response_callback
         self.asr_end_callback = asr_end_callback
+        self.message_loop = None
     
     async def start(self, chat_id: str, user_id: str) -> None:
         """启动对话会话"""

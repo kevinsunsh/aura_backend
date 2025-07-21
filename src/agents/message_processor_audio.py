@@ -275,7 +275,6 @@ class E2EClient(IConnectClient):
     async def _on_asr_info(self) -> None:
         """ASR信息事件回调 - 识别出首字"""
         logger.debug("ASR识别出首字")
-        self.is_asr_started = True
         self.asr_output_queue.put({"event": ServerEvent.ASRInfo})
     
     async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
@@ -293,10 +292,6 @@ class E2EClient(IConnectClient):
     
     async def _on_asr_ended(self) -> None:
         """ASR结束事件回调"""
-        if self.is_asr_started == False:
-            logger.info("ASR识别结束，但ASR未开始")
-            return
-        self.is_asr_started = False
         self.asr_output_queue.put({"event": ServerEvent.ASREnded})
     
     # Chat类事件回调方法
@@ -399,8 +394,10 @@ class MessageProcessorAudio:
             if message_data.get("event") == ClientEvent.SayHello:
                 pass
             elif message_data.get("event") == ClientEvent.TaskRequest:
-                self.asr_input_queues.put({"type": "input", "data": payload_msg})
-                self.e2e_input_queues.put({"type": "input", "data": payload_msg})
+                asr_input_data = payload_msg
+                self.asr_input_queues.put({"type": "input", "data": asr_input_data})
+                e2e_input_data = payload_msg
+                self.e2e_input_queues.put({"type": "input", "data": e2e_input_data})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     async def send_e2e_asr_message(self):
@@ -424,7 +421,7 @@ class MessageProcessorAudio:
                                 self.asr_is_started = False
                             self.llm_input_queues.put({"type": "input", "data": self.asr_result})
                         else:
-                            logger.info("ASR识别结束，但ASR未开始")
+                            logger.info("E2E ASR识别结束，但ASR未开始")
                             continue
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)

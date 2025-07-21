@@ -156,27 +156,11 @@ class BaseClient:
     async def receive_server_response(self) -> Dict[str, Any]:
         """接收服务器响应"""
         try:
-            # 详细检查连接状态
-            if not self.ws:
-                logger.warning("WebSocket连接对象为空")
-                raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is None")
-            
-            if self._is_websocket_closed():
-                logger.warning("WebSocket连接已关闭")
-                raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
-            
             response = await self.ws.recv()
             data = client_parse_response(response, skip_audio_decompression=True)
             return data
-        except websockets.exceptions.ConnectionClosed:
-            # 重新抛出连接关闭异常
-            raise
         except Exception as e:
-            if "SSL connection is closed" in str(e):
-                logger.error(f"SSL连接已关闭: {e}")
-                raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection is closed: {e}")
-            else:
-                raise Exception(f"接收消息失败: {e}")
+            self.connect()
         
     def _is_websocket_closed(self) -> bool:
         """检查WebSocket是否已关闭"""

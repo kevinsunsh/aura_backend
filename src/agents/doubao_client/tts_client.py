@@ -359,7 +359,10 @@ class TtsClient:
         }
         
         # 建立WebSocket连接
-        self.ws = await websockets.connect(self.ws_url, additional_headers=ws_header, max_size=1000000000)
+        self.ws = await websockets.connect(self.ws_url, additional_headers=ws_header,
+                                           ping_interval=10,      # 每10秒发送一次ping（更保守）
+                                           ping_timeout=5       # ping超时时间5秒（更宽松）
+                                           )
         
         # 开始连接
         await self._tts_start_connection(self.ws)
@@ -426,8 +429,8 @@ class TtsClient:
                             await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_ConnectionFailed:
                         logger.error(f"TTS连接失败: {res.optional.event}")
-                except websockets.exceptions.ConnectionClosed:
-                    logger.warning("TTS WebSocket连接已关闭")
+                except websockets.exceptions.ConnectionClosed as e:
+                    logger.warning(f"TTS WebSocket连接已关闭, code={e.code}, reason={e.reason}")
                     await self._connect()
                     continue
                 except websockets.exceptions.ConnectionClosedError:
@@ -481,6 +484,8 @@ class TtsClient:
             text: 文本片段
         """
         try:
+            if self.is_connected() == False:
+                await self._connect()
             self.buffer_text += text
             await self._send_text_internal(self.buffer_text)
             self.buffer_text = ""
@@ -498,19 +503,7 @@ class TtsClient:
         if len(text) > 0:
             await self._tts_send_text(self.ws, self.speaker, text, self.session_id)
             logger.debug(f"已发送文本片段: {text[:50]}...")
-
-    def enable_reconnect(self):
-        """启用自动重连"""
-        self.should_reconnect = True
-
-    def get_connection_status(self) -> Dict[str, Any]:
-        """获取连接状态信息"""
-        return {
-            "is_running": self.is_running,
-            "session_active": self._tts_session_active,
-            "has_connection": self.ws is not None
-        }
-
+    
     async def cleanup(self):
         """清理资源"""
         try:
@@ -522,7 +515,51 @@ class TtsClient:
             logger.debug("TTS客户端已清理")
         except Exception as e:
             logger.error(f"清理TTS客户端时出错: {e}")
-
+    
     def is_connected(self) -> bool:
         """检查连接状态"""
-        return self.is_running and self.ws is not None
+        try:
+            return self.ws is not None and self._is_websocket_open()
+        except Exception as e:
+            logger.debug(f"检查连接状态时出错: {e}")
+            return False
+    
+    def _is_websocket_open(self) -> bool:
+        """检查WebSocket是否开启"""
+        try:
+            if self.ws is None:
+                return False
+            
+            # 检查是否有state属性 (新版websockets)
+            if hasattr(self.ws, 'state'):
+                # 导入State枚举
+                try:
+                    from websockets.protocol import State
+                    if self.ws.state == State.OPEN:
+                        return True
+                    else:
+                        return False
+                except ImportError:
+                    # 如果导入失败，尝试其他方法
+                    pass
+            
+            # 检查是否有closed属性 (旧版websockets)
+            if hasattr(self.ws, 'closed'):
+                return not self.ws.closed
+            
+            # 检查是否有open属性 (某些版本)
+            if hasattr(self.ws, 'open'):
+                return self.ws.open
+            
+            # 如果以上都没有，尝试通过其他方式检查
+            # 检查是否有close_code属性，如果有且不为None，说明连接已关闭
+            if hasattr(self.ws, 'close_code'):
+                return self.ws.close_code is None
+            
+            # 最后的兜底方案，假设连接是开启的
+            logger.warning("无法确定WebSocket连接状态，假设连接正常")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"检查WebSocket状态时出错: {e}")
+            return False
