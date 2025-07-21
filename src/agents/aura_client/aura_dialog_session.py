@@ -48,6 +48,7 @@ class AuraDialogSession:
             self.session_id = chat_id
             self.client = AsrClient(config=asr_config)
             await self.client.start(chat_id, user_id)
+            self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:
             logger.error(f"对话会话错误: {e}")
     
@@ -214,6 +215,8 @@ class AuraDialogSession:
         """清理资源"""
         try:
             await self.client.cleanup()
+            self.message_loop.cancel()
+            self.message_loop = None
             logger.debug(f"对话会话已清理: {self.session_id}")
         except Exception as e:
             logger.error(f"AuraDialogSession清理资源时出错: {e}")

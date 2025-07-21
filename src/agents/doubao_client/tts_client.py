@@ -183,6 +183,7 @@ class TtsClient:
         self.buffer_text = ""
         # 性能指标
         self.tts_service_performance_point_id = None
+        self.message_loop = None
         
     def _gen_log_id(self):
         """生成logID"""
@@ -338,6 +339,7 @@ class TtsClient:
         
         try:
             await self._connect()
+            self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:
             logger.error(f"启动TTS连接失败: {e}")
             raise
@@ -514,6 +516,9 @@ class TtsClient:
         try:
             self.is_running = False
             await self._cleanup_connection()
+            if self.message_loop:
+                self.message_loop.cancel()
+                self.message_loop = None
             logger.debug("TTS客户端已清理")
         except Exception as e:
             logger.error(f"清理TTS客户端时出错: {e}")

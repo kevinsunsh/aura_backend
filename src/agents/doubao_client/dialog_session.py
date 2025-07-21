@@ -56,8 +56,8 @@ class DialogSession:
         # 服务器Chat结果
         self.chat_response_callback = chat_response_callback
         self.chat_end_callback = chat_end_callback
-
-  
+        self.message_loop = None
+    
     async def _connect(self) -> bool:
         """执行连接逻辑"""
         try:
@@ -94,6 +94,7 @@ class DialogSession:
             self.uid = chat_id
             logger.info(f"启动对话会话: {self.session_id}")
             await self._connect()
+            self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:
             logger.error(f"对话会话错误: {e}")
     
@@ -338,6 +339,9 @@ class DialogSession:
             await self.client.close()
             self.is_running = False
             self.is_session_started = False
+            if self.message_loop:
+                self.message_loop.cancel()
+                self.message_loop = None
             logger.info(f"对话会话已清理: {self.session_id}")
             self.session_id = None
             self.uid = None
