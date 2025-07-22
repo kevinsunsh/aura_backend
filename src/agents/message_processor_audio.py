@@ -202,9 +202,9 @@ class LLM_TTSClient(ABC):
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
                     client.timestamp = int(time.time() * 1000)
-                    logger.info(f"input: {msg['data']} at {client.timestamp}ms")
+                    logger.debug(f"input: {msg['data']} at {client.timestamp}ms")
                     await client.text_processor.handle_text_message({"message": msg["data"]})
-                    logger.info(f"handle_text_message delay: {int(time.time() * 1000) - client.timestamp}ms")
+                    logger.debug(f"handle_text_message delay: {int(time.time() * 1000) - client.timestamp}ms")
     
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any]) -> None:
@@ -213,7 +213,7 @@ class LLM_TTSClient(ABC):
         logger.debug(f"LLM TTS句子开始: {text}")
         self.is_llm_tts_running = True
         self.output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
-        logger.info(f"LLM TTS delay: {int(time.time() * 1000) - self.timestamp}ms")
+        logger.debug(f"LLM TTS delay: {int(time.time() * 1000) - self.timestamp}ms")
     
     async def _llm_on_tts_sentence_end(self) -> None:
         """TTS句子结束事件回调"""
@@ -238,7 +238,7 @@ class LLM_TTSClient(ABC):
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
             else:
                 self.llm_is_chat_started = True
-                logger.info(f"LLM delay: {int(time.time() * 1000) - self.timestamp}ms")
+                logger.debug(f"LLM delay: {int(time.time() * 1000) - self.timestamp}ms")
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
         elif message.get("event") == ServerEvent.ChatEnded:
             self.llm_is_chat_started = False
@@ -401,7 +401,7 @@ class MessageProcessorAudio:
             args=(self.vad_input_queues, self.vad_output_queue, self.vad_is_process_running)
         )
         self.vad_process.start()
-        
+
         # # 启动LLM子进程
         # self.llm_input_queues = multiprocessing.Queue()
         # self.llm_output_queue = multiprocessing.Queue()
@@ -483,7 +483,7 @@ class MessageProcessorAudio:
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({"event": ServerEvent.ASREnded})
             else:
-                logger.info("SpeakEnded，但ASR未开始")
+                logger.debug("SpeakEnded，但ASR未开始")
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     async def send_vad_message(self):
@@ -502,7 +502,7 @@ class MessageProcessorAudio:
                             # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
                             self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
                         else:
-                            logger.info("E2E ASR识别结束，但ASR未开始")
+                            logger.debug("E2E ASR识别结束，但ASR未开始")
                             continue
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)
@@ -539,7 +539,7 @@ class MessageProcessorAudio:
                             # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
                             self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
                         else:
-                            logger.info("E2E ASR识别结束，但ASR未开始")
+                            logger.debug("E2E ASR识别结束，但ASR未开始")
                             continue
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)
@@ -573,7 +573,7 @@ class MessageProcessorAudio:
                             # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
                             self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
                         else:
-                            logger.info("ASR识别结束，但ASR未开始")
+                            logger.debug("ASR识别结束，但ASR未开始")
                             continue
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)

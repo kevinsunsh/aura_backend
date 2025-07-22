@@ -134,7 +134,7 @@ class VADClient(BaseClient):
             logger.error("会话失败")
         # VAD类事件 (450-459)
         elif event_id == ServerEvent.ASREnded:
-            logger.info("VAD识别结束")
+            logger.debug("VAD识别结束")
             self.output_queue.put({"event": ServerEvent.ASREnded})
         else:
             logger.warning(f"未知事件ID: {event_id}")

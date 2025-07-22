@@ -140,13 +140,13 @@ class ASRClient(BaseClient):
             logger.error("会话失败")
         # ASR类事件 (450-459)
         elif event_id == ServerEvent.ASRInfo:
-            logger.info("ASR识别出首字")
+            logger.debug("ASR识别出首字")
             self.output_queue.put({"event": ServerEvent.ASREnded})
         elif event_id == ServerEvent.ASRResponse:
-            logger.info("ASR响应事件回调")
+            logger.debug("ASR响应事件回调")
             self.output_queue.put({"event": ServerEvent.ASRResponse, "payload_msg": payload_msg})
         elif event_id == ServerEvent.ASREnded:
-            logger.info("ASR识别结束")
+            logger.debug("ASR识别结束")
             self.output_queue.put({"event": ServerEvent.ASREnded})
         else:
             logger.warning(f"未知事件ID: {event_id}")
