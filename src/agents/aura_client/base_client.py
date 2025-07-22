@@ -18,18 +18,11 @@ class BaseClient:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logid = ""
+        self.chat_id = None
+        self.user_id = None
         self.session_id = None
         self.ws = None
         self.recv_lock = asyncio.Lock()  # 防止并发recv调用
-
-    async def start(self, chat_id: str, user_id: str) -> None:
-        """启动客户端"""
-        self.session_id = chat_id
-        try:
-            await self.connect()
-        except Exception as e:
-            logger.error(f"启动客户端失败: {e}")
-            raise e
 
     async def connect(self) -> None:
         """建立WebSocket连接"""
@@ -47,7 +40,14 @@ class BaseClient:
             logger.error(f"连接握手失败: {response}")
             raise Exception("连接握手失败")
         
-        await self.start_session({})
+        await self.start_session(
+            payload_data = {
+                "chat_info": {
+                    "chat_id": self.chat_id,
+                    "user_id": self.user_id
+                }
+            }
+        )
         response = await self.receive_server_response()
         if response.get("event") != ServerEvent.SessionStarted:
             logger.error(f"会话握手失败: {response}")
@@ -81,10 +81,10 @@ class BaseClient:
             logger.warning(f"发送StartConnection请求时检测到连接问题: {e}")
             raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
 
-    async def start_session(self, session_config: dict) -> None:
+    async def start_session(self, payload_data: dict) -> None:
         """StartSession - 客户端事件ID: 100"""
         start_session_request = client_generate_request(
-            payload_data=session_config,
+            payload_data=payload_data,
             message_type=CLIENT_FULL_REQUEST,
             message_type_specific_flags=MSG_WITH_EVENT,
             serial_method=JSON,

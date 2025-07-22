@@ -10,8 +10,10 @@ from abc import ABC, abstractmethod
 
 from .doubao_client.dialog_session import DialogSession
 from .aura_client.aura_dialog_session import AuraDialogSession
+from .aura_client.vad_client import VADClient
+from .aura_client.asr_client import ASRClient
 # from .doubao_client.asr_client import AsrClient
-from .doubao_client.asr_client_new import AsrClient
+# from .doubao_client.asr_client_new import AsrClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
 from utils.utils import start_performance_point, end_performance_point, safe_call
@@ -34,54 +36,7 @@ SESSION_TYPES = [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]
 # SESSION_TYPES = [DialogSessionType.E2E_SESSION]
 # SESSION_TYPES = [DialogSessionType.ALT_SESSION]
 
-class IConnectClient(ABC):
-    """对话会话抽象接口"""
-    pass
-
-class ASRClient(IConnectClient):
-    """ASR客户端包装器"""
-    def __init__(self, 
-                 input_queue,
-                 output_queue,
-                 is_process_running):
-        self.input_queue = input_queue
-        self.output_queue = output_queue
-        self.is_process_running = is_process_running
-        self.asr_client = AuraDialogSession(
-            asr_start_callback=None,
-            asr_response_callback=None,
-            asr_end_callback=self._on_asr_ended
-        )
-    
-    @staticmethod
-    def process_entry(input_queue, output_queue, is_process_running):
-        asyncio.run(ASRClient.main(input_queue, output_queue, is_process_running))
-    
-    @staticmethod
-    async def main(input_queue, output_queue, is_process_running):
-        loop = asyncio.get_event_loop()
-        client = ASRClient(
-            input_queue=input_queue,
-            output_queue=output_queue,
-            is_process_running=is_process_running
-        )
-        while True:
-            msg = await loop.run_in_executor(None, input_queue.get)
-            if isinstance(msg, dict) and msg.get("type") == "start":
-                await client.asr_client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
-                client.is_process_running.value = True
-            elif isinstance(msg, dict) and msg.get("type") == "stop":
-                await client.asr_client.cleanup()
-                client.is_process_running.value = False
-            elif isinstance(msg, dict) and msg.get("type") == "input":
-                if client.is_process_running.value:
-                    await client.asr_client.process_audio_chunk(msg["data"])
-    
-    async def _on_asr_ended(self) -> None:
-        """ASR结束事件回调"""
-        self.output_queue.put({"event": ServerEvent.ASREnded})
-
-class LLMClient(IConnectClient):
+class LLMClient(ABC):
     """LLM客户端包装器"""
     def __init__(self, 
                  input_queue,
@@ -125,7 +80,7 @@ class LLMClient(IConnectClient):
         """文本处理器回调，用于处理聊天响应"""
         self.output_queue.put(message)
 
-class TTSClient(IConnectClient):
+class TTSClient(ABC):
     """TTS客户端包装器"""
     def __init__(self, 
                  input_queue,
@@ -196,7 +151,7 @@ class TTSClient(IConnectClient):
         self.is_llm_tts_running = False
         self.output_queue.put({"event": ServerEvent.TTSEnded})
 
-class LLM_TTSClient(IConnectClient):
+class LLM_TTSClient(ABC):
     """TTS客户端包装器"""
     def __init__(self, 
                  input_queue,
@@ -290,7 +245,7 @@ class LLM_TTSClient(IConnectClient):
             await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=False, end=True)
         self.output_queue.put(message)
 
-class E2EClient(IConnectClient):
+class E2EClient(ABC):
     """端到端语音对话客户端包装器"""
     
     def __init__(self, 
@@ -418,6 +373,7 @@ class MessageProcessorAudio:
         # 启动消息处理任务
         logger.info("启动消息处理任务")
         self.message_tasks = asyncio.gather(
+            # self.send_vad_message(),
             self.send_asr_message(),
             self.send_e2e_asr_message(),
             # self.send_llm_message(),
@@ -436,6 +392,16 @@ class MessageProcessorAudio:
         )
         self.asr_process.start()
 
+        self.vad_input_queues = multiprocessing.Queue()
+        self.vad_output_queue = multiprocessing.Queue()
+        self.vad_is_process_running = multiprocessing.Value('b', False)
+        logger.info("启动VAD子进程")
+        self.vad_process = multiprocessing.Process(
+            target=VADClient.process_entry,
+            args=(self.vad_input_queues, self.vad_output_queue, self.vad_is_process_running)
+        )
+        self.vad_process.start()
+        
         # # 启动LLM子进程
         # self.llm_input_queues = multiprocessing.Queue()
         # self.llm_output_queue = multiprocessing.Queue()
@@ -504,6 +470,8 @@ class MessageProcessorAudio:
                 return {"success": False, "error": "payload_msg is required"}
             asr_input_data = payload_msg
             self.asr_input_queues.put({"type": "input", "data": asr_input_data})
+            vad_input_data = payload_msg
+            self.vad_input_queues.put({"type": "input", "data": vad_input_data})
             e2e_input_data = payload_msg
             self.e2e_input_queues.put({"type": "input", "data": e2e_input_data})
         elif message_data.get("event") == ClientEvent.SpeakEnded:
@@ -517,6 +485,36 @@ class MessageProcessorAudio:
             else:
                 logger.info("SpeakEnded，但ASR未开始")
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
+    
+    async def send_vad_message(self):
+        """
+        轮询VAD输出队列，有消息就发给 websocket
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            while True:
+                try:
+                    msg = await loop.run_in_executor(None, self.vad_output_queue.get)
+                    if msg.get("event") == ServerEvent.ASREnded:
+                        if self.asr_is_started:
+                            async with self.asr_lock:
+                                self.asr_is_started = False
+                            # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
+                            self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
+                        else:
+                            logger.info("E2E ASR识别结束，但ASR未开始")
+                            continue
+                    if self.websocket_send_callback:
+                        await self.websocket_send_callback(msg)
+                except asyncio.TimeoutError:
+                    # 超时继续循环
+                    continue
+                except Exception as e:
+                    logger.error(f"发送VAD消息失败: {e}")
+                    # 短暂等待后继续
+                    await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            logger.info("VAD消息处理任务已取消")
     
     async def send_e2e_asr_message(self):
         """
@@ -701,11 +699,12 @@ class MessageProcessorAudio:
         self.websocket_send_callback = websocket_send_callback
         logger.info(f"MessageProcessorAudio启动完成: chat_id={self.chat_id}")
         self.asr_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        self.vad_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.e2e_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
-        while not self.asr_is_process_running.value or not self.e2e_is_process_running.value or not self.llm_tts_is_process_running.value:
+        while not self.asr_is_process_running.value or not self.e2e_is_process_running.value or not self.llm_tts_is_process_running.value or not self.vad_is_process_running.value:
             await asyncio.sleep(0.1)
         logger.info("MessageProcessorAudio启动完成")
     
@@ -713,12 +712,13 @@ class MessageProcessorAudio:
         logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")
         self.websocket_send_callback = None
         self.asr_input_queues.put({"type": "stop"})
+        self.vad_input_queues.put({"type": "stop"})
         self.e2e_input_queues.put({"type": "stop"})
         # self.llm_input_queues.put({"type": "stop"})
         # self.tts_input_queues.put({"type": "stop"})
         self.llm_tts_input_queues.put({"type": "stop"})
         # while self.asr_is_process_running.value or self.e2e_is_process_running.value or self.llm_is_process_running.value or self.tts_is_process_running.value:
         #     await asyncio.sleep(0.1)
-        while self.asr_is_process_running.value or self.e2e_is_process_running.value or self.llm_tts_is_process_running.value:
+        while self.asr_is_process_running.value or self.e2e_is_process_running.value or self.llm_tts_is_process_running.value or self.vad_is_process_running.value:
             await asyncio.sleep(0.1)
         logger.info("MessageProcessorAudio清理完成")

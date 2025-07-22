@@ -17,3 +17,12 @@ asr_config = {
     },
     "seg_duration": 200  # 分片时长(ms) - 双向流式模式推荐200ms以获得最优性能
 }
+
+vad_config = {
+    "base_url": "ws://sd1vnrgvr8npbn2c42ke0.apigateway-cn-beijing.volceapi.com/ws/stream/vad",
+    "headers": {
+        "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
+        "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",
+        "X-Api-App-Key": "4522921771",
+    },
+}

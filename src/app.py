@@ -1,8 +1,5 @@
-import asyncio
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, List
-import json
 import logging
 from agents.aura import AuraAgent
 import uvicorn
