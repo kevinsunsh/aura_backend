@@ -15,40 +15,10 @@ class VADClient(BaseClient):
     """VAD客户端"""
     def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, output_queue: multiprocessing.Queue, is_process_running: multiprocessing.Value):
         super().__init__(config)
-        self.is_running = False
-        self.message_loop = None
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.is_process_running = is_process_running
     
-    async def start(self, chat_id: str, user_id: str) -> None:
-        """启动客户端"""
-        try:
-            self.session_id = chat_id
-            await self._connect()
-            self.message_loop = asyncio.create_task(self.message_receive_loop())
-        except Exception as e:
-            logger.error(f"启动客户端失败: {e}")
-            raise e
-    
-    async def _connect(self) -> None:
-        """连接服务器"""
-        try:
-            self.is_running = False
-            await super().connect()
-            self.is_running = True
-        except Exception as e:
-            logger.error(f"连接服务器失败: {e}")
-            raise e
-    
-    async def cleanup(self) -> None:
-        """清理客户端"""
-        if self.message_loop:
-            self.message_loop.cancel()
-            self.message_loop = None
-        self.is_running = False
-        await super().cleanup()
-
     async def task_request(self, audio: bytes) -> None:
         """TaskRequest - 客户端事件ID: 200"""
         if not self.is_running:
@@ -139,20 +109,4 @@ class VADClient(BaseClient):
         else:
             logger.warning(f"未知事件ID: {event_id}")
         
-    async def message_receive_loop(self):
-        """服务器响应接收循环"""
-        try:
-            while True:
-                # 尝试从客户端接收响应
-                try:
-                    if not self.is_running:
-                        await asyncio.sleep(0.1)
-                        continue
-                    response = await self.receive_server_response()
-                    await self._handle_server_response(response)
-                except Exception as e:
-                    await self._connect()
-        except asyncio.CancelledError:
-            logger.debug("服务器接收任务已取消")
-        except Exception as e:
-            logger.error(f"服务器接收消息出现未预期错误: {e}")
+

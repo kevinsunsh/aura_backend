@@ -221,8 +221,9 @@ class MessageProcessorText:
                 if hasattr(chunk, 'content'):
                     logger.debug(f"生成回复内容 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
                     if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
-                        logger.debug(f"打断流式响应，继续倾听")  
+                        logger.info(f"打断流式响应，继续倾听")  
                         break
+                    logger.debug(f"生成回复内容: {chunk.content}")
                     final_response += chunk.content
                     if self.websocket_send_callback:
                         await self.websocket_send_callback({

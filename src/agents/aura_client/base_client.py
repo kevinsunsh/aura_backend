@@ -1,18 +1,17 @@
-import websockets
-import gzip
-import json
+import ssl
+from abc import ABC, abstractmethod
 import asyncio
 import logging
-import ssl
-from typing import Dict, Any
-
+import threading
+import websockets
 from .config import *
+from typing import Dict, Any
 from api_protocol.constant import *
 from api_protocol.client_protocol import client_generate_request, client_parse_response
 
 logger = logging.getLogger(__name__)
 
-class BaseClient:
+class BaseClient(ABC):
     """实时对话客户端，基于参考代码实现"""
     
     def __init__(self, config: Dict[str, Any]):
@@ -23,9 +22,53 @@ class BaseClient:
         self.session_id = None
         self.ws = None
         self.recv_lock = asyncio.Lock()  # 防止并发recv调用
+        self.is_running = False
+        self.message_loop = None
+    
+    async def message_receive_loop(self):
+        """服务器响应接收循环"""
+        while True:
+            # 尝试从客户端接收响应
+            try:
+                if self._is_websocket_closed():
+                    await self.connect()
+                if not self.is_running:
+                    await asyncio.sleep(0.1)
+                    continue
+                response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
+                await self._handle_server_response(response)
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                await self.connect()
+    
+    @abstractmethod
+    async def _handle_server_response(self, response: Dict[str, Any]) -> None:
+        """处理服务器响应"""
+        pass
 
+    async def start(self, chat_id: str, user_id: str) -> None:
+        """启动客户端，带重试机制"""
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.session_id = chat_id
+                self.user_id = user_id
+                self.chat_id = chat_id
+                await self.connect()
+                self.message_loop = asyncio.create_task(self.message_receive_loop())
+                return
+            except Exception as e:
+                logger.error(f"启动客户端失败（第{attempt}次）: {e}")
+                if attempt < max_retries:
+                    import asyncio
+                    await asyncio.sleep(2)
+                else:
+                    raise e
+    
     async def connect(self) -> None:
         """建立WebSocket连接"""
+        self.is_running = False
         logger.info(f"连接服务器: {self.config['base_url']}")
         self.ws = await websockets.connect(
             self.config['base_url'],
@@ -56,6 +99,7 @@ class BaseClient:
         
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
+        self.is_running = True
         logger.info(f"WebSocket连接已建立")
     
     async def start_connection(self) -> None:
@@ -212,6 +256,10 @@ class BaseClient:
     async def cleanup(self) -> None:
         """清理资源"""
         try:
+            self.is_running = False
+            if self.message_loop:
+                self.message_loop.cancel()
+                self.message_loop = None
             await self.finish_session()
             response = await self.receive_server_response()
             logger.debug(f"会话结束握手响应: {response}")
@@ -225,97 +273,3 @@ class BaseClient:
             await self.close()
         except Exception as e:
             logger.error(f"清理资源失败: {e}")
-    
-class AsrClient(BaseClient):
-    """ASR客户端"""
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-    
-    async def task_request(self, audio: bytes) -> None:
-        """TaskRequest - 客户端事件ID: 200"""
-        # 发送前检查SSL连接状态
-        if self._is_websocket_closed():
-            logger.warning("发送音频数据前检测到SSL连接已关闭")
-            raise websockets.exceptions.ConnectionClosed(None, 1000, "SSL connection is closed")
-        
-        # 详细检查SSL socket状态
-        if hasattr(self.ws, '_socket') and self.ws._socket:
-            try:
-                sock = self.ws._socket
-                if hasattr(sock, 'fileno'):
-                    sock.fileno()
-                if hasattr(sock, 'getpeername'):
-                    sock.getpeername()
-                logger.debug("SSL socket状态检查通过")
-            except (OSError, AttributeError, ConnectionResetError, BrokenPipeError) as e:
-                logger.warning(f"SSL socket状态检查失败: {e}")
-                raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection error: {e}")
-        
-        task_request = client_generate_request(
-            payload_data=audio,
-            message_type=CLIENT_AUDIO_ONLY_REQUEST,
-            message_type_specific_flags=MSG_WITH_EVENT,
-            serial_method=NO_SERIALIZATION,
-            compression_type=GZIP,
-            event=ClientEvent.TaskRequest,
-            session_id=self.session_id,
-            skip_audio_compression=True
-        )
-        try:
-            await self.ws.send(task_request)
-        except (websockets.exceptions.ConnectionClosed, 
-                websockets.exceptions.ConnectionClosedError,
-                websockets.exceptions.WebSocketException,
-                OSError, 
-                ConnectionResetError, 
-                BrokenPipeError,
-                ssl.SSLError) as e:
-            # 捕获所有可能的连接相关异常
-            error_msg = str(e).lower()
-            if "ssl" in error_msg or "connection" in error_msg:
-                logger.warning(f"发送音频数据时检测到连接问题: {e}")
-                raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
-            else:
-                # 重新抛出其他类型的异常
-                raise
-
-class TtsClient(BaseClient):
-    """TTS客户端"""
-    def __init__(self, config: Dict[str, Any], session_id: str):
-        super().__init__(config, session_id)
-    
-    async def chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
-        """ChatTTSText - 客户端事件ID: 500"""
-        tts_data = {
-            "start": start,
-            "content": content,
-            "end": end
-        }
-
-        chat_tts_request = client_generate_request(
-            payload_data=tts_data,
-            message_type=CLIENT_FULL_REQUEST,
-            message_type_specific_flags=MSG_WITH_EVENT,
-            serial_method=JSON,
-            compression_type=GZIP,
-            event=ClientEvent.ChatTTSText,
-            session_id=self.session_id
-        )
-
-        try:
-            await self.ws.send(chat_tts_request)
-        except (websockets.exceptions.ConnectionClosed, 
-                websockets.exceptions.ConnectionClosedError,
-                websockets.exceptions.WebSocketException,
-                OSError, 
-                ConnectionResetError, 
-                BrokenPipeError,
-                ssl.SSLError) as e:
-            # 捕获所有可能的连接相关异常
-            error_msg = str(e).lower()
-            if "ssl" in error_msg or "connection" in error_msg:
-                logger.warning(f"发送TTS文本时检测到连接问题: {e}")
-                raise websockets.exceptions.ConnectionClosed(None, 1000, f"Connection error during send: {e}")
-            else:
-                # 重新抛出其他类型的异常
-                raise

@@ -118,7 +118,7 @@ class AuraAgent:
             logger.error(f"关闭WebSocket连接时出错: {e}")
         # 清理消息分发器和聊天流锁
         try:
-            MessageProcessorAudio.get_instance().cleanup()
+            await MessageProcessorAudio.get_instance().cleanup()
             logger.info("MessageProcessorAudio清理完成")
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
@@ -340,7 +340,7 @@ class AuraAgent:
                     })
                     break
                 now = time.time()
-                logger.info(f"收到二进制协议消息: event={message_data.get('event', 'unknown')} {now - self.last_message_time}")
+                logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')} {now - self.last_message_time}")
                 self.last_message_time = now
                 await MessageProcessorAudio.get_instance().handle_message(message_data)
             except WebSocketDisconnect:

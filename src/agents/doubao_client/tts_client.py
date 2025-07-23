@@ -445,7 +445,7 @@ class TtsClient:
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback)
                     elif res.optional.event == EVENT_SessionFinished:
-                        logger.debug(f"TTS会话结束: {res.optional.event}")
+                        logger.info(f"TTS会话结束: {res.optional.event}")
                         self.session_id = str(uuid.uuid4()).replace('-', '')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id)
                         if self.tts_ended_callback:
@@ -509,9 +509,11 @@ class TtsClient:
         """
         try:
             self.buffer_text += text
-            if self._tts_session_active == False:
-                return
             if self.is_connected() == False:
+                return
+            if self._tts_session_active == False:
+                self.session_id = str(uuid.uuid4()).replace('-', '')
+                await self._tts_start_session(self.ws, self.speaker, self.session_id)
                 return
             await self._send_text_internal(self.buffer_text)
             self.buffer_text = ""
@@ -536,6 +538,7 @@ class TtsClient:
         if self.is_running == False:
             return
         if self._tts_session_active == False:
+            await self._tts_finish_connection(self.ws)
             return
         await self._tts_cancel_session(self.ws, self.session_id)
     

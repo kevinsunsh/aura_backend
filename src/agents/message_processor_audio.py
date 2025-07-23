@@ -203,6 +203,7 @@ class LLM_TTSClient(ABC):
                     client.timestamp = int(time.time() * 1000)
                     logger.debug(f"input: {msg['data']} at {client.timestamp}ms")
                     await client.text_processor.handle_text_message({"message": msg["data"]})
+                    logger.info(f"handle_text_message: {msg['data']}")
                     logger.debug(f"handle_text_message delay: {int(time.time() * 1000) - client.timestamp}ms")
     
     # TTS类事件回调方法
@@ -678,9 +679,10 @@ class MessageProcessorAudio:
             while True:
                 try:
                     msg = await loop.run_in_executor(None, self.llm_tts_output_queue.get)
-                    logger.debug(f"收到LLM_TTS消息: {msg}")
+                    logger.debug(f"收到LLM_TTS消息: {msg.get('event')}")
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)
+                    await asyncio.sleep(0.01)
                 except asyncio.TimeoutError:
                     # 超时继续循环
                     continue

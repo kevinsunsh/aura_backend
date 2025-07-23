@@ -780,6 +780,65 @@ class AudioProcessor:
         finally:
             logger.info("🎤 音频处理工作进程已结束")
 
+# ========== 进程版TTS音频播放函数 ==========
+def audio_player_process(audio_queue, is_playing_flag):
+    """TTS音频播放进程，支持打断和恢复（顶层函数，避免pickle问题）"""
+    import time
+    import pyaudio
+    # 进程内重新初始化音频设备和流
+    audio_device = AudioDeviceManager(
+        input_config=AudioConfig(sample_rate=16000, channels=1, chunk=3200, bit_size=pyaudio.paInt16),
+        output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
+    )
+    output_stream = audio_device.open_output_stream()
+    output_stream.start_stream()
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("🎵 播放进程已启动，等待音频数据...")
+    while is_playing_flag.value:
+        try:
+            pcm_data = audio_queue.get(timeout=0.01)
+            if pcm_data is not None and output_stream:
+                try:
+                    if output_stream.is_active():
+                        output_stream.write(pcm_data)
+                    else:
+                        logger.warning("音频输出流未激活，跳过播放")
+                        time.sleep(0.01)
+                except Exception as audio_error:
+                    error_msg = str(audio_error)
+                    if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg or "Stream not open" in error_msg:
+                        logger.error(f"PortAudio错误: {error_msg}")
+                        try:
+                            logger.info("尝试重新初始化音频输出流...")
+                            if output_stream:
+                                try:
+                                    if output_stream.is_active():
+                                        output_stream.stop_stream()
+                                    output_stream.close()
+                                except Exception as close_error:
+                                    logger.warning(f"关闭音频流时出错: {close_error}")
+                            output_stream = audio_device.open_output_stream()
+                            output_stream.start_stream()
+                            logger.info("音频输出流重新初始化成功")
+                        except Exception as reinit_error:
+                            logger.error(f"重新初始化音频输出流失败: {reinit_error}")
+                            time.sleep(0.1)
+                    else:
+                        logger.error(f"音频播放错误: {error_msg}")
+                        time.sleep(0.01)
+        except Exception:
+            time.sleep(0.01)
+    logger.info("🔇 播放进程结束")
+    try:
+        if output_stream:
+            if output_stream.is_active():
+                output_stream.stop_stream()
+            output_stream.close()
+        audio_device.cleanup()
+    except Exception as e:
+        logger.warning(f"播放进程清理资源时出错: {e}")
+
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
@@ -1047,28 +1106,42 @@ class WebSocketTestSession:
                 break
 
     def initialize_tts_player(self):
-        """初始化TTS音频播放器"""
+        """初始化TTS音频播放器（进程版）"""
         if self.tts_initialized:
             return
-            
         try:
-            self.output_stream = self.audio_device.open_output_stream()
-            self.output_stream.start_stream()
-            
-            self.player_thread = threading.Thread(target=self._audio_player_thread, daemon=True)
-            self.player_thread.start()
-            
+            self.audio_queue = mp.Queue(maxsize=20)
+            self.is_playing_flag = mp.Value('b', True)
+            self.player_process = mp.Process(target=audio_player_process, args=(self.audio_queue, self.is_playing_flag), daemon=True)
+            self.player_process.start()
             self.tts_initialized = True
-            logger.info(f"🎵 TTS音频播放器已初始化")
-            
+            logger.info(f"🎵 TTS音频播放器进程已初始化")
         except Exception as e:
-            logger.error(f"初始化TTS播放器失败: {e}")
+            logger.error(f"初始化TTS播放器进程失败: {e}")
             raise
+
+    def cleanup_tts_player(self):
+        """清理TTS播放进程和队列"""
+        if hasattr(self, 'is_playing_flag') and self.is_playing_flag is not None:
+            self.is_playing_flag.value = False
+        if hasattr(self, 'player_process') and self.player_process is not None:
+            self.player_process.join(timeout=2)
+            if self.player_process.is_alive():
+                self.player_process.terminate()
+        if hasattr(self, 'audio_queue') and self.audio_queue is not None:
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except Exception:
+                    break
+        self.tts_initialized = False
+        logger.info("🎵 TTS播放进程已清理")
     
     def handle_websocket_response(self, data: dict):
         """处理WebSocket响应"""
         if "event" in data:
             event_id = data["event"]
+            logger.info(f"🎵 收到事件: {event_id}")
             payload_msg = data.get("payload_msg", {})
             if event_id == 450:  # ASRInfo
                 logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
@@ -1134,7 +1207,7 @@ class WebSocketTestSession:
                 # 结束录制并保存文件
                 if self.is_recording_tts and self.tts_recording_start_time is not None:
                     self.is_recording_tts = False
-                    self._save_tts_audio_file()
+                    # self._save_tts_audio_file()
             elif event_id == 352:  # TTSResponse
                 # 处理TTS音频数据 - 可能是PCM格式，不是Opus
                 audio_data = payload_msg
@@ -1149,7 +1222,7 @@ class WebSocketTestSession:
                 try:
                     # 方法1: 尝试作为PCM数据直接播放
                     if len(audio_data) > 0:
-                        self.audio_queue.put(audio_data)
+                        self.audio_queue.put(bytes(audio_data))
                         logger.debug(f"✅ 直接播放PCM音频: {len(audio_data)} 字节")
                     else:
                         logger.warning("⚠️ 收到空的音频数据")
@@ -1232,6 +1305,7 @@ class WebSocketTestSession:
                         response_data = await asyncio.wait_for(self.websocket.recv(), timeout=0.1)
                         data = client_parse_response(response_data)
                         self.handle_websocket_response(data)
+                        await asyncio.sleep(0.01)
                     except asyncio.TimeoutError:
                         continue
                     except Exception as e:
@@ -1280,7 +1354,7 @@ class WebSocketTestSession:
                         self.audio_device.input_config.chunk, 
                         exception_on_overflow=False
                     )
-                    
+                    logger.info(f"🎵 发送音频: {len(audio_chunk)}")
                     # 获取当前时间戳
                     await send_audio_task_request(self.websocket, audio_chunk, "test_user_123444")
                     
@@ -1537,6 +1611,10 @@ class WebSocketTestSession:
                     # 清理音频设备
                     if hasattr(self, 'audio_device'):
                         self.audio_device.cleanup()
+                    
+                    # 关闭TTS播放进程
+                    if hasattr(self, 'cleanup_tts_player'):
+                        self.cleanup_tts_player()
                     
                     # 关闭WebSocket连接
                     if self.websocket and not self._is_websocket_closed():
@@ -1931,6 +2009,8 @@ class WebSocketTestSession:
             self.is_playing = False
             # 清理资源
             self.audio_device.cleanup()
+            if hasattr(self, 'cleanup_tts_player'):
+                self.cleanup_tts_player()
 
     async def interrupt_handler(self):
         """异步打断处理"""
