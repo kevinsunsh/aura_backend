@@ -1141,7 +1141,7 @@ class WebSocketTestSession:
         """处理WebSocket响应"""
         if "event" in data:
             event_id = data["event"]
-            logger.info(f"🎵 收到事件: {event_id}")
+            logger.debug(f"🎵 收到事件: {event_id}")
             payload_msg = data.get("payload_msg", {})
             if event_id == 450:  # ASRInfo
                 logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
@@ -1354,7 +1354,7 @@ class WebSocketTestSession:
                         self.audio_device.input_config.chunk, 
                         exception_on_overflow=False
                     )
-                    logger.info(f"🎵 发送音频: {len(audio_chunk)}")
+                    # logger.info(f"🎵 发送音频: {len(audio_chunk)}")
                     # 获取当前时间戳
                     await send_audio_task_request(self.websocket, audio_chunk, "test_user_123444")
                     

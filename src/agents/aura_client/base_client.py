@@ -61,7 +61,6 @@ class BaseClient(ABC):
             except Exception as e:
                 logger.error(f"启动客户端失败（第{attempt}次）: {e}")
                 if attempt < max_retries:
-                    import asyncio
                     await asyncio.sleep(2)
                 else:
                     raise e
