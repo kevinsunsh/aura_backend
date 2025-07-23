@@ -96,7 +96,7 @@ class ASRClient(BaseClient):
     async def main(input_queue, output_queue, is_process_running):
         loop = asyncio.get_event_loop()
         client = ASRClient(
-            config=vad_config,
+            config=asr_config,
             input_queue=input_queue,
             output_queue=output_queue,
             is_process_running=is_process_running
@@ -112,10 +112,6 @@ class ASRClient(BaseClient):
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
                     await client.task_request(msg["data"])
-    
-    async def _on_asr_ended(self) -> None:
-        """ASR结束事件回调"""
-        self.output_queue.put({"event": ServerEvent.ASREnded})
     
     async def _handle_server_response(self, response: Dict[str, Any]) -> None:
         """处理服务器响应"""

@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 class RealtimeDialogClient:
     """实时对话客户端，基于参考代码实现"""
     
-    def __init__(self, config: Dict[str, Any], session_id: str):
+    def __init__(self, config: Dict[str, Any], chat_id: str):
         self.config = config
         self.logid = ""
-        self.session_id = session_id
+        self.chat_id = chat_id
+        self.session_id = None
         self.ws = None
 
     async def connect(self) -> None:
@@ -59,7 +60,8 @@ class RealtimeDialogClient:
 
     async def start_session(self) -> None:
         """StartSession - 客户端事件ID: 100"""
-        default_session_req["dialog"]["dialog_id"] = self.session_id
+        default_session_req["dialog"]["dialog_id"] = self.chat_id
+        self.session_id = str(uuid.uuid4()).replace('-', '')
         start_session_request = client_generate_request(
             payload_data=default_session_req,
             message_type=CLIENT_FULL_REQUEST,

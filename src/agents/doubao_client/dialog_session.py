@@ -1,20 +1,8 @@
 import asyncio
-import uuid
-import queue
-import threading
-import time
-import json
 import logging
-import base64
 from typing import Optional, Dict, Any, Callable
-from dataclasses import dataclass
-from datetime import datetime
-
 import websockets
-import gzip
-
 from api_protocol.constant import *
-
 from .realtime_dialog_client import RealtimeDialogClient
 from .doubao_config import ws_connect_config
 from utils.utils import safe_call
@@ -34,8 +22,8 @@ class DialogSession:
                  chat_response_callback: Callable[[dict], None] = None,
                  chat_end_callback: Callable[[], None] = None,
                  ):
-        self.uid = None
-        self.session_id = None
+        self.user_id = None
+        self.chat_id = None
         self.client = None
 
         # 状态管理
@@ -61,8 +49,10 @@ class DialogSession:
     async def _connect(self) -> bool:
         """执行连接逻辑"""
         try:
+            self.is_running = False
+            self.is_session_started = False
             # 创建新的客户端实例
-            self.client = RealtimeDialogClient(config=ws_connect_config, session_id=self.session_id)
+            self.client = RealtimeDialogClient(config=ws_connect_config, chat_id=self.chat_id)
             
             # 重新连接
             await self.client.connect()
@@ -90,9 +80,9 @@ class DialogSession:
     async def start(self, chat_id: str, user_id: str) -> None:
         """启动对话会话"""
         try:
-            self.session_id = chat_id
-            self.uid = chat_id
-            logger.info(f"启动对话会话: {self.session_id}")
+            self.chat_id = chat_id
+            self.user_id = user_id
+            logger.info(f"启动对话会话: {self.chat_id}")
             await self._connect()
             self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:
@@ -104,30 +94,34 @@ class DialogSession:
             return
         
         logger.debug(f"处理服务器响应: {response}")
-
         # 处理事件类型响应
-        if response.get('event') is not None:
-            event_id = response.get('event')
-            payload_msg = response.get('payload_msg', {})
-            logger.debug(f"处理服务器事件: {event_id}")
-            await self._handle_server_event(event_id, payload_msg)
+        if response.get('event') is None:
             return
-    
-    async def _handle_server_event(self, event_id: int, payload_msg: Dict[str, Any]) -> None:
+        
+        event_id = response.get('event')
+        payload_msg = response.get('payload_msg', {})
         # Connect类事件 (50-52)
         if event_id == ServerEvent.ConnectionStarted:
-            await self._on_connection_started(payload_msg)
+            logger.info("连接建立成功")
         elif event_id == ServerEvent.ConnectionFailed:
-            await self._on_connection_failed(payload_msg)
+            error_msg = payload_msg.get("error", "未知错误")
+            logger.error(f"连接建立失败: {error_msg}")
         elif event_id == ServerEvent.ConnectionFinished:
-            await self._on_connection_finished(payload_msg)
+            logger.info("连接已结束")
         # Session类事件 (150-153)
         elif event_id == ServerEvent.SessionStarted:
-            await self._on_session_started(payload_msg)
+            dialog_id = payload_msg.get("dialog_id", "")
+            logger.info(f"会话启动成功，dialog_id: {dialog_id}")
+            self.is_session_started = True
         elif event_id == ServerEvent.SessionFinished:
-            await self._on_session_finished(payload_msg)
+            logger.info("会话已结束")
+            self.is_session_started = False
+            await self.client.start_session()
         elif event_id == ServerEvent.SessionFailed:
-            await self._on_session_failed(payload_msg)
+            error_msg = payload_msg.get("error", "未知错误")
+            logger.error(f"会话失败: {error_msg}")
+            self.is_session_started = False
+            await self.client.start_session()
         # TTS类事件 (350-359)
         elif event_id == ServerEvent.TTSSentenceStart:
             await safe_call(self.tts_sentence_start_callback, payload_msg)
@@ -152,42 +146,14 @@ class DialogSession:
         else:
             logger.warning(f"未知事件ID: {event_id}")
     
-    # Connect类事件回调方法
-    async def _on_connection_started(self, payload: Dict[str, Any]) -> None:
-        """连接建立成功事件回调"""
-        logger.info("连接建立成功")
-
-    async def _on_connection_failed(self, payload: Dict[str, Any]) -> None:
-        """连接建立失败事件回调"""
-        error_msg = payload.get("error", "未知错误")
-        logger.error(f"连接建立失败: {error_msg}")
-
-    async def _on_connection_finished(self, payload: Dict[str, Any]) -> None:
-        """连接结束事件回调"""
-        logger.info("连接已结束")
-
-    # Session类事件回调方法
-    async def _on_session_started(self, payload: Dict[str, Any]) -> None:
-        """会话启动成功事件回调"""
-        dialog_id = payload.get("dialog_id", "")
-        logger.info(f"会话启动成功，dialog_id: {dialog_id}")
-
-    async def _on_session_finished(self, payload: Dict[str, Any]) -> None:
-        """会话结束事件回调"""
-        logger.info("会话已结束")
-        self.is_session_started = False
-
-    async def _on_session_failed(self, payload: Dict[str, Any]) -> None:
-        """会话失败事件回调"""
-        error_msg = payload.get("error", "未知错误")
-        logger.error(f"会话失败: {error_msg}")
-        self.is_session_started = False
-    
     async def message_receive_loop(self):
         """服务器响应接收循环"""
         try:
-            while self.is_running and self.is_session_started:
+            while True:
                 try:
+                    if self.is_running == False:
+                        await asyncio.sleep(0.1)
+                        continue
                     # 尝试从服务器接收响应
                     response = await self.client.receive_server_response()
                     await self._handle_server_response(response)
@@ -209,8 +175,7 @@ class DialogSession:
             if not self.is_connected():
                 logger.warning("连接检查失败，无法发送音频数据")
                 return
-                
-            self.last_input_time = time.time()
+            
             logger.debug(f"开始发送音频数据: {len(audio_data)} 字节")
             await self.client.task_request(audio_data)
             logger.debug(f"已发送音频数据: {len(audio_data)} 字节")
@@ -221,17 +186,9 @@ class DialogSession:
                 ConnectionResetError,
                 BrokenPipeError) as e:
             logger.error(f"WebSocket连接相关错误: {e}")
-            await self._connect()
         except Exception as e:
             logger.error(f"发送音频数据失败: {e}")
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
-                await self._connect()
-                logger.info("已触发重连，音频数据将在重连后重试")
-            else:
-                # 其他类型的错误，记录但不重连
-                logger.error(f"非连接相关错误，不进行重连: {e}")
-    
+            
     async def send_text_chunk(self, text: str, start: bool = False, end: bool = False) -> None:
         """发送文本块到TTS（兼容TTS客户端的接口）"""
         await self.send_chat_tts_text(text, start, end)
@@ -253,15 +210,8 @@ class DialogSession:
                 ConnectionResetError,
                 BrokenPipeError) as e:
             logger.error(f"WebSocket连接相关错误: {e}")
-            await self._connect()
         except Exception as e:
             logger.error(f"发送打招呼消息失败: {e}")
-            # 如果是连接相关错误，尝试重连
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["connection", "websocket", "ssl", "socket", "network"]):
-                await self._connect()
-            else:
-                logger.error(f"非连接相关错误，不进行重连: {e}")
     
     async def send_chat_tts_text(self, content: str, start: bool = True, end: bool = True) -> None:
         """发送聊天TTS文本"""
@@ -274,6 +224,17 @@ class DialogSession:
             await self.client.chat_tts_text(content, start, end)
         except Exception as e:
             logger.error(f"发送TTS文本失败: {e}")
+    
+    async def user_input_interruption(self):
+        """用户输入中断"""
+        if self.is_connected() == False:
+            return
+        if self.is_running == False:
+            return
+        if self.is_session_started == False:
+            return
+        await self.client.finish_session()
+        self.is_session_started = False
     
     def is_connected(self) -> bool:
         """检查连接状态"""
@@ -342,8 +303,8 @@ class DialogSession:
             if self.message_loop:
                 self.message_loop.cancel()
                 self.message_loop = None
-            logger.info(f"对话会话已清理: {self.session_id}")
-            self.session_id = None
-            self.uid = None
+            logger.info(f"对话会话已清理: {self.chat_id}")
+            self.chat_id = None
+            self.user_id = None
         except Exception as e:
             logger.error(f"DoubaoClient清理资源时出错: {e}")
