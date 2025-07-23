@@ -30,7 +30,7 @@ class BaseClient:
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=self.config['headers'],
-            open_timeout=5
+            open_timeout=20
         )
         
         # 执行连接握手

@@ -197,7 +197,7 @@ class LLM_TTSClient(ABC):
             elif isinstance(msg, dict) and msg.get("type") == "interruption":
                 if client.is_process_running.value:
                     await client.text_processor.user_input_interruption()
-                    # await client.tts_client.user_input_interruption()
+                    await client.tts_client.user_input_interruption()
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
                     client.timestamp = int(time.time() * 1000)
@@ -582,7 +582,7 @@ class MessageProcessorAudio:
                             logger.debug("ASR识别出首字，但ASR已开始")
                             continue
                     elif msg.get("event") == ServerEvent.ASRResponse:
-                        self.asr_result = msg.get("payload_msg", {}).get("results", [{}])[0].get("text", "")
+                        self.asr_result += msg.get("payload_msg", {}).get("results", [{}])[0].get("text", "")
                     elif msg.get("event") == ServerEvent.ASREnded:
                         if self.asr_is_started:
                             async with self.asr_lock:
@@ -724,6 +724,7 @@ class MessageProcessorAudio:
         # with E2E
         while not self.e2e_is_process_running.value or not self.llm_tts_is_process_running.value or not self.vad_is_process_running.value:
             await asyncio.sleep(0.1)
+        # with ASR
         # while not self.asr_is_process_running.value or not self.llm_tts_is_process_running.value or not self.vad_is_process_running.value:
         #     await asyncio.sleep(0.1)
         logger.info("MessageProcessorAudio启动完成")
@@ -740,6 +741,7 @@ class MessageProcessorAudio:
         # with E2E
         while self.e2e_is_process_running.value or self.llm_tts_is_process_running.value or self.vad_is_process_running.value:
             await asyncio.sleep(0.1)
+        # with ASR
         # while self.asr_is_process_running.value or self.llm_tts_is_process_running.value or self.vad_is_process_running.value:
         #     await asyncio.sleep(0.1)
         logger.info("MessageProcessorAudio清理完成")

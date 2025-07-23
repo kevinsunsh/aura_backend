@@ -799,15 +799,15 @@ class WebSocketTestSession:
             'is_speaking': mp.Value(ctypes.c_bool, False)
         }
         
-        # 音频处理器（多进程）
-        self.audio_processor = AudioProcessor(
-            sample_rate=16000,
-            silence_threshold_db=-40,  # 静音阈值（更宽松）
-            speech_threshold_db=-35,   # 语音阈值（更宽松）
-            silence_duration_ms=300,   # 静音持续时间
-            speech_duration_ms=50,     # 语音持续时间
-            shared_variables=self.shared_variables
-        )
+        # # 音频处理器（多进程）
+        # self.audio_processor = AudioProcessor(
+        #     sample_rate=16000,
+        #     silence_threshold_db=-40,  # 静音阈值（更宽松）
+        #     speech_threshold_db=-35,   # 语音阈值（更宽松）
+        #     silence_duration_ms=300,   # 静音持续时间
+        #     speech_duration_ms=50,     # 语音持续时间
+        #     shared_variables=self.shared_variables
+        # )
         
         # 状态控制
         self.is_running = True
@@ -1256,7 +1256,7 @@ class WebSocketTestSession:
             logger.info("🎤 多进程语音检测已启用，将实时监测说话开始瞬间")
             
             # 启动音频处理进程
-            self.audio_processor.start()
+            # self.audio_processor.start()
             logger.info("🎤 音频处理进程已启动")
             
             # 音量显示计数器
@@ -1282,13 +1282,9 @@ class WebSocketTestSession:
                     )
                     
                     # 获取当前时间戳
-                    current_timestamp = time.time()
-                    # 🔥 使用简洁的task_request方式发送音频数据
                     await send_audio_task_request(self.websocket, audio_chunk, "test_user_123444")
                     
-                    # 向音频处理进程发送音频数据
-                    self.audio_processor.put_audio_data(audio_chunk, current_timestamp)
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.1)
                 except websockets.exceptions.ConnectionClosed:
                     logger.info("WebSocket连接关闭，尝试重连...")
                     if await self._reconnect_websocket():
@@ -1320,7 +1316,7 @@ class WebSocketTestSession:
                     await asyncio.sleep(0.1)
             
             # 停止音频处理进程
-            self.audio_processor.stop()
+            # self.audio_processor.stop()
             
             # 显示多进程语音检测统计
             logger.info(f"🎤 多进程语音检测统计: 最后语音结束时间: {last_speech_end_time:.3f}")
@@ -1345,7 +1341,7 @@ class WebSocketTestSession:
         except Exception as e:
             logger.error(f"麦克风录制失败: {str(e)}")
             # 确保停止音频处理进程
-            self.audio_processor.stop()
+            # self.audio_processor.stop()
         finally:
             logger.info("🎤 microphone_input_loop 已结束")
     
@@ -1535,8 +1531,8 @@ class WebSocketTestSession:
                     self.response_completed = True
                     
                     # 停止音频处理进程
-                    if hasattr(self, 'audio_processor'):
-                        self.audio_processor.stop()
+                    # if hasattr(self, 'audio_processor'):
+                    #     self.audio_processor.stop()
                     
                     # 清理音频设备
                     if hasattr(self, 'audio_device'):

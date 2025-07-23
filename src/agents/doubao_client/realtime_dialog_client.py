@@ -1,9 +1,8 @@
-import websockets
-import gzip
-import json
-import asyncio
-import logging
 import ssl
+import time
+import logging
+import fastrand
+import websockets
 from typing import Dict, Any
 
 from .doubao_config import *
@@ -22,17 +21,23 @@ class RealtimeDialogClient:
         self.session_id = None
         self.ws = None
 
+    def _gen_log_id(self):
+        """生成logID"""
+        ts = int(time.time() * 1000)  # 毫秒时间戳
+        r = fastrand.pcg32bounded(1 << 24) + (1 << 20)
+        local_ip = "00000000000000000000000000000000"
+        return f"02{ts}{local_ip}{r:08x}"
+
     async def connect(self) -> None:
         """建立WebSocket连接"""
         logger.info(f"连接服务器: {self.config['base_url']}")
+        headers = self.config['headers']
+        headers['X-Tt-Logid'] = self.logid
         self.ws = await websockets.connect(
             self.config['base_url'],
-            additional_headers=self.config['headers'],
+            additional_headers=headers,
             ping_interval=None
         )
-        
-        # 新版本websockets不再提供获取响应头的方法
-        self.logid = ""
         logger.info(f"WebSocket连接已建立")
     
     async def start_connection(self) -> None:
@@ -266,14 +271,14 @@ class RealtimeDialogClient:
             return data
         except websockets.exceptions.ConnectionClosed:
             # 重新抛出连接关闭异常
-            logger.warning("ConnectionClosed WebSocket连接已关闭")
+            logger.warning(f"ConnectionClosed WebSocket连接已关闭 {self.logid}")
             raise
         except Exception as e:
             if "SSL connection is closed" in str(e):
                 logger.error(f"SSL连接已关闭: {e}")
                 raise websockets.exceptions.ConnectionClosed(None, 1000, f"SSL connection is closed: {e}")
             else:
-                logger.warning(f"接收消息失败: {e}")
+                logger.warning(f"接收消息失败: {e} {self.logid}")
                 raise Exception(f"接收消息失败: {e}")
     
     def _is_websocket_closed(self) -> bool:

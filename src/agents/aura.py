@@ -4,7 +4,7 @@ import logging
 import asyncio
 import requests
 import gzip
-import base64
+import time
 import websockets
 from pydantic import BaseModel
 from enum import Enum
@@ -42,7 +42,7 @@ class AuraAgent:
         self.chat_stream = None
         # WebSocket相关
         self.websocket_connection = None  # 存储WebSocket连接
-
+        self.last_message_time = time.time()
     
     async def send_websocket_message(self, message: dict):
         """发送WebSocket消息，使用统一的协议格式"""
@@ -339,8 +339,9 @@ class AuraAgent:
                         "payload_msg": {"status": "ended", "message": "Session已结束"}
                     })
                     break
-                
-                logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
+                now = time.time()
+                logger.info(f"收到二进制协议消息: event={message_data.get('event', 'unknown')} {now - self.last_message_time}")
+                self.last_message_time = now
                 await MessageProcessorAudio.get_instance().handle_message(message_data)
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")

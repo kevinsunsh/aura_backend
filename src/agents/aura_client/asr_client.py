@@ -137,7 +137,7 @@ class ASRClient(BaseClient):
         # ASR类事件 (450-459)
         elif event_id == ServerEvent.ASRInfo:
             logger.debug("ASR识别出首字")
-            self.output_queue.put({"event": ServerEvent.ASREnded})
+            self.output_queue.put({"event": ServerEvent.ASRInfo})
         elif event_id == ServerEvent.ASRResponse:
             logger.debug("ASR响应事件回调")
             self.output_queue.put({"event": ServerEvent.ASRResponse, "payload_msg": payload_msg})
