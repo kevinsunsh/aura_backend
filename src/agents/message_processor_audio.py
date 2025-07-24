@@ -502,17 +502,19 @@ class MessageProcessorAudio:
                 try:
                     msg = await loop.run_in_executor(None, self.vad_output_queue.get)
                     if msg.get("event") == ServerEvent.ASRInfo:
-                        if not self.asr_is_started:
-                            async with self.asr_lock:
-                                self.asr_is_started = True
-                            # self.llm_input_queues.put({"type": "interruption"})
-                            # self.tts_input_queues.put({"type": "interruption"})
-                            self.llm_tts_input_queues.put({"type": "interruption"})
-                        else:
-                            logger.debug("VAD识别出首字，但ASR已开始")
-                            continue
+                        # if not self.asr_is_started:
+                        #     async with self.asr_lock:
+                        #         self.asr_is_started = True
+                        #     # self.llm_input_queues.put({"type": "interruption"})
+                        #     # self.tts_input_queues.put({"type": "interruption"})
+                        #     self.llm_tts_input_queues.put({"type": "interruption"})
+                        # else:
+                        #     logger.debug("VAD识别出首字，但ASR已开始")
+                        continue
                     elif msg.get("event") == ServerEvent.ASREnded:
                         if self.asr_is_started:
+                            if len(self.asr_result) == 0:
+                                continue
                             async with self.asr_lock:
                                 self.asr_is_started = False
                             # self.llm_input_queues.put({"type": "input", "data": self.asr_result})

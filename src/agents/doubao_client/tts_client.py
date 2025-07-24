@@ -518,8 +518,6 @@ class TtsClient:
             if self.is_connected() == False:
                 return
             if self._tts_session_active == False:
-                self.session_id = str(uuid.uuid4()).replace('-', '')
-                await self._tts_start_session(self.ws, self.speaker, self.session_id)
                 return
             await self._send_text_internal(self.buffer_text)
             self.buffer_text = ""
