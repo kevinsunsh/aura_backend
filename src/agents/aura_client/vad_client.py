@@ -103,6 +103,9 @@ class VADClient(BaseClient):
         elif event_id == ServerEvent.SessionFailed:
             logger.error("会话失败")
         # VAD类事件 (450-459)
+        elif event_id == ServerEvent.ASRInfo:
+            logger.debug("VAD识别出首字")
+            self.output_queue.put({"event": ServerEvent.ASRInfo})
         elif event_id == ServerEvent.ASREnded:
             logger.debug("VAD识别结束")
             self.output_queue.put({"event": ServerEvent.ASREnded})
