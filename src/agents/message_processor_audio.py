@@ -743,7 +743,17 @@ class MessageProcessorAudio:
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # with E2E
-        while not self.e2e_is_process_running.value or not self.llm_tts_is_process_running.value or not self.vad_is_process_running.value:
+        timeout = 10  # 最多等待10秒
+        start_time = time.time()
+        while (not self.e2e_is_process_running.value or
+               not self.llm_tts_is_process_running.value or
+               not self.vad_is_process_running.value):
+            if time.time() - start_time > timeout:
+                logger.error("MessageProcessorAudio启动超时")
+                self.e2e_is_process_running.value = True
+                self.llm_tts_is_process_running.value = True
+                self.vad_is_process_running.value = True
+                return False
             await asyncio.sleep(0.1)
         # with E2E and VAD and LLM and TTS
         # while not self.e2e_is_process_running.value or not self.vad_is_process_running.value or not self.llm_is_process_running.value or not self.tts_is_process_running.value:
@@ -752,6 +762,7 @@ class MessageProcessorAudio:
         # while not self.asr_is_process_running.value or not self.llm_tts_is_process_running.value or not self.vad_is_process_running.value:
         #     await asyncio.sleep(0.1)
         logger.info("MessageProcessorAudio启动完成")
+        return True
     
     async def cleanup(self):
         logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")

@@ -282,7 +282,13 @@ class AuraAgent:
                         })
                         return False
                 
-                await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
+                result = await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
+                if result == False:
+                    await self.send_websocket_message({
+                        "event": ServerEvent.SessionFailed, 
+                        "payload_msg": {"status": "failed", "message": "无法启动session"}
+                    })
+                    return False
                 # 发送session确认
                 await self.send_websocket_message({
                     "event": ServerEvent.SessionStarted,

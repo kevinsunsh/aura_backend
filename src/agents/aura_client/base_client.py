@@ -47,9 +47,9 @@ class BaseClient(ABC):
         """处理服务器响应"""
         pass
 
-    async def start(self, chat_id: str, user_id: str) -> None:
+    async def start(self, chat_id: str, user_id: str) -> bool:
         """启动客户端，带重试机制"""
-        max_retries = 3
+        max_retries = 10
         for attempt in range(1, max_retries + 1):
             try:
                 self.session_id = chat_id
@@ -57,13 +57,13 @@ class BaseClient(ABC):
                 self.chat_id = chat_id
                 await self.connect()
                 self.message_loop = asyncio.create_task(self.message_receive_loop())
-                return
+                return True
             except Exception as e:
                 logger.error(f"启动客户端失败（第{attempt}次）: {e}")
                 if attempt < max_retries:
                     await asyncio.sleep(2)
                 else:
-                    raise e
+                    return False
     
     async def connect(self) -> None:
         """建立WebSocket连接"""
@@ -255,20 +255,12 @@ class BaseClient(ABC):
     async def cleanup(self) -> None:
         """清理资源"""
         try:
-            self.is_running = False
             if self.message_loop:
                 self.message_loop.cancel()
                 self.message_loop = None
+            self.is_running = False
             await self.finish_session()
-            response = await self.receive_server_response()
-            logger.debug(f"会话结束握手响应: {response}")
-            if response.get("event") != ServerEvent.SessionFinished:
-                raise Exception("会话结束握手失败")
-
             await self.finish_connection()
-            response = await self.receive_server_response()
-            if response.get("event") != ServerEvent.ConnectionFinished:
-                raise Exception("连接结束握手失败")
             await self.close()
         except Exception as e:
             logger.error(f"清理资源失败: {e}")

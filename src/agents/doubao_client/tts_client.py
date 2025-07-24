@@ -345,19 +345,22 @@ class TtsClient:
         optional = TTSOptional(event=EVENT_FinishConnection).as_bytes()
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
-
+    
     async def start(self, chat_id: str, user_id: str):
         """启动TTS连接并建立会话"""
         self.uid = user_id
         self.chat_id = chat_id
         
         try:
+            if self.message_loop is not None and self.message_loop.done() == False:
+                self.message_loop.cancel()
+                await self.message_loop
             await self._connect()
             self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:
             logger.error(f"启动TTS连接失败: {e}")
             raise
-
+    
     async def _connect(self):
         """建立TTS连接和会话"""
         logger.info(f"建立TTS连接: {self.ws_url}")
@@ -463,6 +466,9 @@ class TtsClient:
                 except websockets.exceptions.ConnectionClosedOK:
                     logger.debug("TTS WebSocket连接正常关闭")
                     break
+                except asyncio.CancelledError:
+                    logger.debug("TTS接收任务已取消")
+                    break
                 except Exception as e:
                     logger.error(f"接收TTS音频数据失败: {e}")
                     await self._connect()
@@ -549,7 +555,6 @@ class TtsClient:
             await self._cleanup_connection()
             if self.message_loop:
                 self.message_loop.cancel()
-                self.message_loop = None
             logger.debug("TTS客户端已清理")
         except Exception as e:
             logger.error(f"清理TTS客户端时出错: {e}")

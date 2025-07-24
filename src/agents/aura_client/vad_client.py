@@ -72,8 +72,7 @@ class VADClient(BaseClient):
         while True:
             msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "start":
-                await client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
-                client.is_process_running.value = True
+                client.is_process_running.value = await client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 await client.cleanup()
                 client.is_process_running.value = False
