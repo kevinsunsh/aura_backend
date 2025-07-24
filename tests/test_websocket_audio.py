@@ -41,6 +41,8 @@ import struct
 import multiprocessing as mp
 import ctypes
 # import opuslib
+import httpx
+from httpx_sse import aconnect_sse
 
 # 配置日志（提前）
 logging.basicConfig(level=logging.INFO)
@@ -839,6 +841,40 @@ def audio_player_process(audio_queue, is_playing_flag):
     except Exception as e:
         logger.warning(f"播放进程清理资源时出错: {e}")
 
+async def sse_listener(sse_url, session):
+    """异步SSE高优先级消息监听"""
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with aconnect_sse(client, method="GET", url=sse_url) as sse:
+                async for event in sse.aiter_sse():
+                    # logger.info(f"🔥 [SSE高优先级] {event.data}")
+                    # 假设SSE消息是JSON字符串
+                    try:
+                        data = json.loads(event.data)
+                        if data.get("event") == 450:  # ASRInfo
+                            logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
+                            session.asr_info_received_time = time.time()
+                            session.asr_is_started = True
+                            session._clear_audio_buffers()
+                            logger.debug("⏸️ 播放已暂停")
+                        elif data.get("event") == 451:  # ASRResponse
+                            session.chunk_count += 1
+                            content = data.get("payload_msg").get("results", [{}])[0].get("text", "")
+                            session.full_response += content
+                            logger.info(f"ASR收到第{session.chunk_count}个内容片段: '{content}'")
+                        elif data.get("event") == 459:  # ASREnded
+                            logger.info("🎤 ASR结束")
+                            if session.first_request_send_time is not None:
+                                delay = time.time() - session.first_request_send_time
+                                session.asr_to_tts_delays.append(delay)
+                                logger.info(f"⏱️ ASR结束到第一个request发送完成延迟: {delay:.3f}秒")
+                            session.asr_ended_time = time.time()
+                            logger.debug(f"⏱️ ASREnded时间戳: {session.asr_ended_time}")
+                    except Exception as e:
+                        logger.error(f"解析SSE消息失败: {e}")
+    except Exception as e:
+        logger.error(f"SSE监听异常: {e}")
+
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
@@ -871,6 +907,7 @@ class WebSocketTestSession:
         # 状态控制
         self.is_running = True
         self.is_playing = True
+        self.pause_playing = False
         self.response_completed = False
         # 音频播放队列和线程
         self.audio_queue = queue.Queue(maxsize=20)
@@ -906,7 +943,9 @@ class WebSocketTestSession:
         self.reconnect_attempts = 0
         # 初始化Opus解码器（24kHz, 单声道）- 匹配服务器音频格式
         # self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
-        
+        self.asr_is_started = False
+        self.session_id = None
+
         # TTS音频录制相关
         self.is_recording_tts = False
         self.current_tts_audio_data = bytearray()
@@ -1058,6 +1097,9 @@ class WebSocketTestSession:
         logger.info("🎵 播放线程已启动，等待音频数据...")
         while self.is_playing:
             try:
+                if self.pause_playing:
+                    time.sleep(0.01)
+                    continue
                 # 从队列获取PCM音频数据
                 pcm_data = self.audio_queue.get(timeout=0.01)
                 if pcm_data is not None and self.output_stream:
@@ -1099,11 +1141,13 @@ class WebSocketTestSession:
 
     def _clear_audio_buffers(self):
         """清空音频缓冲区"""
+        self.pause_playing = True
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
             except queue.Empty:
                 break
+        self.pause_playing = False
 
     def initialize_tts_player(self):
         """初始化TTS音频播放器（进程版）"""
@@ -1164,6 +1208,13 @@ class WebSocketTestSession:
             elif event_id == 350:  # TTSSentenceStart
                 logger.info("🎵 TTS语音合成开始...")
                 # 记录TTSSentenceStart时间戳
+                session_id = payload_msg.get("session_id", "")
+                if self.session_id != session_id:
+                    self.asr_is_started = False
+                    self.session_id = session_id
+                else:
+                    if self.asr_is_started:
+                        return
                 self.tts_sentence_start_time = time.time()
                 # logger.info(f"⏱️ TTSSentenceStart时间戳: {self.tts_sentence_start_time}")
                 
@@ -1203,12 +1254,16 @@ class WebSocketTestSession:
                         self.second_tts_audio_received_time = time.time()
                         self.second_asr_info_received_time = self.asr_info_received_time
             elif event_id == 351:  # TTSSentenceEnd
+                if self.asr_is_started:
+                    return
                 logger.debug("当前句子TTS语音合成完成")
                 # 结束录制并保存文件
                 if self.is_recording_tts and self.tts_recording_start_time is not None:
                     self.is_recording_tts = False
                     # self._save_tts_audio_file()
             elif event_id == 352:  # TTSResponse
+                if self.asr_is_started:
+                    return
                 # 处理TTS音频数据 - 可能是PCM格式，不是Opus
                 audio_data = payload_msg
                 logger.debug(f"🎵 收到TTS音频数据: {len(audio_data)} 字节")
@@ -1542,9 +1597,12 @@ class WebSocketTestSession:
         finally:
             logger.info("✅ 结束握手完成！")
 
-    async def start(self):
-        """启动WebSocket测试会话"""
+    async def start(self, sse_url=None):
+        """启动WebSocket测试会话，并可选启动SSE监听"""
         try:
+            sse_task = None
+            if sse_url:
+                sse_task = asyncio.create_task(sse_listener(sse_url, self))
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.uri,
@@ -1558,74 +1616,52 @@ class WebSocketTestSession:
                 self.websocket = websocket
                 logger.info("已连接到WebSocket服务器")
                 logger.info("=== 开始麦克风音频测试 ===")
-                
                 # 执行连接和session握手
                 if not await self.start_connection_handshake():
                     logger.error("❌ 连接握手失败，退出测试")
                     return
-                
                 # 在会话开始时就初始化TTS播放器，准备接收音频
                 self.initialize_tts_player()
                 logger.info("🎵 TTS播放器已预先初始化，准备接收多轮对话...")
-                
                 # 等待任务完成或者程序停止
                 try:
                     logger.info("🚀 开始高并发异步任务执行...")
-                    
-                    # 创建任务，使用更高效的方式
                     tasks = [
                         asyncio.create_task(self.receive_loop(), name="receive_loop"),
                         asyncio.create_task(self.microphone_input_loop(), name="microphone_loop")
                     ]
-                    
+                    if sse_task:
+                        tasks.append(sse_task)
                     logger.info(f"📋 已创建 {len(tasks)} 个并发任务")
-                    
-                    # 使用asyncio.gather进行高并发执行
                     results = await asyncio.gather(*tasks, return_exceptions=True)
-                    
                     # 检查任务执行结果
                     task_names = ["receive_loop", "microphone_loop"]
+                    if sse_task:
+                        task_names.append("sse_listener")
                     for i, (name, result) in enumerate(zip(task_names, results)):
                         if isinstance(result, Exception):
                             logger.error(f"❌ 任务 {name} 执行出错: {result}")
                         else:
                             logger.info(f"✅ 任务 {name} 执行完成")
-                    
                     logger.info("🎉 所有高并发任务执行完成")
                 except Exception as e:
                     logger.error(f"❌ 任务执行出错: {e}")
-                        
                 except asyncio.CancelledError:
                     logger.info("任务被取消")
-                
                 finally:
                     # 确保清理资源
                     logger.info("🧹 开始清理资源...")
                     self.is_running = False
                     self.response_completed = True
-                    
-                    # 停止音频处理进程
-                    # if hasattr(self, 'audio_processor'):
-                    #     self.audio_processor.stop()
-                    
-                    # 清理音频设备
                     if hasattr(self, 'audio_device'):
                         self.audio_device.cleanup()
-                    
-                    # 关闭TTS播放进程
                     if hasattr(self, 'cleanup_tts_player'):
                         self.cleanup_tts_player()
-                    
-                    # 关闭WebSocket连接
                     if self.websocket and not self._is_websocket_closed():
                         await self.websocket.close()
-                    
                     logger.info("✅ 资源清理完成")
-                
                 print(f"\n=== 麦克风音频会话结束，总共收到 {self.chunk_count} 个内容片段 ===")
                 logger.info(f"完整响应内容: {self.full_response}")
-                
-                # 输出ASREnded到第一个TTSSentenceStart延迟统计总结
                 if self.asr_to_tts_delays:
                     print("\n" + "="*50)
                     print("🎯 ASREnded到第一个TTSSentenceStart延迟统计总结")
@@ -1640,19 +1676,14 @@ class WebSocketTestSession:
                     print("="*50)
                 else:
                     print("\n⚠️ 未检测到ASREnded到第一个TTSSentenceStart的延迟数据")
-
-                # 执行结束握手
                 await self.end_session_handshake()
-                
         except KeyboardInterrupt:
             logger.info("用户中断测试")
         except Exception as e:
             logger.error(f"连接WebSocket失败: {str(e)}")
         finally:
-            # 设置停止标志
             self.is_running = False
             self.is_playing = False
-            # 清理资源
             self.audio_device.cleanup()
 
     def read_audio_file(self, file_path):
@@ -2397,4 +2428,7 @@ if __name__ == "__main__":
         print("🎵 使用新的 AudioDeviceManager 播放TTS音频")
         print("🎤 多进程语音检测已启用，将实时监测说话结束时刻")
         print("💡 提示: 按 Ctrl+C 停止录制")
-        asyncio.run(test_microphone_websocket_stream())
+        # 这里可以指定SSE地址
+        sse_url = "http://localhost:5876/sse"  # 替换为你的SSE服务地址
+        session = WebSocketTestSession(uri="ws://localhost:5876/ws/stream")
+        asyncio.run(session.start(sse_url=sse_url))

@@ -7,7 +7,6 @@ from typing import Dict, Any, Callable, Optional
 from dataclasses import dataclass
 from enum import Enum
 import websockets
-import aiofiles
 import fastrand
 from utils.utils import start_performance_point, end_performance_point, safe_call
 from .doubao_config import tts_config
@@ -139,10 +138,11 @@ class TtsClient:
                  app_id: str = None,
                  token: str = None,
                  speaker: str = None,
-                 tts_sentence_start_callback: Callable[[dict], None] = None,
-                 tts_response_callback: Callable[[bytes], None] = None,
-                 tts_sentence_end_callback: Callable[[], None] = None,
-                 tts_ended_callback: Callable[[], None] = None,
+                 tts_sentence_start_callback: Callable[[dict, str], None] = None,
+                 tts_response_callback: Callable[[bytes, str], None] = None,
+                 tts_sentence_end_callback: Callable[[str], None] = None,
+                 tts_ended_callback: Callable[[str], None] = None,
+                 session_id: Optional[Any] = None,
                  **kwargs):
         """
         初始化TTS客户端
@@ -176,7 +176,8 @@ class TtsClient:
         # 连接状态
         self.ws = None
         self.is_running = False
-        self.session_id = None
+        self.session_id_str = None
+        self.session_id = session_id
         self.connection_id = None
         self.connection_lost = False  # 新增：标记连接是否丢失
         
@@ -393,8 +394,9 @@ class TtsClient:
         self.connection_id = res.optional.connectionId
         
         # 开始会话
-        self.session_id = str(uuid.uuid4()).replace('-', '')
-        await self._tts_start_session(self.ws, self.speaker, self.session_id)
+        self.session_id_str = str(uuid.uuid4()).replace('-', '')
+        self.session_id.value = self.session_id_str.encode('utf-8')
+        await self._tts_start_session(self.ws, self.speaker, self.session_id_str)
         res = self._parse_tts_response(await self.ws.recv())
         logger.info(f"TTS会话响应: event={res.optional.event}")
         if res.optional.event != EVENT_SessionStarted:
@@ -413,25 +415,25 @@ class TtsClient:
                         await asyncio.sleep(0.1)
                         continue
                     res = self._parse_tts_response(await self.ws.recv())
-                    logger.debug(f"TTS响应: event={res.optional.event}, type={res.header.message_type}")
+                    logger.debug(f"TTS响应: cur session_id={self.session_id_str}, event_session_id={res.optional.sessionId}, event={res.optional.event}, type={res.header.message_type}")
                     
                     if res.optional.event == EVENT_TTSResponse and res.header.message_type == AUDIO_ONLY_RESPONSE:
                         if res.payload:
                             # 触发TTS响应回调
                             end_performance_point(self.tts_service_performance_point_id)
                             if self.tts_response_callback:
-                                await safe_call(self.tts_response_callback, res.payload)
+                                await safe_call(self.tts_response_callback, res.payload, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceStart:
                         logger.debug(f"TTS句子事件: {res.optional.event}")
                         json_data = json.loads(res.payload_json)
                         text = json_data.get("text", "")
                         # 第一次开始合成时触发开始回调
                         if self.tts_sentence_start_callback:
-                            await safe_call(self.tts_sentence_start_callback, {"text": text})
+                            await safe_call(self.tts_sentence_start_callback, {"text": text}, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceEnd:
                         logger.debug(f"TTS句子结束: {res.optional.event}")
                         if self.tts_sentence_end_callback:
-                            await safe_call(self.tts_sentence_end_callback)
+                            await safe_call(self.tts_sentence_end_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionStarted:
                         logger.info(f"TTS会话开始: {res.optional.event}")
                         self._tts_session_active = True
@@ -442,16 +444,12 @@ class TtsClient:
                     elif res.optional.event == EVENT_SessionFailed:
                         logger.error(f"TTS会话失败: {res.optional.event}")
                         self._tts_session_active = False
-                        self.session_id = str(uuid.uuid4()).replace('-', '')
-                        await self._tts_start_session(self.ws, self.speaker, self.session_id)
                         if self.tts_ended_callback:
-                            await safe_call(self.tts_ended_callback)
+                            await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionFinished:
                         logger.info(f"TTS会话结束: {res.optional.event}")
-                        self.session_id = str(uuid.uuid4()).replace('-', '')
-                        await self._tts_start_session(self.ws, self.speaker, self.session_id)
                         if self.tts_ended_callback:
-                            await safe_call(self.tts_ended_callback)
+                            await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_ConnectionFailed:
                         logger.error(f"TTS连接失败: {res.optional.event}")
                         await self._connect()
@@ -487,9 +485,9 @@ class TtsClient:
         if self.ws:
             try:
                 # 尝试正常结束会话和连接
-                # if self.session_id:
+                # if self.session_id.value:
                 #     try:
-                #         await self._tts_finish_session(self.ws, self.session_id)
+                #         await self._tts_finish_session(self.ws, self.session_id.value)
                 #     except:
                 #         pass
                 try:
@@ -502,10 +500,9 @@ class TtsClient:
             self.ws = None
             
         # 重置会话相关状态
-        logger.info(f"重置TTS会话相关状态: {self.session_id}")
+        logger.info(f"重置TTS会话相关状态: {self.session_id_str}")
         self._tts_session_active = False
         self.buffer_text = ""
-        self.session_id = None
         self.connection_id = None
         # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
     
@@ -521,11 +518,15 @@ class TtsClient:
             if self.is_connected() == False:
                 return
             if self._tts_session_active == False:
-                return
+                self.session_id_str = str(uuid.uuid4()).replace('-', '')
+                self.session_id.value = self.session_id_str.encode('utf-8')
+                await self._tts_start_session(self.ws, self.speaker, self.session_id_str)
+                while self._tts_session_active == False:
+                    await asyncio.sleep(0.1)
             await self._send_text_internal(self.buffer_text)
             self.buffer_text = ""
             if end:
-                await self._tts_finish_session(self.ws, self.session_id)
+                await self._tts_finish_session(self.ws, self.session_id_str)
             logger.debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
@@ -535,7 +536,7 @@ class TtsClient:
         if self.tts_service_performance_point_id is None:
             self.tts_service_performance_point_id = start_performance_point("TTS服务")
         if len(text) > 0:
-            await self._tts_send_text(self.ws, self.speaker, text, self.session_id)
+            await self._tts_send_text(self.ws, self.speaker, text, self.session_id_str)
             logger.debug(f"已发送文本片段: {text[:50]}...")
     
     async def user_input_interruption(self):
@@ -547,7 +548,7 @@ class TtsClient:
         if self._tts_session_active == False:
             await self._tts_finish_connection(self.ws)
             return
-        await self._tts_cancel_session(self.ws, self.session_id)
+        await self._tts_cancel_session(self.ws, self.session_id_str)
     
     async def cleanup(self):
         """清理资源"""
