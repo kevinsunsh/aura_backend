@@ -68,7 +68,7 @@ class MessageStore:
             )
             session.add(db_message)
             session.commit()
-            # logger.info(f"添加消息成功: {message.msg_id}")
+            logger.debug(f"添加消息成功: {message.content}")
             return True
         except Exception as e:
             session.rollback()
@@ -137,13 +137,13 @@ class MessageStore:
         finally:
             session.close()
 
-    def get_messages_in_recent_time(self, seconds: int, user_id: Optional[str] = None) -> List[Message]:
+    def get_messages_in_recent_time(self, milliseconds: int, user_id: Optional[str] = None, chat_id: Optional[str] = None) -> List[Message]:
         """获取最近指定秒数内的所有消息，可选择指定用户"""
         session = self.db.get_db()
         try:
             # 计算时间范围（转换为毫秒）
             current_time =int(datetime.now().timestamp() * 1000)
-            start_time = current_time - (seconds * 1000)
+            start_time = current_time - milliseconds
             
             query = session.query(MessageModel).filter(
                 MessageModel.created_at >= start_time,
@@ -153,6 +153,10 @@ class MessageStore:
             # 如果提供了user_id，则按用户过滤
             if user_id:
                 query = query.filter(MessageModel.user_id == user_id)
+            
+            # 如果提供了chat_id，则按聊天ID过滤
+            if chat_id:
+                query = query.filter(MessageModel.chat_id == chat_id)
             
             db_messages = query.order_by(MessageModel.created_at).all()
             

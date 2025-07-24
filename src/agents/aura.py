@@ -4,13 +4,13 @@ import logging
 import asyncio
 import requests
 import gzip
-import base64
+import time
 import websockets
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional, Callable, Any, Dict
 from datetime import datetime
-from fastapi import WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect
 # 配置相关
 from config import settings
 
@@ -22,8 +22,7 @@ from utils.utils import performance_point_context
 
 # 配置LangChain日志
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("langchain")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 class MessageType(Enum):
     """消息类型枚举"""
@@ -41,35 +40,30 @@ class AuraAgent:
     
     def __init__(self):
         self.chat_stream = None
-        
         # WebSocket相关
         self.websocket_connection = None  # 存储WebSocket连接
-        self.websocket_lock = asyncio.Lock()  # 用于同步访问WebSocket连接
-
-        self.message_processor_audio = None
+        self.last_message_time = time.time()
     
     async def send_websocket_message(self, message: dict):
         """发送WebSocket消息，使用统一的协议格式"""
         try:
-            async with asyncio.timeout(5.0):  # 5秒超时
-                async with self.websocket_lock:
-                    if self.websocket_connection:
-                        try:
-                            # 使用统一的协议构造方法
-                            binary_data = self._construct_protocol_message(message)
-                            
-                            # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
-                            if hasattr(self.websocket_connection, 'send_bytes'):
-                                await self.websocket_connection.send_bytes(binary_data)
-                            else:
-                                await self.websocket_connection.send(binary_data)
-                                
-                        except Exception as e:
-                            logger.error(f"发送消息失败: {str(e)}")
-                            # 标记连接为无效，但不在这里调用remove_websocket_connection避免死锁
-                            self.websocket_connection = None
+            # async with self.websocket_lock: # 移除锁
+            if self.websocket_connection:
+                try:
+                    # 使用统一的协议构造方法
+                    logger.debug(f"发送消息: {message}")
+                    binary_data = self._construct_protocol_message(message)
+                    
+                    # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
+                    if hasattr(self.websocket_connection, 'send_bytes'):
+                        await self.websocket_connection.send_bytes(binary_data)
+                    else:
+                        await self.websocket_connection.send(binary_data)
+                    logger.debug(f"发送消息成功: {message.get('event')}")
+                except Exception as e:
+                    logger.error(f"发送消息失败: {str(e)}")
         except asyncio.TimeoutError:
-            logger.error("获取websocket_lock超时，可能存在死锁")
+            logger.error("send_websocket_message获取websocket_lock超时，可能存在死锁")
         except Exception as e:
             logger.error(f"发送WebSocket消息时出错: {e}")
 
@@ -87,23 +81,21 @@ class AuraAgent:
             
             # 处理音频数据
             skip_audio_compression = False
-            if "audio_data" in payload_data and isinstance(payload_data["audio_data"], bytes):
+            if isinstance(payload_data, bytes):
                 # 音频数据不需要JSON序列化，直接发送
-                payload_bytes = payload_data["audio_data"]
                 message_type = SERVER_ACK
                 serial_method = NO_SERIALIZATION
                 skip_audio_compression = True
                 compression_type = NO_COMPRESSION
             else:
                 # 其他数据使用JSON序列化，让server_generate_response处理序列化和压缩
-                payload_bytes = payload_data
                 message_type = SERVER_FULL_RESPONSE
                 serial_method = JSON
                 compression_type = GZIP
             
             # 使用统一的协议生成方法
             binary_data = server_generate_response(
-                payload_data=payload_bytes,
+                payload_data=payload_data,
                 message_type=message_type,
                 message_type_specific_flags=MSG_WITH_EVENT,
                 serial_method=serial_method,
@@ -117,53 +109,17 @@ class AuraAgent:
             
         except Exception as e:
             logger.error(f"构造协议消息失败: {e}")
-            # 降级到JSON发送
-            return str.encode(json.dumps(message))
 
-    # WebSocket连接管理方法
-    async def set_websocket_connection(self, websocket):
-        """设置WebSocket连接"""
-        try:
-            async with asyncio.timeout(5.0):  # 5秒超时
-                async with self.websocket_lock:
-                    self.websocket_connection = websocket
-                    logger.info(f"用户已连接 WebSocket")
-        except asyncio.TimeoutError:
-            logger.error("获取websocket_lock超时，可能存在死锁")
-            # 强制设置连接
-            self.websocket_connection = websocket
-            logger.info(f"强制设置WebSocket连接")
-        except Exception as e:
-            logger.error(f"设置WebSocket连接时出错: {e}")
-            # 强制设置连接
-            self.websocket_connection = websocket
-    
     async def remove_websocket_connection(self):
         """移除WebSocket连接"""
-        # 先获取锁，移除WebSocket连接，添加超时防止死锁
         try:
-            async with asyncio.timeout(5.0):  # 5秒超时
-                async with self.websocket_lock:
-                    if self.websocket_connection:
-                        self.websocket_connection = None
-                        logger.info(f"用户已断开 WebSocket 连接")
-        except asyncio.TimeoutError:
-            logger.error("获取websocket_lock超时，可能存在死锁")
-            # 强制重置连接
-            self.websocket_connection = None
+            await self.websocket_connection.close()
         except Exception as e:
-            logger.error(f"移除WebSocket连接时出错: {e}")
-            # 强制重置连接
-            self.websocket_connection = None
-
-        # 在锁外进行清理操作，避免死锁
+            logger.error(f"关闭WebSocket连接时出错: {e}")
+        # 清理消息分发器和聊天流锁
         try:
-            # 清理消息分发器
-            if self.message_processor_audio:
-                await self.message_processor_audio.cleanup()
-                self.message_processor_audio = None
-
-            # 释放聊天流锁
+            await MessageProcessorAudio.get_instance().cleanup()
+            logger.info("MessageProcessorAudio清理完成")
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
                     ChatStreamManager.get_instance().release_lock(self.chat_stream.chat_id)
@@ -194,7 +150,8 @@ class AuraAgent:
     async def handle_websocket_connection(self, websocket):
         """处理WebSocket连接，包括连接和session生命周期管理"""
         await websocket.accept()
-        await self.set_websocket_connection(websocket)
+        self.websocket_connection = websocket
+        logger.info(f"WebSocket连接已设置")
         
         try:
             # 第一步：等待客户端发送开始连接消息
@@ -236,6 +193,9 @@ class AuraAgent:
                         data = data['bytes']
                     elif 'text' in data:
                         data = data['text'].encode('utf-8')
+                    elif data.get('type') == 'websocket.disconnect':
+                        logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                        return False
                     else:
                         logger.error(f"未知的WebSocket消息格式: {data}")
                         return False
@@ -267,9 +227,6 @@ class AuraAgent:
         except websockets.exceptions.ConnectionClosed:
             logger.info("WebSocket连接已关闭")
             return False
-        except websockets.exceptions.ConnectionClosedError:
-            logger.info("WebSocket连接异常关闭")
-            return False
         except Exception as e:
             logger.error(f"等待连接开始消息时出错: {e}")
             return False
@@ -287,6 +244,9 @@ class AuraAgent:
                         data = data['bytes']
                     elif 'text' in data:
                         data = data['text'].encode('utf-8')
+                    elif data.get('type') == 'websocket.disconnect':
+                        logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                        return False
                     else:
                         logger.error(f"未知的WebSocket消息格式: {data}")
                         return False
@@ -322,12 +282,7 @@ class AuraAgent:
                         })
                         return False
                 
-                self.message_processor_audio = MessageProcessorAudio(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    websocket_send_callback=self.send_websocket_message
-                )
-                await self.message_processor_audio.start()
+                await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
                 # 发送session确认
                 await self.send_websocket_message({
                     "event": ServerEvent.SessionStarted,
@@ -340,9 +295,6 @@ class AuraAgent:
                 
         except websockets.exceptions.ConnectionClosed:
             logger.info("WebSocket连接已关闭")
-            return False
-        except websockets.exceptions.ConnectionClosedError:
-            logger.info("WebSocket连接异常关闭")
             return False
         except Exception as e:
             logger.error(f"等待session开始消息时出错: {e}")
@@ -362,8 +314,11 @@ class AuraAgent:
                             data = data['bytes']
                         elif 'text' in data:
                             data = data['text'].encode('utf-8')
+                        elif data.get('type') == 'websocket.disconnect':
+                            logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                            return  # 直接退出循环
                         else:
-                            logger.error(f"未知的WebSocket消息格式: {data}")
+                            logger.error(f"_message_processing_loop 未知的WebSocket消息格式: {data}")
                             continue
                 else:
                     data = await websocket.recv()
@@ -384,21 +339,15 @@ class AuraAgent:
                         "payload_msg": {"status": "ended", "message": "Session已结束"}
                     })
                     break
-                    
-                logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')}")
-                await self.message_processor_audio.handle_message(message_data)
-
+                now = time.time()
+                logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')} {now - self.last_message_time}")
+                self.last_message_time = now
+                await MessageProcessorAudio.get_instance().handle_message(message_data)
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break
             except websockets.exceptions.ConnectionClosed:
                 logger.info("WebSocket连接已关闭")
-                break
-            except websockets.exceptions.ConnectionClosedError:
-                logger.info("WebSocket连接异常关闭")
-                break
-            except websockets.exceptions.ConnectionClosedOK:
-                logger.info("WebSocket连接正常关闭")
                 break
             except Exception as e:
                 logger.error(f"处理WebSocket消息失败: {e}")
@@ -456,10 +405,7 @@ class AuraAgent:
             # 移除WebSocket连接（这里会自动清理消息处理器）
             await self.remove_websocket_connection()
             
-            # 等待一小段时间确保所有异步任务都能正确结束
-            import asyncio
-            await asyncio.sleep(0.1)
-            
+            await asyncio.sleep(1)
             logger.info("AuraAgent 资源清理完成")
         except Exception as e:
             logger.error(f"AuraAgent清理资源时出错: {e}")

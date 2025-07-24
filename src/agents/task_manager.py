@@ -17,10 +17,8 @@ class TaskMetadata:
     shared_data: Dict[str, Any] = {}
 
 class AgentTask:
-    def __init__(self, task_handle: asyncio.Task):
+    def __init__(self):
         self.metadata: TaskMetadata = TaskMetadata()
-        self.task_handle = task_handle
-        self.task_id = None
         self.task_lock = asyncio.Lock()
 
 class TaskType(Enum):
@@ -41,39 +39,16 @@ class TaskManager:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, replying_task_handle: asyncio.Task = None,
-                    speaking_task_handle: asyncio.Task = None,
-                    muttering_task_handle: asyncio.Task = None,
-                    thinking_task_handle: asyncio.Task = None,
-                    observing_task_handle: asyncio.Task = None,
-                    recalling_task_handle: asyncio.Task = None,
-                    memorizing_task_handle: asyncio.Task = None):
+    def __init__(self):
         if not self._initialized:
-            if replying_task_handle is None or speaking_task_handle is None or muttering_task_handle is None or thinking_task_handle is None or observing_task_handle is None or recalling_task_handle is None or memorizing_task_handle is None:
-                raise ValueError("TaskManager 初始化时需要提供 replying_task_handle, speaking_task_handle, thinking_task_handle, observing_task_handle, recalling_task_handle, memorizing_task_handle")
-            
             self._task_map: Dict[TaskType, AgentTask] = {}
-            self._task_map[TaskType.REPLYING] = AgentTask(
-                task_handle=replying_task_handle
-            )
-            self._task_map[TaskType.SPEAKING] = AgentTask(
-                task_handle=speaking_task_handle
-            )
-            self._task_map[TaskType.MUTTERING] = AgentTask(
-                task_handle=muttering_task_handle
-            )
-            self._task_map[TaskType.THINKING] = AgentTask(
-                task_handle=thinking_task_handle
-            )
-            self._task_map[TaskType.OBSERVING] = AgentTask(
-                task_handle=observing_task_handle
-            )
-            self._task_map[TaskType.RECALLING] = AgentTask(
-                task_handle=recalling_task_handle
-            )
-            self._task_map[TaskType.MEMORIZING] = AgentTask(
-                task_handle=memorizing_task_handle
-            )
+            self._task_map[TaskType.REPLYING] = AgentTask()
+            self._task_map[TaskType.SPEAKING] = AgentTask()
+            self._task_map[TaskType.MUTTERING] = AgentTask()
+            self._task_map[TaskType.THINKING] = AgentTask()
+            self._task_map[TaskType.OBSERVING] = AgentTask()
+            self._task_map[TaskType.RECALLING] = AgentTask()
+            self._task_map[TaskType.MEMORIZING] = AgentTask()
             self._initialized = True
     
     @classmethod
@@ -84,19 +59,13 @@ class TaskManager:
         return cls._instance
     
     @classmethod
-    def initialize(cls, replying_task_handle: asyncio.Task,
-                    speaking_task_handle: asyncio.Task,
-                    muttering_task_handle: asyncio.Task,
-                    thinking_task_handle: asyncio.Task,
-                    observing_task_handle: asyncio.Task,
-                    recalling_task_handle: asyncio.Task,
-                    memorizing_task_handle: asyncio.Task) -> 'TaskManager':
+    def initialize(cls) -> 'TaskManager':
         """初始化TaskManager单例"""
         if cls._instance is None:
-            cls._instance = cls(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle, recalling_task_handle, memorizing_task_handle)
+            cls._instance = cls()
         elif not cls._initialized:
             # 如果实例存在但未初始化，重新初始化
-            cls._instance.__init__(replying_task_handle, speaking_task_handle, muttering_task_handle, thinking_task_handle, observing_task_handle, recalling_task_handle, memorizing_task_handle)
+            cls._instance.__init__()
         return cls._instance
     
     async def set_task_state(self, task_type: TaskType, state: TaskStateType):
@@ -104,7 +73,7 @@ class TaskManager:
         if task_type in self._task_map:
             async with self._task_map[task_type].task_lock:
                 self._task_map[task_type].metadata.task_state = state
-                logger.info(f"任务状态已设置: {task_type.value}, 状态: {state.value}")
+                logger.debug(f"任务状态已设置: {task_type.value}, 状态: {state.value}")
     
     def get_task_state(self, task_type: TaskType) -> TaskStateType:
         """获取任务状态（线程安全）"""
@@ -125,15 +94,8 @@ class TaskManager:
             return self._task_map[task_type].metadata.shared_data
         return None
     
-    def cleanup(self):
-        """清理任务"""
-        for task_type, task in self._task_map.items():
-            task.task_handle.cancel()
-    
     @classmethod
     def reset_instance(cls):
         """重置单例实例（主要用于测试）"""
-        if cls._instance:
-            cls._instance.cleanup()
         cls._instance = None
         cls._initialized = False

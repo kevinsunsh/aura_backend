@@ -10,3 +10,5 @@ class ReplayingTaskState(BaseState):
     流式回复状态
     """
     replaying_response: str
+    chat_history_str: str
+    last_user_message_content: str
