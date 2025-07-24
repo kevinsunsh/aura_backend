@@ -552,6 +552,8 @@ class MessageProcessorAudio:
                             logger.debug("E2E ASR识别出首字，但ASR已开始")
                             continue
                     elif msg.get("event") == ServerEvent.ASRResponse:
+                        if self.asr_is_started == False:
+                            continue
                         self.asr_result = msg.get("payload_msg", {}).get("results", [{}])[0].get("text", "")
                     elif msg.get("event") == ServerEvent.ASREnded:
                         if self.asr_is_started:
