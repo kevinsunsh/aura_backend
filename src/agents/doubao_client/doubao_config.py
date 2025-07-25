@@ -1,4 +1,5 @@
 import uuid
+import json
 
 # 配置信息
 ws_connect_config = {
@@ -57,10 +58,64 @@ tts_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
     "app_id": "4522921771",  # 需要配置实际的app_id
     "token": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",   # 需要配置实际的token
-    "speaker": "zh_female_wanwanxiaohe_moon_bigtts",  # 默认说话人
-    "audio": {
-        "format": "pcm",
-        "sample_rate": 24000,
-        "channel": 1,
+    "speaker": "zh_female_roumeinvyou_emo_v2_mars_bigtts"  # 默认说话人
+}
+
+class MoodLevel:
+    VERY_LOW = "very_low"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    VERY_HIGH = "very_high"
+    @staticmethod
+    def map_to_scale(mood_level):
+        return {
+            MoodLevel.VERY_LOW: 1,
+            MoodLevel.LOW: 2,
+            MoodLevel.MEDIUM: 3,
+            MoodLevel.HIGH: 4,
+            MoodLevel.VERY_HIGH: 5
+        }[mood_level]
+
+class SpeechRate:
+    VERY_SLOW = "very_slow"
+    SLOW = "slow"
+    NORMAL = "normal"
+    FAST = "fast"
+    VERY_FAST = "very_fast"
+    @staticmethod
+    def map_to_scale(speech_rate):
+        return {
+            SpeechRate.VERY_SLOW: -50,
+            SpeechRate.SLOW: -25,
+            SpeechRate.NORMAL: 0,
+            SpeechRate.FAST: 50,
+            SpeechRate.VERY_FAST: 100
+        }[speech_rate]
+
+speaker_config = {
+    "female_1": {
+        "voice_code": "zh_female_roumeinvyou_emo_v2_mars_bigtts",
+        "mood": ["开心", "悲伤", "生气", "惊讶", "恐惧", "厌恶", "激动", "冷漠", "中性"],
+        "mood_code": ["happy", "sad", "angry", "surprised", "fear", "hate", "excited", "coldness", "neutral"],
     }
 }
+
+def get_tts_payload_bytes(uid, event, speaker='', text='', mood_code='neutral', mood_level='medium', speech_rate='normal'):
+    return str.encode(json.dumps({
+        "user": {"uid": uid},
+        "event": event,
+        "namespace": "BidirectionalTTS",
+        "req_params": {
+            "text": text,
+            "speaker": speaker,
+            "audio_params": {
+                "format": "pcm",
+                "sample_rate": 24000,
+                "channel": 1,
+                "emotion": mood_code,
+                "emotion_scale": MoodLevel.map_to_scale(mood_level),
+                "speech_rate": SpeechRate.map_to_scale(speech_rate),
+            }
+        }
+    }))

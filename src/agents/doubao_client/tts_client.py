@@ -9,9 +9,7 @@ from enum import Enum
 import websockets
 import fastrand
 from utils.utils import start_performance_point, end_performance_point, safe_call
-from .doubao_config import tts_config
-
-
+from .doubao_config import tts_config, get_tts_payload_bytes
 
 # 发送消息类型
 class SendMessageType(Enum):
@@ -70,7 +68,6 @@ EVENT_TTSSentenceStart = 350
 EVENT_TTSSentenceEnd = 351
 EVENT_TTSResponse = 352
 
-
 class TTSHeader:
     """TTS消息头"""
     def __init__(self,
@@ -97,7 +94,6 @@ class TTSHeader:
             self.reserved_data
         ])
 
-
 class TTSOptional:
     """TTS可选字段"""
     def __init__(self, event: int = EVENT_NONE, sessionId: str = None, sequence: int = None):
@@ -121,7 +117,6 @@ class TTSOptional:
             option_bytes.extend(self.sequence.to_bytes(4, "big", signed=True))
         return option_bytes
 
-
 class TTSResponse:
     """TTS响应"""
     def __init__(self, header: TTSHeader, optional: TTSOptional):
@@ -130,10 +125,8 @@ class TTSResponse:
         self.payload: bytes | None = None
         self.payload_json: str | None = None
 
-
 class TtsClient:
     """TTS客户端，支持双向流式语音合成和断线重连"""
-    
     def __init__(self, 
                  app_id: str = None,
                  token: str = None,
@@ -146,7 +139,6 @@ class TtsClient:
                  **kwargs):
         """
         初始化TTS客户端
-        
         Args:
             app_id: 应用ID，如果为None则从配置文件获取
             token: 访问令牌，如果为None则从配置文件获取
@@ -162,11 +154,6 @@ class TtsClient:
         self.ws_url = kwargs.get("ws_url", tts_config["ws_url"])
         self.uid = None
         self.chat_id = None
-
-        # 音频配置
-        self.audio_format = kwargs.get("audio_format", tts_config["audio"]["format"])
-        self.audio_sample_rate = kwargs.get("audio_sample_rate", tts_config["audio"]["sample_rate"])
-        
         # 回调函数
         self.tts_sentence_start_callback = tts_sentence_start_callback
         self.tts_response_callback = tts_response_callback
@@ -184,8 +171,11 @@ class TtsClient:
         # TTS会话状态
         self._tts_session_active = False
         self.buffer_text = ""
+        self.mood_code = 'neutral'
+        self.mood_level = 'medium'
+        self.speech_rate = 'normal'
+
         # 性能指标
-        self.tts_service_performance_point_id = None
         self.message_loop = None
         
     def _gen_log_id(self):
@@ -271,24 +261,7 @@ class TtsClient:
             response.payload, offset = self._read_tts_payload(res, offset)
         
         return response
-
-    def _get_tts_payload_bytes(self, uid='1234', event=EVENT_NONE, text='', speaker=''):
-        """生成TTS payload字节"""
-        return str.encode(json.dumps({
-            "user": {"uid": uid},
-            "event": event,
-            "namespace": "BidirectionalTTS",
-            "req_params": {
-                "text": text,
-                "speaker": speaker,
-                "audio_params": {
-                    "format": self.audio_format,
-                    "sample_rate": self.audio_sample_rate,
-                    "channel": 1
-                }
-            }
-        }))
-
+    
     async def _tts_start_connection(self, websocket):
         """TTS开始连接"""
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
@@ -304,16 +277,16 @@ class TtsClient:
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
         optional = TTSOptional(event=EVENT_StartSession, sessionId=session_id).as_bytes()
-        payload = self._get_tts_payload_bytes(uid=self.uid, event=EVENT_StartSession, speaker=speaker)
+        payload = get_tts_payload_bytes(uid=self.uid, event=EVENT_StartSession, speaker=speaker)
         return await self._send_tts_event(websocket, header, optional, payload)
 
-    async def _tts_send_text(self, ws, speaker: str, text: str, session_id):
+    async def _tts_send_text(self, ws, speaker: str, text: str, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
         """TTS发送文本"""
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
         optional = TTSOptional(event=EVENT_TaskRequest, sessionId=session_id).as_bytes()
-        payload = self._get_tts_payload_bytes(uid=self.uid, event=EVENT_TaskRequest, text=text, speaker=speaker)
+        payload = get_tts_payload_bytes(uid=self.uid, event=EVENT_TaskRequest, text=text, speaker=speaker, mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
         return await self._send_tts_event(ws, header, optional, payload)
 
     async def _tts_finish_session(self, ws, session_id):
@@ -420,7 +393,6 @@ class TtsClient:
                     if res.optional.event == EVENT_TTSResponse and res.header.message_type == AUDIO_ONLY_RESPONSE:
                         if res.payload:
                             # 触发TTS响应回调
-                            end_performance_point(self.tts_service_performance_point_id)
                             if self.tts_response_callback:
                                 await safe_call(self.tts_response_callback, res.payload, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceStart:
@@ -506,7 +478,7 @@ class TtsClient:
         self.connection_id = None
         # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
     
-    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False):
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False, mood_code='neutral', mood_level='medium', speech_rate='normal'):
         """
         发送文本片段进行流式合成（异步队列版本）
         

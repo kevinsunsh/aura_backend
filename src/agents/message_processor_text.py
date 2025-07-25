@@ -20,8 +20,8 @@ from utils.utils import performance_point_context
 from .task_manager import TaskManager, TaskType, TaskStateType
 from configuration import get_db_conn_string, get_chat_model_by_type
 from agents.prompts.replying_prompt import (
-    REPLYING_GENERATOR_DIRECT_PROMPT,
-    REPLYING_CHECK_PROMPT
+    REPLYING_TASK_PROMPT,
+    REPLYING_REQUIREMENT_PROMPT
 )
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
@@ -188,7 +188,6 @@ class MessageProcessorText:
             chat_history_str = _build_chat_history_str(history_messages)
             chat_history_str += f"{self.user_id}说: {user_input}\n"
             logger.debug(f"observe_conversation chat_history_str: {chat_history_str}")
-
             # plan_model = get_chat_model_by_type("pfc_action_planner")
             # check_prompt = REPLYING_CHECK_PROMPT.format(chat_history_str=chat_history_str)
             # check_response = await plan_model.ainvoke([
@@ -202,13 +201,15 @@ class MessageProcessorText:
             thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
             goals_str = thinking_task_shared_data.get("goals_str", "")
             knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
-            persona_text = _get_persona_text()
-            # 格式化提示词
-            prompt = REPLYING_GENERATOR_DIRECT_PROMPT.format(
-                persona_text=persona_text,
-                goals_str=goals_str,
-                knowledge_info_str=knowledge_info_str,
-                chat_history_str=chat_history_str
+            input_info = f"人设：{_get_persona_text()}。"
+            if len(goals_str) > 0:
+                input_info += f"当前对话目标：{goals_str}\n"
+            if len(knowledge_info_str) > 0:
+                input_info += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
+            input_info += f"最近的聊天记录：{chat_history_str}\n"
+            prompt = REPLYING_TASK_PROMPT.format(
+                input_info=input_info,
+                requirement=REPLYING_REQUIREMENT_PROMPT
             )
             # 生成立即回复
             final_response = ""

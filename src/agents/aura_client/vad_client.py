@@ -87,7 +87,6 @@ class VADClient(BaseClient):
         if response.get('event') is None:
             return
         event_id = response.get('event')
-        payload_msg = response.get('payload_msg', {})
         # Connect类事件 (50-52)
         if event_id == ServerEvent.ConnectionStarted:
             logger.info("连接建立成功")

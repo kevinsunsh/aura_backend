@@ -117,13 +117,13 @@ class TTSClient(ABC):
                 client.is_process_running.value = False
             elif isinstance(msg, dict) and msg.get("type") == "input_start":
                 if client.is_process_running.value:
-                    await client.tts_client.send_text_chunk(msg["data"], start=True, end=False)
+                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=True, end=False, mood_code=msg["data"].get("mood_code", "neutral"), mood_level=msg["data"].get("mood_level", "medium"), speech_rate=msg["data"].get("speech_rate", "normal"))
             elif isinstance(msg, dict) and msg.get("type") == "input_chunk":
                 if client.is_process_running.value:
-                    await client.tts_client.send_text_chunk(msg["data"])
+                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=False, end=False)
             elif isinstance(msg, dict) and msg.get("type") == "input_end":
                 if client.is_process_running.value:
-                    await client.tts_client.send_text_chunk(msg["data"], start=False, end=True)
+                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=False, end=True)
             elif isinstance(msg, dict) and msg.get("type") == "interruption":
                 if client.is_process_running.value:
                     await client.tts_client.user_input_interruption()
