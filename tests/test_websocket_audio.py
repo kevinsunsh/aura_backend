@@ -1948,7 +1948,7 @@ class WebSocketTestSession:
         try:
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
-                self.uri,
+                f"{self.base_uri}/ws/stream",
                 ping_interval=30,      # 每30秒发送一次ping（更保守）
                 ping_timeout=15,       # ping超时时间15秒（更宽松）
                 close_timeout=10,      # 关闭超时时间10秒
@@ -1966,7 +1966,6 @@ class WebSocketTestSession:
                 # 执行连接和session握手
                 if not await self.start_connection_handshake():
                     logger.error("❌ 连接握手失败，退出测试")
-                    receive_task.cancel()
                     return
                 
                 # 先启动接收消息的任务，确保握手消息能被处理

@@ -117,10 +117,10 @@ class TTSClient(ABC):
                 client.is_process_running.value = False
             elif isinstance(msg, dict) and msg.get("type") == "input_start":
                 if client.is_process_running.value:
-                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=True, end=False, mood_code=msg["data"].get("mood_code", "neutral"), mood_level=msg["data"].get("mood_level", "medium"), speech_rate=msg["data"].get("speech_rate", "normal"))
+                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=True, end=False)
             elif isinstance(msg, dict) and msg.get("type") == "input_chunk":
                 if client.is_process_running.value:
-                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=False, end=False)
+                    await client.tts_client.send_text_chunk(msg["data"].get("text", ""))
             elif isinstance(msg, dict) and msg.get("type") == "input_end":
                 if client.is_process_running.value:
                     await client.tts_client.send_text_chunk(msg["data"].get("text", ""), start=False, end=True)
@@ -239,7 +239,9 @@ class LLM_TTSClient(ABC):
     
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应"""
-        if message.get("event") == ServerEvent.ChatResponse:
+        if message.get("event") == ServerEvent.ChatResponseParams:
+            self.tts_client.set_tts_params(mood_code=message.get("payload_msg", {}).get("params", {}).get("mood", "neutral"), mood_level=message.get("payload_msg", {}).get("params", {}).get("mood_level", "medium"), speech_rate=message.get("payload_msg", {}).get("params", {}).get("speech_rate", "normal"))
+        elif message.get("event") == ServerEvent.ChatResponse:
             if self.llm_is_chat_started:
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
             else:

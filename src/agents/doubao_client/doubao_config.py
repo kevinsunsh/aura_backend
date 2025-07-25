@@ -58,7 +58,7 @@ tts_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
     "app_id": "4522921771",  # 需要配置实际的app_id
     "token": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",   # 需要配置实际的token
-    "speaker": "zh_female_roumeinvyou_emo_v2_mars_bigtts"  # 默认说话人
+    "speaker": "zh_female_gaolengyujie_emo_v2_mars_bigtts"  # 默认说话人
 }
 
 class MoodLevel:
@@ -76,7 +76,10 @@ class MoodLevel:
             MoodLevel.HIGH: 4,
             MoodLevel.VERY_HIGH: 5
         }[mood_level]
-
+    @staticmethod
+    def get_mood_level_str():
+        return "very_low|low|medium|high|very_high"
+        
 class SpeechRate:
     VERY_SLOW = "very_slow"
     SLOW = "slow"
@@ -92,12 +95,22 @@ class SpeechRate:
             SpeechRate.FAST: 50,
             SpeechRate.VERY_FAST: 100
         }[speech_rate]
+    @staticmethod
+    def get_speech_rate_str():
+        return "very_slow|slow|normal|fast|very_fast"
 
 speaker_config = {
     "female_1": {
         "voice_code": "zh_female_roumeinvyou_emo_v2_mars_bigtts",
         "mood": ["开心", "悲伤", "生气", "惊讶", "恐惧", "厌恶", "激动", "冷漠", "中性"],
         "mood_code": ["happy", "sad", "angry", "surprised", "fear", "hate", "excited", "coldness", "neutral"],
+        "mood_str": "happy|sad|angry|surprised|fear|hate|excited|coldness|neutral"
+    },
+    "female_2": {
+        "voice_code": "zh_female_gaolengyujie_emo_v2_mars_bigtts",
+        "mood": ["开心", "悲伤", "生气", "惊讶", "恐惧", "厌恶", "激动", "冷漠", "中性"],
+        "mood_code": ["happy", "sad", "angry", "surprised", "fear", "hate", "excited", "coldness", "neutral"],
+        "mood_str": "happy|sad|angry|surprised|fear|hate|excited|coldness|neutral"
     }
 }
 

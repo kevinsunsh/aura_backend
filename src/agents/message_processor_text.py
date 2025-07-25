@@ -31,6 +31,8 @@ from utils.todo_mock_func import (
 )
 from langchain_core.messages import SystemMessage
 from api_protocol.constant import *
+from agents.doubao_client.doubao_config import speaker_config, MoodLevel, SpeechRate
+import re
 
 history_check_interval = 20000 #ms
 
@@ -209,30 +211,92 @@ class MessageProcessorText:
             input_info += f"最近的聊天记录：{chat_history_str}\n"
             prompt = REPLYING_TASK_PROMPT.format(
                 input_info=input_info,
-                requirement=REPLYING_REQUIREMENT_PROMPT
+                requirement=REPLYING_REQUIREMENT_PROMPT,
+                mood=speaker_config["female_2"]["mood_str"],
+                mood_level=MoodLevel.get_mood_level_str(),
+                speech_rate=SpeechRate.get_speech_rate_str(),
+                action="Tilt_head(for question)|Nod(for agreement)|No_action(for neutral/ignore)"
             )
             # 生成立即回复
             final_response = ""
             logger.debug(f"开始回复 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
+            # 状态机解析<response ...>流式内容
+            state = "OUTSIDE"
+            param_cache = {}
+            response_buffer = ""
+            end_tag = "</res>"
             async for chunk in chat_model.astream([
                 SystemMessage(content=prompt)
             ],
             extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
-                    logger.debug(f"生成回复内容 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
                     if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
                         logger.info(f"打断流式响应，继续倾听")  
                         break
-                    logger.debug(f"生成回复内容: {chunk.content}")
-                    final_response += chunk.content
-                    if self.websocket_send_callback:
-                        await self.websocket_send_callback({
-                            "event": ServerEvent.ChatResponse,
-                            "payload_msg": {
-                                "content": str(chunk.content)
-                            }
-                        })
-            
+                    response_buffer += chunk.content
+                    if state == "OUTSIDE":
+                        idx = response_buffer.find("<res")
+                        if idx != -1:
+                            gt_idx = response_buffer.find(">", idx)
+                            if gt_idx != -1:
+                                tag_str = response_buffer[idx:gt_idx+1]
+                                # 用key=value正则提取参数
+                                params = dict(re.findall(r'(\w+)=([\w\-]+)', tag_str))
+                                param_cache = {
+                                    'mood': params.get('mood'),
+                                    'mood_level': params.get('mood_level'),
+                                    'speech_rate': params.get('speech_rate'),
+                                    'action': params.get('action'),
+                                }
+                                # 解析出参数后立即发送一次消息，event 留 TODO
+                                if self.websocket_send_callback:
+                                    await self.websocket_send_callback({
+                                        "event": ServerEvent.ChatResponseParams,
+                                        "payload_msg": {
+                                            "params": param_cache
+                                        }
+                                    })
+                                state = "INSIDE"
+                                response_buffer = response_buffer[gt_idx+1:]
+                    elif state == "INSIDE":
+                        end_idx = response_buffer.find(end_tag)
+                        if end_idx != -1:
+                            content_piece = response_buffer[:end_idx]
+                            if content_piece:
+                                logger.debug(f"生成回复内容: {content_piece}")
+                                final_response += content_piece
+                                if self.websocket_send_callback:
+                                    await self.websocket_send_callback({
+                                        "event": ServerEvent.ChatResponse,
+                                        "payload_msg": {
+                                            "content": str(content_piece)
+                                        }
+                                    })
+                            response_buffer = response_buffer[end_idx+len(end_tag):]
+                            state = "OUTSIDE"
+                        else:
+                            # 高效end_tag前缀判断逻辑：逐位比较，只要有一位不等立即break
+                            max_check = min(len(response_buffer), len(end_tag))
+                            matched = 0
+                            for i in range(max_check):
+                                if response_buffer[-max_check + i] == end_tag[i]:
+                                    matched += 1
+                                else:
+                                    break
+                            send_len = len(response_buffer) - matched
+                            if send_len > 0:
+                                content_piece = response_buffer[:send_len]
+                                logger.debug(f"生成回复内容: {content_piece}")
+                                final_response += content_piece
+                                if self.websocket_send_callback:
+                                    await self.websocket_send_callback({
+                                        "event": ServerEvent.ChatResponse,
+                                        "payload_msg": {
+                                            "content": str(content_piece)
+                                        }
+                                    })
+                                response_buffer = response_buffer[send_len:]
+                            # 如果全部是前缀，先不发，等下次token
             if self.websocket_send_callback:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,

@@ -6,9 +6,9 @@ REPLYING_TASK_PROMPT = """
 要求：
 {requirement}
 回复请使用以下格式：
-<response mood=({mood}) mood_level=({mood_level}) action=({action})>
+<res mood=({mood}) mood_level=({mood_level}) speech_rate=({speech_rate}) action=({action})>
 .....# response content here
-</response>
+</res>
 """
 
 REPLYING_REQUIREMENT_PROMPT = """
@@ -16,6 +16,7 @@ REPLYING_REQUIREMENT_PROMPT = """
 1. 以"你"的角度发言（不要自己与自己对话！）
 2. 符合你的性格特征和身份细节
 3. 可以适当利用相关知识，但不要生硬引用
+4. 注意使用合适的情绪，语速和动作，不要过于平淡
 """
 
 REPLYING_CHECK_PROMPT = """

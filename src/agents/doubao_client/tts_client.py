@@ -320,6 +320,13 @@ class TtsClient:
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
     
+    def set_tts_params(self, mood_code='neutral', mood_level='medium', speech_rate='normal'):
+        """设置TTS参数"""
+        self.mood_code = mood_code
+        self.mood_level = mood_level
+        self.speech_rate = speech_rate
+        logger.bind(tag="TTS").info(f"设置TTS参数: mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
+    
     async def start(self, chat_id: str, user_id: str):
         """启动TTS连接并建立会话"""
         self.uid = user_id
@@ -478,7 +485,7 @@ class TtsClient:
         self.connection_id = None
         # 注意：不在这里重置 connection_lost，因为重连时需要保持这个状态
     
-    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False, mood_code='neutral', mood_level='medium', speech_rate='normal'):
+    async def send_text_chunk(self, text: str, start: bool = False, end: bool = False):
         """
         发送文本片段进行流式合成（异步队列版本）
         
@@ -495,21 +502,13 @@ class TtsClient:
                 await self._tts_start_session(self.ws, self.speaker, self.session_id_str)
                 while self._tts_session_active == False:
                     await asyncio.sleep(0.1)
-            await self._send_text_internal(self.buffer_text)
+            await self._tts_send_text(self.ws, self.speaker, text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
             self.buffer_text = ""
             if end:
                 await self._tts_finish_session(self.ws, self.session_id_str)
             logger.debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
-        
-    async def _send_text_internal(self, text: str):
-        """内部发送文本方法"""
-        if self.tts_service_performance_point_id is None:
-            self.tts_service_performance_point_id = start_performance_point("TTS服务")
-        if len(text) > 0:
-            await self._tts_send_text(self.ws, self.speaker, text, self.session_id_str)
-            logger.debug(f"已发送文本片段: {text[:50]}...")
     
     async def user_input_interruption(self):
         """用户输入中断"""
