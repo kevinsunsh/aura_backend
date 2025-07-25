@@ -381,6 +381,7 @@ class MessageProcessorAudio:
         self.chat_id = None
         self.user_id = None
         self.websocket_send_callback = None
+        self.sse_started = False
         # 启动消息处理任务
         logger.info("启动消息处理任务")
         self.message_tasks = asyncio.gather(
@@ -743,6 +744,7 @@ class MessageProcessorAudio:
         轮询LLM_TTS输出队列，有消息就发给 websocket
         """
         try:
+            sleep_time = 0.01
             try:
                 msg = self.llm_tts_output_queue.get_nowait()
             except queue.Empty:
@@ -751,11 +753,11 @@ class MessageProcessorAudio:
                 if msg.get('event') in [ServerEvent.TTSResponse, ServerEvent.TTSSentenceStart, ServerEvent.TTSSentenceEnd, ServerEvent.TTSEnded]:
                     self.llm_tts_msg_count += 1
                     if self.llm_tts_msg_count % 20 == 0:
-                        logger.info(f"收到LLM_TTS消息: {msg.get('event')}, session_id={msg.get('session_id')}, count={self.llm_tts_msg_count}")
+                        logger.debug(f"收到LLM_TTS消息: {msg.get('event')}, session_id={msg.get('session_id')}, count={self.llm_tts_msg_count}")
                     if msg.get('session_id').encode('utf-8') != self.llm_tts_session_id.value:
                         if self.llm_tts_msg_count % 20 == 0:
-                            logger.info(f"LLM_TTS消息session_id不匹配: {msg.get('session_id')} != {self.llm_tts_session_id.value}")
-                        return True, None
+                            logger.debug(f"LLM_TTS消息session_id不匹配: {msg.get('session_id')} != {self.llm_tts_session_id.value}")
+                        return True, None, sleep_time
                 send_msg = {}
                 if msg.get('event') == ServerEvent.TTSSentenceStart:
                     send_msg = {
@@ -766,21 +768,24 @@ class MessageProcessorAudio:
                         }
                     }
                 else:
+                    if msg.get('event') == ServerEvent.TTSResponse:
+                        sleep_time = len(msg.get("payload_msg")) / 8000 * 0.8
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")
                     }
-                return True, send_msg
-            return False, None
+                return True, send_msg, sleep_time
+            return False, None, sleep_time
         except Exception as e:
             logger.error(f"发送LLM_TTS消息失败: {e}")
             # 短暂等待后继续
-            return False, None
+            return False, None, sleep_time
     
     async def send_sse_message(self):
         """
         轮询SSE输出队列，有消息就发给SSE
         """
+        self.sse_started = True
         try:
             while True:
                 should_continue, msg = await self.send_vad_message_imp()
@@ -803,24 +808,26 @@ class MessageProcessorAudio:
         轮询VAD输出队列，有消息就发给 websocket
         """
         try:
+            sleep_time = 0
             while True:
-                # should_continue, msg = await self.send_vad_message_imp()
-                # if msg:
-                #     if self.websocket_send_callback:
-                #         await self.websocket_send_callback(msg)
-                # if should_continue:
-                #     continue
-                # should_continue, msg = await self.send_e2e_asr_message_imp()
-                # if msg:
-                #     if self.websocket_send_callback:
-                #         await self.websocket_send_callback(msg)
-                # if should_continue:
-                #     continue
-                should_continue, msg = await self.send_llm_tts_message_imp()
+                if self.sse_started == False:
+                    should_continue, msg = await self.send_vad_message_imp()
+                    if msg:
+                        if self.websocket_send_callback:
+                            await self.websocket_send_callback(msg)
+                    if should_continue:
+                        continue
+                    should_continue, msg = await self.send_e2e_asr_message_imp()
+                    if msg:
+                        if self.websocket_send_callback:
+                            await self.websocket_send_callback(msg)
+                    if should_continue:
+                        continue
+                await asyncio.sleep(sleep_time)
+                should_continue, msg, sleep_time = await self.send_llm_tts_message_imp()
                 if msg:
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)
-                await asyncio.sleep(0.01)
         except asyncio.CancelledError:
             logger.info("消息处理任务已取消")
             raise  # 重新抛出CancelledError
