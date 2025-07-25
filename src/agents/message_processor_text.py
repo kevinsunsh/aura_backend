@@ -1,5 +1,5 @@
 import asyncio
-import logging
+from loguru import logger
 import uuid
 import json
 import random
@@ -32,7 +32,6 @@ from utils.todo_mock_func import (
 from langchain_core.messages import SystemMessage
 from api_protocol.constant import *
 
-logger = logging.getLogger(__name__)
 history_check_interval = 20000 #ms
 
 class MessageProcessorText:

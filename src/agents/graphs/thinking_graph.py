@@ -16,7 +16,7 @@ from langgraph.types import interrupt, Command
 
 from agents.states.thinking_state import ThinkingTaskState
 from configuration.config import GraphConfiguration, get_chat_model_by_type, LLMType
-import logging
+from loguru import logger
 from agents.prompts.thinking_prompt import (
     THINKING_GOAL_ANALYZER_PROMPT,
     THINKING_ACTION_PLANNER_PROMPT,
@@ -32,8 +32,6 @@ from utils.todo_mock_func import (
     _build_knowledge_info_str
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
-
-logger = logging.getLogger(__name__)
 
 async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
     """分析对话目标"""

@@ -15,7 +15,7 @@ from langgraph.config import get_stream_writer
 
 from agents.states.speaking_state import SpeakingTaskState
 from configuration.config import GraphConfiguration, get_chat_model_by_type
-import logging
+from loguru import logger
 from agents.prompts.speaking_prompt import (
     SPEAKING_ACTION_PLANNER_PROMPT,
     SPEAKING_GENERATOR_FOLLOW_UP_PROMPT
@@ -29,7 +29,7 @@ from utils.todo_mock_func import (
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
-logger = logging.getLogger(__name__)
+
 reply_max_latency = 30 #s
 
 async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):

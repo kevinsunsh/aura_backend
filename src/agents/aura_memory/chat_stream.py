@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from .database.database import Base, Database
 import threading
-import logging
+from loguru import logger
 import time
 from datetime import datetime
 from pydantic import BaseModel
@@ -22,8 +22,6 @@ from typing import Optional
 from sqlalchemy import text
 from utils.utils import performance_point_context
 from configuration.config import get_db_conn_string
-
-logger = logging.getLogger(__name__)
 
 class ChatStreamModel(Base):
     """聊天流数据库模型"""

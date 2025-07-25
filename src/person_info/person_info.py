@@ -1,7 +1,7 @@
 import copy
 import hashlib
 import asyncio
-import logging
+from loguru import logger
 import datetime
 from typing import Any, Callable, Dict
 from agents.aura_memory.person_info.person_store import PersonInfo  # 新增导入
@@ -22,9 +22,6 @@ PersonInfoManager 类方法功能摘要：
 7. del_all_undefined_field - 清理全集合中未定义的字段
 8. get_specific_value_list - 根据指定条件，返回person_id,value字典
 """
-
-
-logger = logging.getLogger(__name__)
 
 JSON_SERIALIZED_FIELDS = ["points", "forgotten_points", "info_list"]
 

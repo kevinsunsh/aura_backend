@@ -7,7 +7,7 @@
 """
 
 import time
-import logging
+from loguru import logger
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -15,8 +15,6 @@ from collections import defaultdict
 
 from agents.aura_memory.Hippocampus import hippocampus_manager
 from agents.aura_memory.message_store import MessageStore
-
-logger = logging.getLogger(__name__)
 
 @dataclass
 class MemoryMetrics:

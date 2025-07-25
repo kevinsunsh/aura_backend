@@ -1,5 +1,4 @@
-import os
-import logging
+from loguru import logger
 from typing import Dict, Any, Optional, Type, TypeVar
 from dataclasses import dataclass, field
 from agents.aura_memory.database.database import Database
@@ -13,8 +12,6 @@ from .official_configs import (
     TelemetryConfig, ExperimentalConfig, ModelConfig, MaimMessageConfig,
     LPMMKnowledgeConfig, ToolConfig, DebugConfig
 )
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=ConfigBase)
 

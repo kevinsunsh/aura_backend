@@ -16,11 +16,9 @@ from .message_store import MessageStore
 from sqlalchemy import Column, String, Integer, BigInteger, Index, PrimaryKeyConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from .database.database import Database, Base
-from logging import getLogger
+from loguru import logger
 from configuration import get_chat_model_by_type, global_config, Config
 from utils.todo_mock_func import build_readable_messages
-
-logger = getLogger(__name__)
 
 def calculate_information_content(text):
     """计算文本的信息量（熵）"""

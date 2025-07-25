@@ -1,8 +1,6 @@
 from typing import Dict, Optional, List
-from logging import getLogger
+from loguru import logger
 from .relationship_builder import RelationshipBuilder
-
-logger = getLogger(__name__)
 
 
 class RelationshipBuilderManager:

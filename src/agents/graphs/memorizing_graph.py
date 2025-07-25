@@ -13,13 +13,13 @@ from langgraph.types import Command
 
 from agents.states.memorizing_state import MemorizingTaskState
 from configuration.config import GraphConfiguration
-import logging
+from loguru import logger
 from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.Hippocampus import hippocampus_manager
 from agents.aura_memory.memory_monitor import monitor_memory_operation, get_memory_monitor
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
-logger = logging.getLogger(__name__)
+
 
 async def _memorize_knowledge(state: MemorizingTaskState, config: RunnableConfig):
     """将当前对话内容存储到海马体记忆系统中"""

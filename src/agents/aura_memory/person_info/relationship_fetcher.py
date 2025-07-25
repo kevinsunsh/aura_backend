@@ -1,14 +1,14 @@
 from configuration import global_config, get_chat_model_by_type
 import time
 import traceback
-import logging
+from loguru import logger
 from agents.aura_memory.person_info.person_info import get_person_info_manager
 from typing import List, Dict
 from json_repair import repair_json
 import json
 import random
 
-logger = logging.getLogger(__name__)
+
 
 relationship_prompt = """
 <聊天记录>

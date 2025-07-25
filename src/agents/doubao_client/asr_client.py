@@ -6,7 +6,7 @@ import time
 import uuid
 import wave
 from io import BytesIO
-import logging
+from loguru import logger
 from typing import Dict, Any, Callable, Optional
 from enum import Enum
 from dataclasses import dataclass
@@ -15,8 +15,6 @@ from utils.utils import start_performance_point, end_performance_point
 
 from .doubao_config import asr_config
 
-logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
 
 class SendMessageType(Enum):
     """发送消息类型"""

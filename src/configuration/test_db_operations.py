@@ -10,13 +10,9 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
 
 import asyncio
-import logging
+from loguru import logger
 from agents.aura_memory.Hippocampus import EntorhinalCortex, Hippocampus, GraphNodes, GraphEdges
 from agents.aura_memory.message_store import MessageStore
-
-# 设置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 async def test_entorhinal_cortex_db_operations():
     """测试EntorhinalCortex类的数据库操作"""

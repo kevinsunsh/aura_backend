@@ -15,7 +15,7 @@ from langgraph.config import get_stream_writer
 
 from agents.states.observing_state import ObservingTaskState
 from configuration.config import GraphConfiguration
-import logging
+from loguru import logger
 
 from agents.aura_memory.chat_stream import ChatStream, ChatStreamManager
 from agents.aura_memory.message_store import MessageStore, Message
@@ -24,7 +24,7 @@ from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import _build_chat_history_str
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
-logger = logging.getLogger(__name__)
+
 history_check_interval = 10000 #ms
 # 后台任务节点函数
 async def _observe_conversation(state: ObservingTaskState, config: RunnableConfig):

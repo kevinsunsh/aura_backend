@@ -1,4 +1,4 @@
-from logging import getLogger
+from loguru import logger
 from src.person_info.person_info import PersonInfoManager, get_person_info_manager
 import time
 import random
@@ -11,8 +11,6 @@ import jieba
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from configuration import get_chat_model_by_type, Config, global_config
-
-logger = getLogger(__name__)
 
 
 class RelationshipManager:

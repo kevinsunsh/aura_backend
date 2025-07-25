@@ -1,12 +1,10 @@
 import asyncio
 import time
-import logging
+from loguru import logger
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-
-logger = logging.getLogger(__name__)
 
 @dataclass
 class ConnectionMetrics:

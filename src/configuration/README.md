@@ -236,7 +236,7 @@ config = load_config_legacy("config.toml")
 启用调试日志：
 
 ```python
-import logging
+from loguru import logger
 logging.getLogger('agents.configuration').setLevel(logging.DEBUG)
 ```
 

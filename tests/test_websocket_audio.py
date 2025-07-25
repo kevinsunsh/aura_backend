@@ -21,7 +21,7 @@ await session.start_with_files()
 import asyncio
 import websockets
 import json
-import logging
+from loguru import logger
 import time
 import gzip
 import os
@@ -43,10 +43,9 @@ import ctypes
 # import opuslib
 import httpx
 from httpx_sse import aconnect_sse
-
+logger.remove()
+logger.add(sys.stdout, level="INFO")  # 只输出 INFO 及以上级别
 # 配置日志（提前）
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # 添加OGG/Opus解码支持
 try:
@@ -794,8 +793,8 @@ def audio_player_process(audio_queue, is_playing_flag):
     )
     output_stream = audio_device.open_output_stream()
     output_stream.start_stream()
-    import logging
-    logger = logging.getLogger(__name__)
+    from loguru import logger
+    
     logger.info("🎵 播放进程已启动，等待音频数据...")
     while is_playing_flag.value:
         try:

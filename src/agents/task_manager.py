@@ -1,9 +1,7 @@
 from enum import Enum
 import asyncio
 from typing import Optional, Dict, Any
-import logging
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 class TaskStateType(Enum):
     """任务状态类型枚举"""

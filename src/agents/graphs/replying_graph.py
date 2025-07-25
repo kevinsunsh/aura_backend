@@ -15,7 +15,7 @@ from langgraph.config import get_stream_writer
 
 from agents.states.replaying_state import ReplayingTaskState
 from configuration.config import GraphConfiguration, get_chat_model_by_type
-import logging
+from loguru import logger
 from agents.prompts.replying_prompt import (
     REPLYING_GENERATOR_DIRECT_PROMPT,
     REPLYING_CHECK_PROMPT
@@ -29,7 +29,7 @@ from utils.todo_mock_func import (
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
-logger = logging.getLogger(__name__)
+
 history_check_interval = 20000 #ms
 
 async def _observe_conversation(state: ReplayingTaskState, config: RunnableConfig):

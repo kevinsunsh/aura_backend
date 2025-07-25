@@ -4,12 +4,12 @@ import os
 import pickle
 from typing import List, Dict
 from configuration.config import global_config
-import logging
+from loguru import logger
 from agents.aura_memory.person_info.relationship_manager import get_relationship_manager
 from agents.aura_memory.person_info.person_info import get_person_info_manager, PersonInfoManager
 from agents.aura_memory.message_store import MessageStore
 
-logger = logging.getLogger(__name__)
+
 
 # 消息段清理配置
 SEGMENT_CLEANUP_CONFIG = {

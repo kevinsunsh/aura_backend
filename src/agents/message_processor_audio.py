@@ -1,7 +1,7 @@
 import multiprocessing
 import ctypes
 import asyncio
-import logging
+from loguru import logger
 import json
 import time
 import queue
@@ -24,8 +24,6 @@ from agents.prompts.check_response_prompt import CHECK_RESPONSE_PROMPT
 from configuration.config import get_chat_model_by_type
 from langchain_core.messages import SystemMessage
 from .task_manager import TaskManager, TaskType, TaskStateType
-
-logger = logging.getLogger(__name__)
 
 class DialogSessionType(Enum):
     """音频客户端类型枚举"""
@@ -209,10 +207,10 @@ class LLM_TTSClient(ABC):
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
                     client.timestamp = int(time.time() * 1000)
-                    logger.debug(f"input: {msg['data']} at {client.timestamp}ms")
+                    logger.bind(tag="DELAY").info(f"input: {msg['data']} at {client.timestamp}ms")
                     await client.text_processor.handle_text_message({"message": msg["data"]})
-                    logger.info(f"handle_text_message: {msg['data']}")
-                    logger.debug(f"handle_text_message delay: {int(time.time() * 1000) - client.timestamp}ms")
+                    logger.bind(tag="BASE").info(f"handle_text_message: {msg['data']}")
+                    logger.bind(tag="DELAY").info(f"handle_text_message delay: {int(time.time() * 1000) - client.timestamp}ms")
     
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any], session_id: str) -> None:
@@ -221,7 +219,7 @@ class LLM_TTSClient(ABC):
         logger.debug(f"LLM TTS句子开始: {text}")
         self.is_llm_tts_running = True
         self.output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}, "session_id": session_id})
-        logger.debug(f"LLM TTS delay: {int(time.time() * 1000) - self.timestamp}ms")
+        logger.bind(tag="DELAY").info(f"LLM TTS delay: {int(time.time() * 1000) - self.timestamp}ms")
     
     async def _llm_on_tts_sentence_end(self, session_id: str) -> None:
         """TTS句子结束事件回调"""
@@ -246,7 +244,7 @@ class LLM_TTSClient(ABC):
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
             else:
                 self.llm_is_chat_started = True
-                logger.debug(f"LLM delay: {int(time.time() * 1000) - self.timestamp}ms")
+                logger.bind(tag="DELAY").info(f"LLM delay: {int(time.time() * 1000) - self.timestamp}ms")
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
         elif message.get("event") == ServerEvent.ChatEnded:
             self.llm_is_chat_started = False

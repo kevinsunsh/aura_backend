@@ -5,7 +5,7 @@ from sqlalchemy import inspect
 from sqlalchemy.pool import QueuePool
 import os
 from contextlib import contextmanager, asynccontextmanager
-import logging
+from loguru import logger
 import asyncio
 from typing import Optional, List, Dict, Any, Union
 import urllib.parse
@@ -16,8 +16,6 @@ import sys
 import os
 # sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 from utils.utils import performance_point_context
-
-logger = logging.getLogger(__name__)
 
 # SQLAlchemy Base
 Base = declarative_base()

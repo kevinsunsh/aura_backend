@@ -13,12 +13,12 @@ from langgraph.types import Command
 
 from agents.states.recalling_state import RecallingTaskState
 from configuration import GraphConfiguration, global_config, get_chat_model_by_type
-import logging
+from loguru import logger
 from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.Hippocampus import hippocampus_manager
 from agents.aura_memory.memory_monitor import monitor_memory_operation, get_memory_monitor
 from agents.task_manager import TaskManager, TaskType, TaskStateType
-logger = logging.getLogger(__name__)
+
 
 async def _recall_knowledge(state: RecallingTaskState, config: RunnableConfig):
     """从海马体记忆系统中检索相关记忆"""

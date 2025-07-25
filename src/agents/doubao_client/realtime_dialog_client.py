@@ -1,6 +1,6 @@
 import ssl
 import time
-import logging
+from loguru import logger
 import fastrand
 import websockets
 from typing import Dict, Any
@@ -9,7 +9,7 @@ from .doubao_config import *
 from api_protocol.constant import *
 from api_protocol.client_protocol import client_generate_request, client_parse_response
 
-logger = logging.getLogger(__name__)
+
 
 class RealtimeDialogClient:
     """实时对话客户端，基于参考代码实现"""

@@ -15,7 +15,7 @@ from langgraph.config import get_stream_writer
 
 from agents.states.muttering_state import MutteringTaskState
 from configuration.config import get_chat_model_by_type, GraphConfiguration
-import logging
+from loguru import logger
 from agents.prompts.muttering_prompt import (
     MUTTERING_CHOOSER_PROMPT
 )
@@ -26,7 +26,7 @@ from utils.todo_mock_func import (
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
-logger = logging.getLogger(__name__)
+
 
 async def _generate_muttering(state: MutteringTaskState, config: RunnableConfig):
     """发送立即回复"""

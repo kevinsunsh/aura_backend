@@ -1,13 +1,11 @@
 import asyncio
-import logging
+from loguru import logger
 from typing import Optional, Dict, Any, Callable
 import websockets
 from api_protocol.constant import *
 from .realtime_dialog_client import RealtimeDialogClient
 from .doubao_config import ws_connect_config
 from utils.utils import safe_call
-
-logger = logging.getLogger(__name__)
 
 class DialogSession:
     """对话会话管理类，集成RealtimeDialogClient和aura流式聊天"""

@@ -1,13 +1,44 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+import sys
+import uvicorn
+from loguru import logger
+from config import settings
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-from agents.aura import AuraAgent
-import uvicorn
-from config import settings
-from agents.message_processor_audio import MessageProcessorAudio
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 
-logger = logging.getLogger(__name__)
+TAG_COLOR = {
+    "BASE": ("<magenta>{extra[tag]}</magenta>", "<white>{message}</white>"),
+    "DELAY": ("<cyan>{extra[tag]}</cyan>", "<green>{message}</green>"),
+    "CONNECTION": ("<yellow>{extra[tag]}</yellow>", "<blue>{message}</blue>"),
+    "TTS": ("<red>{extra[tag]}</red>", "<red>{message}</red>"),
+}
+
+def tag_color_format(record):
+    tag = record["extra"].get("tag", "NO_TAG")
+    tag_fmt, msg_fmt = TAG_COLOR.get(tag, ("<white>{extra[tag]}</white>", "<white>{message}</white>"))
+    return (
+        "<green>{time:HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{file}</cyan> | "
+        f"{tag_fmt} | "
+        f"{msg_fmt}"
+    )
+
+def log_filter(record):
+    tag = record["extra"].get("tag")
+    return tag in ["DELAY", "BASE"]
+
+# 配置输出格式，包含文件名和 tag
+logger.remove()
+logger.add(
+    sys.stdout,
+    level="INFO",
+    filter=log_filter,
+    format=tag_color_format
+)
+
+from agents.aura import AuraAgent
+from agents.message_processor_audio import MessageProcessorAudio
 
 app = FastAPI(
     title="Aura Agent Service",
@@ -29,7 +60,7 @@ async def health_check():
 @app.websocket("/ws/stream")
 async def websocket_stream_endpoint(websocket: WebSocket):
     """WebSocket 流式聊天端点，实时流式返回响应内容，支持文本和音频输入"""
-    logger.info(f"开始处理WebSocket连接")
+    logger.bind(tag="BASE").info(f"开始处理WebSocket连接")
     await AuraAgent.get_instance().handle_websocket_connection(websocket)
 
 @app.get("/sse")
@@ -40,5 +71,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
-        port=settings.SERVER_PORT
+        port=settings.SERVER_PORT,
+        log_level="error"
     )

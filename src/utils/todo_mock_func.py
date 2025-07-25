@@ -1,10 +1,8 @@
 import re
-import logging
+from loguru import logger
 from typing import List, Dict, Any, Tuple
 from agents.aura_memory.message_store import Message
 from configuration.config import Config, global_config
-
-logger = logging.getLogger(__name__)
 
 def _get_persona_text() -> str:
     """获取人设文本"""

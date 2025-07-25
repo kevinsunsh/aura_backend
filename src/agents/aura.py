@@ -1,6 +1,6 @@
 import json
 import uuid
-import logging
+from loguru import logger
 import asyncio
 import requests
 import gzip
@@ -19,10 +19,6 @@ from .message_processor_audio import MessageProcessorAudio
 from api_protocol.constant import *
 from api_protocol.server_protocol import server_parse_request, server_generate_response
 from utils.utils import performance_point_context
-
-# 配置LangChain日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 class MessageType(Enum):
     """消息类型枚举"""
@@ -119,11 +115,11 @@ class AuraAgent:
         # 清理消息分发器和聊天流锁
         try:
             await MessageProcessorAudio.get_instance().cleanup()
-            logger.info("MessageProcessorAudio清理完成")
+            logger.bind(tag="BASE").info("MessageProcessorAudio清理完成")
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
                     ChatStreamManager.get_instance().release_lock(self.chat_stream.chat_id)
-                    logger.info(f"已释放聊天流锁: {self.chat_stream.chat_id}")
+                    logger.bind(tag="BASE").info(f"已释放聊天流锁: {self.chat_stream.chat_id}")
                 except Exception as e:
                     logger.error(f"释放聊天流锁时出错: {e}")
         except Exception as e:
@@ -151,23 +147,23 @@ class AuraAgent:
         """处理WebSocket连接，包括连接和session生命周期管理"""
         await websocket.accept()
         self.websocket_connection = websocket
-        logger.info(f"WebSocket连接已设置")
+        logger.bind(tag="BASE").info(f"WebSocket连接已设置")
         
         try:
             # 第一步：等待客户端发送开始连接消息
-            logger.info("等待客户端发送开始连接消息...")
+            logger.bind(tag="BASE").info("等待客户端发送开始连接消息...")
             if not await self._wait_for_connection_start(websocket):
                 logger.error("未收到有效的开始连接消息，关闭连接")
                 return
             
             # 第二步：等待客户端发送开始session消息
-            logger.info("等待客户端发送开始session消息...")
+            logger.bind(tag="BASE").info("等待客户端发送开始session消息...")
             if not await self._wait_for_session_start(websocket):
                 logger.error("未收到有效的开始session消息，关闭连接")
                 return
             
             # 第三步：进入正常的消息处理循环
-            logger.info(f"开始处理session消息")
+            logger.bind(tag="BASE").info(f"开始处理session消息")
             await self._message_processing_loop(websocket)
             
             # 第四步：等待客户端发送session结束和连接结束消息
@@ -194,7 +190,7 @@ class AuraAgent:
                     elif 'text' in data:
                         data = data['text'].encode('utf-8')
                     elif data.get('type') == 'websocket.disconnect':
-                        logger.info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
+                        logger.bind(tag="BASE").info(f"WebSocket连接断开: {data.get('reason', 'unknown')}")
                         return False
                     else:
                         logger.error(f"未知的WebSocket消息格式: {data}")
@@ -213,7 +209,7 @@ class AuraAgent:
                 
             # 检查是否是开始连接消息
             if message_data.get("event") == ClientEvent.StartConnection:
-                logger.info("收到开始连接消息")
+                logger.bind(tag="BASE").info("收到开始连接消息")
                 # 发送连接确认
                 await self.send_websocket_message({
                     "event": ServerEvent.ConnectionStarted,
@@ -225,7 +221,7 @@ class AuraAgent:
                 return False
                 
         except websockets.exceptions.ConnectionClosed:
-            logger.info("WebSocket连接已关闭")
+            logger.bind(tag="BASE").info("WebSocket连接已关闭")
             return False
         except Exception as e:
             logger.error(f"等待连接开始消息时出错: {e}")

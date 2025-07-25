@@ -1,5 +1,5 @@
 import json
-import logging
+from loguru import logger
 from datetime import datetime
 from typing import List, Optional, Dict, Type, Union, Any
 from sqlalchemy import create_engine, Column, String, Integer, JSON, ForeignKey, BigInteger, Index, Boolean, update, Float, Text
@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from ..database.database import Database, Base
 from utils.utils import performance_point_context
 from configuration.config import get_db_conn_string
-logger = logging.getLogger(__name__)
+
 
 class PersonInfoModel(Base):
     """用户信息数据库模型"""

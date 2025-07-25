@@ -6,13 +6,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from collections import defaultdict
 import json
-import logging
+from loguru import logger
 import atexit
 import sys
 import random
 import asyncio
-
-logger = logging.getLogger(__name__)
 
 def random_10_percent() -> bool:
     """返回10%概率的随机布尔值"""

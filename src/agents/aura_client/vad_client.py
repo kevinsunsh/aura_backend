@@ -1,5 +1,5 @@
 import ssl
-import logging
+from loguru import logger
 import asyncio
 import websockets
 from .config import *
@@ -8,8 +8,6 @@ from typing import Dict, Any
 from api_protocol.constant import *
 from api_protocol.client_protocol import client_generate_request, client_parse_response
 from .base_client import BaseClient
-
-logger = logging.getLogger(__name__)
 
 class VADClient(BaseClient):
     """VAD客户端"""

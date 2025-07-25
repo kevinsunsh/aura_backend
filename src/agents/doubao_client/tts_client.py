@@ -2,7 +2,7 @@ import asyncio
 import json
 import uuid
 import time
-import logging
+from loguru import logger
 from typing import Dict, Any, Callable, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -11,7 +11,7 @@ import fastrand
 from utils.utils import start_performance_point, end_performance_point, safe_call
 from .doubao_config import tts_config
 
-logger = logging.getLogger(__name__)
+
 
 # 发送消息类型
 class SendMessageType(Enum):

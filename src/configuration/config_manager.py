@@ -1,4 +1,4 @@
-import logging
+from loguru import logger
 import time
 import json
 from typing import Dict, Any, Optional, List, Type, TypeVar
@@ -20,8 +20,6 @@ from .official_configs import (
     TelemetryConfig, ExperimentalConfig, ModelConfig, MaimMessageConfig,
     LPMMKnowledgeConfig, ToolConfig, DebugConfig
 )
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=ConfigBase)
 

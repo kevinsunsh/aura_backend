@@ -1,4 +1,4 @@
-import logging
+from loguru import logger
 from datetime import datetime
 from typing import List, Optional, Dict, Type, Union, Any
 from sqlalchemy import create_engine, Column, String, Integer, JSON, ForeignKey, BigInteger, Index, Boolean, update, Float
@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from .database.database import Database, Base
 from utils.utils import performance_point_context
 from configuration.config import get_db_conn_string
-logger = logging.getLogger(__name__)
 
 class MessageModel(Base):
     """消息数据库模型 - 第一层：原始消息"""
