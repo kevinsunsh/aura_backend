@@ -767,7 +767,10 @@ class MessageProcessorAudio:
                     }
                 else:
                     if msg.get('event') == ServerEvent.TTSResponse:
-                        sleep_time = len(msg.get("payload_msg")) / 8000 * 0.8
+                        if self.sse_started:
+                            sleep_time = len(msg.get("payload_msg")) / 32000 * 0.1
+                        else:
+                            sleep_time = len(msg.get("payload_msg")) / 32000 * 0.6
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")

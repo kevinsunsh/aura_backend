@@ -18,18 +18,20 @@ def tag_color_format(record):
     tag_fmt, msg_fmt = TAG_COLOR.get(tag, ("<white>{extra[tag]}</white>", "<white>{message}</white>"))
     return (
         "<green>{time:HH:mm:ss}</green> | "
-        "<level>{level: <8}</level> | "
-        "<cyan>{file}</cyan> | "
+        # "<level>{level: <8}</level> | "
+        # "<cyan>{file}</cyan> | "
         f"{tag_fmt} | "
         f"{msg_fmt}"
+        "\n"
     )
 
 def log_filter(record):
     tag = record["extra"].get("tag")
-    return tag in ["DELAY", "BASE"]
+    return False
 
 # 配置输出格式，包含文件名和 tag
 logger.remove()
+# f"{settings.LOG_DIR}/main.log",
 logger.add(
     sys.stdout,
     level="INFO",
@@ -71,6 +73,5 @@ if __name__ == "__main__":
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
-        port=settings.SERVER_PORT,
-        log_level="error"
+        port=settings.SERVER_PORT
     )

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     RESPONSE_CALLBACK_URL: str = ""
 
+    LOG_DIR: str = f"{os.path.dirname(__file__)}/../logs"
     class Config:
         env_file = ".env"
 

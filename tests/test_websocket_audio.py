@@ -44,7 +44,15 @@ import ctypes
 import httpx
 from httpx_sse import aconnect_sse
 logger.remove()
-logger.add(sys.stdout, level="INFO")  # 只输出 INFO 及以上级别
+def tag_color_format(record):
+    return (
+        "<green>{time:HH:mm:ss}</green> | "
+        # "<level>{level: <8}</level> | "
+        # "<cyan>{file}</cyan> | "
+        "<white>{message}</white>"
+        "\n"
+    )
+logger.add(sys.stdout, level="INFO", format=tag_color_format)  # 只输出 INFO 及以上级别
 # 配置日志（提前）
 
 # 添加OGG/Opus解码支持
@@ -149,6 +157,17 @@ class AudioDeviceManager:
             try:
                 device_info = self.pyaudio.get_device_info_by_index(i)
                 device_name = device_info['name'].lower()
+                
+                # === 新增：优先检测H08A设备 ===
+                if 'h08a' in device_name:
+                    # 作为耳机输出
+                    if device_info['maxOutputChannels'] > 0:
+                        headphone_output_devices.insert(0, (i, device_info))
+                        logger.info(f"🎧 优先发现H08A耳机输出设备: {device_info['name']} (索引: {i})")
+                    # 作为麦克风输入
+                    if device_info['maxInputChannels'] > 0:
+                        headphone_input_devices.insert(0, (i, device_info))
+                        logger.info(f"🎤 优先发现H08A麦克风输入设备: {device_info['name']} (索引: {i})")
                 
                 # 检查是否为耳机设备（更智能的匹配）
                 is_headphone = any(keyword in device_name for keyword in headphone_keywords)
@@ -854,7 +873,8 @@ async def sse_listener(sse_url, session):
                             logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
                             session.asr_info_received_time = time.time()
                             session.asr_is_started = True
-                            session._clear_audio_buffers()
+                            import asyncio
+                            asyncio.create_task(session._delayed_clear_audio_buffers())
                             logger.debug("⏸️ 播放已暂停")
                         elif data.get("event") == 451:  # ASRResponse
                             session.chunk_count += 1
@@ -1189,8 +1209,10 @@ class WebSocketTestSession:
             if event_id == 450:  # ASRInfo
                 logger.info("🎤 收到ASRInfo事件(450)，触发AI播报打断")
                 self.asr_info_received_time = time.time()
-                self._clear_audio_buffers()
-                logger.debug("⏸️ 播放已暂停")
+                # 延迟1秒后清空音频缓冲区
+                import asyncio
+                asyncio.create_task(self._delayed_clear_audio_buffers())
+                logger.debug("⏸️ 播放已暂停（1秒后清空缓冲区）")
             elif event_id == 451:  # ASRResponse
                 self.chunk_count += 1
                 content = payload_msg.get("results", [{}])[0].get("text", "")
@@ -1600,7 +1622,7 @@ class WebSocketTestSession:
         """启动WebSocket测试会话，并可选启动SSE监听"""
         try:
             sse_task = None
-            # sse_task = asyncio.create_task(sse_listener(self.base_uri + "/sse", self))
+            sse_task = asyncio.create_task(sse_listener(self.base_uri.replace("ws://", "http://") + "/sse", self))
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.base_uri + "/ws/stream",
@@ -2102,6 +2124,11 @@ class WebSocketTestSession:
         except Exception as e:
             logger.error(f"❌ WebSocket重连失败: {e}")
             return False
+
+    # 新增异步延迟清空方法
+    async def _delayed_clear_audio_buffers(self):
+        await asyncio.sleep(1.5)
+        self._clear_audio_buffers()
 
 async def test_audio_websocket_stream():
     """测试带预处理音频文件的WebSocket流式接口"""

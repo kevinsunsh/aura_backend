@@ -8,13 +8,13 @@ from datetime import datetime
 from enum import Enum
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from agents.graphs.thinking_graph import builder as thinking_graph_builder
-from agents.graphs.observing_graph import builder as observing_graph_builder
-from agents.graphs.replying_graph import builder as replying_graph_builder
-from agents.graphs.speaking_graph import builder as speaking_graph_builder
-from agents.graphs.muttering_graph import builder as muttering_graph_builder
-from agents.graphs.recalling_graph import builder as recalling_graph_builder
-from agents.graphs.memorizing_graph import builder as memorizing_graph_builder
+# from agents.graphs.thinking_graph import builder as thinking_graph_builder
+# from agents.graphs.observing_graph import builder as observing_graph_builder
+# from agents.graphs.replying_graph import builder as replying_graph_builder
+# from agents.graphs.speaking_graph import builder as speaking_graph_builder
+# from agents.graphs.muttering_graph import builder as muttering_graph_builder
+# from agents.graphs.recalling_graph import builder as recalling_graph_builder
+# from agents.graphs.memorizing_graph import builder as memorizing_graph_builder
 from .aura_memory.message_store import MessageStore, Message
 from utils.utils import performance_point_context
 from .task_manager import TaskManager, TaskType, TaskStateType
@@ -136,43 +136,43 @@ class MessageProcessorText:
         except Exception as e:
             logger.error(f"保存消息任务失败: {e}")
     
-    async def _muttering_process_task(self):
-        """自言自语任务"""
-        try:
-            logger.debug(f"开始自言自语任务: chat_id={self.chat_id}")
-                        # 处理输入数据
-            input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
-            }
-            thread = {
-                "configurable": {
-                    "thread_id": f"streaming_{self.chat_id}"
-                }
-            }
+    # async def _muttering_process_task(self):
+    #     """自言自语任务"""
+    #     try:
+    #         logger.debug(f"开始自言自语任务: chat_id={self.chat_id}")
+    #                     # 处理输入数据
+    #         input_data = {
+    #             "chat_id": self.chat_id,
+    #             "user_id": self.user_id,
+    #         }
+    #         thread = {
+    #             "configurable": {
+    #                 "thread_id": f"streaming_{self.chat_id}"
+    #             }
+    #         }
 
-            graph = muttering_graph_builder.compile()
-            while True:
-                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
-                    # 解析messages事件中的AIMessageChunk内容
-                    type, message_tuple = event
-                    if "updates" == type:
-                        if "generate_muttering" in message_tuple:
-                            if message_tuple["generate_muttering"]["muttering_response"] == "finished":
-                                if self.websocket_send_callback:
-                                    await self.websocket_send_callback({
-                                        "event": ServerEvent.MutteringResponse,
-                                        "payload_msg": {
-                                            "content": message_tuple["generate_muttering"]["muttering_content"]
-                                        }
-                                    })
-                                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            # 只在最外层处理取消，记录日志但不重新抛出
-            logger.info(f"自言自语任务被取消: chat_id={self.chat_id}")
-            # 不重新抛出，让任务自然结束
-        except Exception as e:
-            logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+    #         graph = muttering_graph_builder.compile()
+    #         while True:
+    #             async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+    #                 # 解析messages事件中的AIMessageChunk内容
+    #                 type, message_tuple = event
+    #                 if "updates" == type:
+    #                     if "generate_muttering" in message_tuple:
+    #                         if message_tuple["generate_muttering"]["muttering_response"] == "finished":
+    #                             if self.websocket_send_callback:
+    #                                 await self.websocket_send_callback({
+    #                                     "event": ServerEvent.MutteringResponse,
+    #                                     "payload_msg": {
+    #                                         "content": message_tuple["generate_muttering"]["muttering_content"]
+    #                                     }
+    #                                 })
+    #                                 await asyncio.sleep(1)
+    #     except asyncio.CancelledError:
+    #         # 只在最外层处理取消，记录日志但不重新抛出
+    #         logger.info(f"自言自语任务被取消: chat_id={self.chat_id}")
+    #         # 不重新抛出，让任务自然结束
+    #     except Exception as e:
+    #         logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
     async def _replying_response_task(self, user_input: str):
         try:
@@ -289,161 +289,161 @@ class MessageProcessorText:
     #     except Exception as e:
     #         logger.error(f"回复任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _speaking_response_task(self):
-        """说话任务"""
-        try:
-            logger.info(f"开始说话任务: chat_id={self.chat_id}")
-                        # 处理输入数据
-            input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
-            }
-            thread = {
-                "configurable": {
-                    "thread_id": f"streaming_{self.chat_id}"
-                }
-            }
+    # async def _speaking_response_task(self):
+    #     """说话任务"""
+    #     try:
+    #         logger.info(f"开始说话任务: chat_id={self.chat_id}")
+    #                     # 处理输入数据
+    #         input_data = {
+    #             "chat_id": self.chat_id,
+    #             "user_id": self.user_id,
+    #         }
+    #         thread = {
+    #             "configurable": {
+    #                 "thread_id": f"streaming_{self.chat_id}"
+    #             }
+    #         }
 
-            # 使用优化的异步PostgreSQL连接
-            async with AsyncPostgresSaver.from_conn_string(get_db_conn_string()) as checkpointer:
-                graph = speaking_graph_builder.compile(checkpointer=checkpointer)
-                while True:
-                    async for event in graph.astream(input_data, thread, stream_mode=["updates", "messages"]):
-                        # 解析messages事件中的AIMessageChunk内容
-                        type, message_tuple = event
-                        if "messages" == type:
-                            if isinstance(message_tuple, tuple) and len(message_tuple) >= 2:
-                                # 第一个元素是消息类型，第二个元素是消息对象
-                                message_obj, message_meta = message_tuple
-                                if message_obj.content and message_meta["langgraph_node"] == "generate_new_message":
-                                    if self.websocket_send_callback:
-                                        await self.websocket_send_callback({
-                                            "event": ServerEvent.ChatResponse,
-                                            "payload_msg": {
-                                                "content": str(message_obj.content)
-                                            }
-                                        })
-                        if "updates" == type:
-                            if "generate_new_message" in message_tuple:
-                                if message_tuple["generate_new_message"]["speaking_response"] == "finished":
-                                    if self.websocket_send_callback:
-                                        await self.websocket_send_callback({
-                                            "event": ServerEvent.ChatEnded,
-                                        })
-                            # if "listen_for_user" in message_tuple:
-                            #     if message_tuple["listen_for_user"]["streaming_response"] == "finished":
-                            #         if self.websocket_send_callback:
-                            #             await self.websocket_send_callback({
-                            #                 "event": ServerEvent.ChatEnded,
-                            #             })
-        except asyncio.CancelledError:
-            # 只在最外层处理取消，记录日志但不重新抛出
-            logger.info(f"说话任务被取消: chat_id={self.chat_id}")
-            # 不重新抛出，让任务自然结束
-        except Exception as e:
-            logger.error(f"说话任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+    #         # 使用优化的异步PostgreSQL连接
+    #         async with AsyncPostgresSaver.from_conn_string(get_db_conn_string()) as checkpointer:
+    #             graph = speaking_graph_builder.compile(checkpointer=checkpointer)
+    #             while True:
+    #                 async for event in graph.astream(input_data, thread, stream_mode=["updates", "messages"]):
+    #                     # 解析messages事件中的AIMessageChunk内容
+    #                     type, message_tuple = event
+    #                     if "messages" == type:
+    #                         if isinstance(message_tuple, tuple) and len(message_tuple) >= 2:
+    #                             # 第一个元素是消息类型，第二个元素是消息对象
+    #                             message_obj, message_meta = message_tuple
+    #                             if message_obj.content and message_meta["langgraph_node"] == "generate_new_message":
+    #                                 if self.websocket_send_callback:
+    #                                     await self.websocket_send_callback({
+    #                                         "event": ServerEvent.ChatResponse,
+    #                                         "payload_msg": {
+    #                                             "content": str(message_obj.content)
+    #                                         }
+    #                                     })
+    #                     if "updates" == type:
+    #                         if "generate_new_message" in message_tuple:
+    #                             if message_tuple["generate_new_message"]["speaking_response"] == "finished":
+    #                                 if self.websocket_send_callback:
+    #                                     await self.websocket_send_callback({
+    #                                         "event": ServerEvent.ChatEnded,
+    #                                     })
+    #                         # if "listen_for_user" in message_tuple:
+    #                         #     if message_tuple["listen_for_user"]["streaming_response"] == "finished":
+    #                         #         if self.websocket_send_callback:
+    #                         #             await self.websocket_send_callback({
+    #                         #                 "event": ServerEvent.ChatEnded,
+    #                         #             })
+    #     except asyncio.CancelledError:
+    #         # 只在最外层处理取消，记录日志但不重新抛出
+    #         logger.info(f"说话任务被取消: chat_id={self.chat_id}")
+    #         # 不重新抛出，让任务自然结束
+    #     except Exception as e:
+    #         logger.error(f"说话任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _thinking_process_task(self):
-        """异步处理思考任务"""
-        try:
-            # 处理输入数据
-            input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
-            }
-            thread = {
-                "configurable": {
-                    "thread_id": f"thinking_{self.chat_id}"
-                }
-            }
+    # async def _thinking_process_task(self):
+    #     """异步处理思考任务"""
+    #     try:
+    #         # 处理输入数据
+    #         input_data = {
+    #             "chat_id": self.chat_id,
+    #             "user_id": self.user_id,
+    #         }
+    #         thread = {
+    #             "configurable": {
+    #                 "thread_id": f"thinking_{self.chat_id}"
+    #             }
+    #         }
             
-            # 使用优化的异步PostgreSQL连接
-            # async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
-                # graph = thinking_graph_builder.compile(checkpointer=checkpointer)
-            graph = thinking_graph_builder.compile()
-            while True:
-                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
-                    type, message_tuple = event
-                    if "updates" == type:
-                        pass
-        except asyncio.CancelledError:
-            logger.info(f"思考任务被取消: chat_id={self.chat_id}")
-        except Exception as e:
-            logger.error(f"思考任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+    #         # 使用优化的异步PostgreSQL连接
+    #         # async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
+    #             # graph = thinking_graph_builder.compile(checkpointer=checkpointer)
+    #         graph = thinking_graph_builder.compile()
+    #         while True:
+    #             async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+    #                 type, message_tuple = event
+    #                 if "updates" == type:
+    #                     pass
+    #     except asyncio.CancelledError:
+    #         logger.info(f"思考任务被取消: chat_id={self.chat_id}")
+    #     except Exception as e:
+    #         logger.error(f"思考任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     
-    async def _observing_process_task(self):
-        """异步处理观察任务"""
-        try:
-            # 处理输入数据
-            input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
-            }
-            thread = {
-                "configurable": {
-                    "thread_id": f"observing_{self.chat_id}",
-                }
-            }
+    # async def _observing_process_task(self):
+    #     """异步处理观察任务"""
+    #     try:
+    #         # 处理输入数据
+    #         input_data = {
+    #             "chat_id": self.chat_id,
+    #             "user_id": self.user_id,
+    #         }
+    #         thread = {
+    #             "configurable": {
+    #                 "thread_id": f"observing_{self.chat_id}",
+    #             }
+    #         }
             
-            # 使用优化的异步PostgreSQL连接
-            # async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
-                # graph = observing_graph_builder.compile(checkpointer=checkpointer)
-            graph = observing_graph_builder.compile()
-            while True:
-                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
-                    type, message_tuple = event
-                    if "updates" == type:
-                        pass
-        except asyncio.CancelledError:
-            logger.info(f"观察任务被取消: chat_id={self.chat_id}")
-        except Exception as e:
-            logger.error(f"观察任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+    #         # 使用优化的异步PostgreSQL连接
+    #         # async with AsyncPostgresSaver.from_conn_string(self.db_conn_string) as checkpointer:
+    #             # graph = observing_graph_builder.compile(checkpointer=checkpointer)
+    #         graph = observing_graph_builder.compile()
+    #         while True:
+    #             async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+    #                 type, message_tuple = event
+    #                 if "updates" == type:
+    #                     pass
+    #     except asyncio.CancelledError:
+    #         logger.info(f"观察任务被取消: chat_id={self.chat_id}")
+    #     except Exception as e:
+    #         logger.error(f"观察任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
-    async def _recalling_process_task(self):
-        """异步处理回忆任务"""
-        try:
-            input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
-            }
-            thread = {
-                "configurable": {
-                    "thread_id": f"recalling_{self.chat_id}"
-                }
-            }
-            graph = recalling_graph_builder.compile()
-            while True:
-                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
-                    type, message_tuple = event
-                    if "updates" == type:
-                        pass
-        except asyncio.CancelledError:
-            logger.info(f"回忆任务被取消: chat_id={self.chat_id}")
-        except Exception as e:
-            logger.error(f"回忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+    # async def _recalling_process_task(self):
+    #     """异步处理回忆任务"""
+    #     try:
+    #         input_data = {
+    #             "chat_id": self.chat_id,
+    #             "user_id": self.user_id,
+    #         }
+    #         thread = {
+    #             "configurable": {
+    #                 "thread_id": f"recalling_{self.chat_id}"
+    #             }
+    #         }
+    #         graph = recalling_graph_builder.compile()
+    #         while True:
+    #             async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+    #                 type, message_tuple = event
+    #                 if "updates" == type:
+    #                     pass
+    #     except asyncio.CancelledError:
+    #         logger.info(f"回忆任务被取消: chat_id={self.chat_id}")
+    #     except Exception as e:
+    #         logger.error(f"回忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
-    async def _memorizing_process_task(self):
-        """异步处理记忆任务"""
-        try:
-            input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
-            }
-            thread = {
-                "configurable": {
-                    "thread_id": f"memorizing_{self.chat_id}"
-                }
-            }
-            graph = memorizing_graph_builder.compile()
-            while True:
-                async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
-                    type, message_tuple = event
-                    if "updates" == type:
-                        pass
-        except asyncio.CancelledError:
-            logger.info(f"记忆任务被取消: chat_id={self.chat_id}")
-        except Exception as e:
-            logger.error(f"记忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
+    # async def _memorizing_process_task(self):
+    #     """异步处理记忆任务"""
+    #     try:
+    #         input_data = {
+    #             "chat_id": self.chat_id,
+    #             "user_id": self.user_id,
+    #         }
+    #         thread = {
+    #             "configurable": {
+    #                 "thread_id": f"memorizing_{self.chat_id}"
+    #             }
+    #         }
+    #         graph = memorizing_graph_builder.compile()
+    #         while True:
+    #             async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
+    #                 type, message_tuple = event
+    #                 if "updates" == type:
+    #                     pass
+    #     except asyncio.CancelledError:
+    #         logger.info(f"记忆任务被取消: chat_id={self.chat_id}")
+    #     except Exception as e:
+    #         logger.error(f"记忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
     async def cleanup(self):
         """清理资源"""
