@@ -1,9 +1,10 @@
 import ssl
-from loguru import logger
+import time
 import asyncio
 import websockets
 from .config import *
 import multiprocessing
+from loguru import logger
 from typing import Dict, Any
 from api_protocol.constant import *
 from api_protocol.client_protocol import client_generate_request, client_parse_response
@@ -11,11 +12,12 @@ from .base_client import BaseClient
 
 class VADClient(BaseClient):
     """VAD客户端"""
-    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, output_queue: multiprocessing.Queue, is_process_running: multiprocessing.Value):
+    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, output_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
         super().__init__(config)
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.is_process_running = is_process_running
+        self.process_timer = process_timer
     
     async def task_request(self, audio: bytes) -> None:
         """TaskRequest - 客户端事件ID: 200"""
@@ -55,17 +57,18 @@ class VADClient(BaseClient):
                 raise
         
     @staticmethod
-    def process_entry(input_queue, output_queue, is_process_running):
-        asyncio.run(VADClient.main(input_queue, output_queue, is_process_running))
+    def process_entry(input_queue, output_queue, is_process_running, process_timer):
+        asyncio.run(VADClient.main(input_queue, output_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, output_queue, is_process_running):
+    async def main(input_queue, output_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = VADClient(
             config=vad_config,
             input_queue=input_queue,
             output_queue=output_queue,
-            is_process_running=is_process_running
+            is_process_running=is_process_running,
+            process_timer=process_timer
         )
         while True:
             msg = await loop.run_in_executor(None, input_queue.get)
@@ -104,8 +107,9 @@ class VADClient(BaseClient):
             logger.debug("VAD识别出首字")
             self.output_queue.put({"event": ServerEvent.ASRInfo})
         elif event_id == ServerEvent.ASREnded:
-            logger.debug("VAD识别结束")
+            logger.bind(tag="BASE").info("VAD识别结束")
             self.output_queue.put({"event": ServerEvent.ASREnded})
+            self.process_timer.value = time.time()
         else:
             logger.warning(f"未知事件ID: {event_id}")
         

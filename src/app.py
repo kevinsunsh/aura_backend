@@ -28,6 +28,7 @@ def tag_color_format(record):
 def log_filter(record):
     tag = record["extra"].get("tag")
     return False
+    # return tag in ["BASE", "DELAY"]
 
 # 配置输出格式，包含文件名和 tag
 logger.remove()

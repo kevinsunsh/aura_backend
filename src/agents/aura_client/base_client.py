@@ -66,7 +66,7 @@ class BaseClient(ABC):
     async def connect(self) -> None:
         """建立WebSocket连接"""
         self.is_running = False
-        logger.info(f"连接服务器: {self.config['base_url']}")
+        logger.bind(tag="BASE").info(f"连接服务器: {self.config['base_url']}")
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=self.config['headers'],
@@ -92,12 +92,12 @@ class BaseClient(ABC):
         if response.get("event") != ServerEvent.SessionStarted:
             logger.error(f"会话握手失败: {response}")
             raise Exception("会话握手失败")
-        logger.debug(f"连接握手响应: {response}")
+        logger.bind(tag="BASE").info(f"连接握手响应: {response}")
         
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
         self.is_running = True
-        logger.info(f"WebSocket连接已建立")
+        logger.bind(tag="BASE").info(f"WebSocket连接已建立")
     
     async def start_connection(self) -> None:
         """StartConnection - 客户端事件ID: 1"""
