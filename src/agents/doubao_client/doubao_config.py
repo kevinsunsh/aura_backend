@@ -122,6 +122,10 @@ def get_tts_payload_bytes(uid, event, speaker='', text='', mood_code='neutral', 
         "req_params": {
             "text": text,
             "speaker": speaker,
+            "additions": {
+                "mute_cut_threshold": "400",
+                "mute_cut_remain_ms": "1"
+            },
             "audio_params": {
                 "format": "pcm",
                 "sample_rate": 24000,

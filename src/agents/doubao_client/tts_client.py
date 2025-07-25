@@ -270,14 +270,14 @@ class TtsClient:
         payload = str.encode("{}")
         return await self._send_tts_event(websocket, header, optional, payload)
 
-    async def _tts_start_session(self, websocket, speaker, session_id):
+    async def _tts_start_session(self, websocket, speaker, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
         """TTS开始会话"""
         logger.info(f"===========TTS开始会话: {session_id}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
         optional = TTSOptional(event=EVENT_StartSession, sessionId=session_id).as_bytes()
-        payload = get_tts_payload_bytes(uid=self.uid, event=EVENT_StartSession, speaker=speaker)
+        payload = get_tts_payload_bytes(uid=self.uid, event=EVENT_StartSession, speaker=speaker, mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
         return await self._send_tts_event(websocket, header, optional, payload)
 
     async def _tts_send_text(self, ws, speaker: str, text: str, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
@@ -499,7 +499,7 @@ class TtsClient:
             if self._tts_session_active == False:
                 self.session_id_str = str(uuid.uuid4()).replace('-', '')
                 self.session_id.value = self.session_id_str.encode('utf-8')
-                await self._tts_start_session(self.ws, self.speaker, self.session_id_str)
+                await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 while self._tts_session_active == False:
                     await asyncio.sleep(0.1)
             await self._tts_send_text(self.ws, self.speaker, text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
