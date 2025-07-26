@@ -1,0 +1,65 @@
+edition: 3.0.0
+name: aura-backend-dev
+access: "default" # todo: 在系统下新建火山引擎的 AK / SK 密钥
+
+vars:
+  sid: "aurabkdev"
+  region: "cn-beijing"
+  functionName: "aura-backend-function-dev"
+  version: "0.0.24"
+
+resources:
+  aura_backend_dev:
+    component: volcano-vefaas
+    props:
+      common:
+        Region: ${vars.region}
+      function:
+        Name: ${vars.functionName}
+        Description: aura-backend-dev
+        RequestTimeout: 900
+        ExclusiveMode: true
+        Runtime: native/v1
+        SourceType: image # 支持 image / zip
+        Source: mengs-cn-beijing.cr.volces.com/aura/aura_backend_dev:${vars.version}
+        MemoryMB: 16384
+        Processor: cpu
+        Envs:
+          - Key: TOS_ENDPOINT
+            Value: tos-cn-beijing.ivolces.com
+          - Key: TOS_REGION
+            Value: cn-beijing
+          - Key: CLOUD_PROVIDER
+            Value: TOS
+          - Key: SERVER_PORT
+            Value: '8000'
+        VpcConfig:
+          EnableVpc: true
+          EnableSharedInternetAccess: true
+          VpcId: vpc-13g4piwtkhhc03n6nu5hmq2jt
+          SubnetIds:
+            - subnet-rrkuf0d9y800v0x58hi8g42
+          SecurityGroupIds:
+            - sg-13g4pj6oq1r7k3n6nu5jnw94u
+
+      replicaLimit:
+        MaxInstance: 10
+      triggers:
+        - TriggerName: apig-trigger
+          TriggerType: apig
+          GatewayId: "gd1qqo74fo0m61h76anf0" # todo: 新建 apig 后填写 gatewayId 即可
+          ServiceName: "service-aurabkdev"
+          UpstreamName: "upstream-aurabkdev"
+          RouteName: default
+          Path: "/"
+          Method:
+            - POST
+            - GET
+            - PUT
+            - DELETE
+            - HEAD
+            - OPTIONS
+            - CONNECT
+          AdvancedSetting:
+            CorsPolicySetting:
+              Enable: true
