@@ -272,7 +272,7 @@ class TtsClient:
 
     async def _tts_start_session(self, websocket, speaker, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
         """TTS开始会话"""
-        logger.info(f"===========TTS开始会话: {session_id}")
+        logger.bind(tag="TTS").info(f"===========TTS开始会话: {session_id} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -291,7 +291,7 @@ class TtsClient:
 
     async def _tts_finish_session(self, ws, session_id):
         """TTS结束会话"""
-        logger.info(f"===========TTS结束会话: {session_id}")
+        logger.bind(tag="TTS").info(f"===========TTS结束会话: {session_id}")
         self._tts_session_active = False
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
@@ -302,7 +302,7 @@ class TtsClient:
     
     async def _tts_cancel_session(self, ws, session_id):
         """TTS取消会话"""
-        logger.info(f"===========TTS取消会话: {session_id}")
+        logger.bind(tag="TTS").info(f"===========TTS取消会话: {session_id}")
         self._tts_session_active = False
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
@@ -320,11 +320,15 @@ class TtsClient:
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
     
-    def set_tts_params(self, mood_code='neutral', mood_level='medium', speech_rate='normal'):
+    async def set_tts_params(self, mood_code='neutral', mood_level='medium', speech_rate='normal'):
         """设置TTS参数"""
+        if self.mood_code == mood_code and self.mood_level == mood_level and self.speech_rate == speech_rate:
+            return
         self.mood_code = mood_code
         self.mood_level = mood_level
         self.speech_rate = speech_rate
+        if self._tts_session_active:
+            await self._tts_finish_session(self.ws, self.session_id_str)
         logger.bind(tag="TTS").info(f"设置TTS参数: mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
     
     async def start(self, chat_id: str, user_id: str):
@@ -366,7 +370,7 @@ class TtsClient:
         # 开始连接
         await self._tts_start_connection(self.ws)
         res = self._parse_tts_response(await self.ws.recv())
-        logger.info(f"TTS连接响应: event={res.optional.event}")
+        logger.bind(tag="TTS").info(f"TTS连接响应: event={res.optional.event}")
         
         if res.optional.event != EVENT_ConnectionStarted:
             raise RuntimeError("TTS连接失败")
@@ -376,9 +380,9 @@ class TtsClient:
         # 开始会话
         self.session_id_str = str(uuid.uuid4()).replace('-', '')
         self.session_id.value = self.session_id_str.encode('utf-8')
-        await self._tts_start_session(self.ws, self.speaker, self.session_id_str)
+        await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
         res = self._parse_tts_response(await self.ws.recv())
-        logger.info(f"TTS会话响应: event={res.optional.event}")
+        logger.bind(tag="TTS").info(f"TTS会话响应: event={res.optional.event}")
         if res.optional.event != EVENT_SessionStarted:
             raise RuntimeError('连接TTS会话启动失败')
         
@@ -414,29 +418,29 @@ class TtsClient:
                         if self.tts_sentence_end_callback:
                             await safe_call(self.tts_sentence_end_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionStarted:
-                        logger.info(f"TTS会话开始: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS会话开始: {res.optional.event}")
                         self._tts_session_active = True
                     elif res.optional.event == EVENT_SessionCanceled:
-                        logger.info(f"TTS会话取消: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS会话取消: {res.optional.event}")
                         self._tts_session_active = False
                         await self._connect()
                     elif res.optional.event == EVENT_SessionFailed:
-                        logger.error(f"TTS会话失败: {res.optional.event}")
+                        logger.bind(tag="TTS").error(f"TTS会话失败: {res.optional.event}")
                         self._tts_session_active = False
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionFinished:
-                        logger.info(f"TTS会话结束: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS会话结束: {res.optional.event}")
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_ConnectionFailed:
-                        logger.error(f"TTS连接失败: {res.optional.event}")
+                        logger.bind(tag="TTS").error(f"TTS连接失败: {res.optional.event}")
                         await self._connect()
                     elif res.optional.event == EVENT_ConnectionFinished:
-                        logger.info(f"TTS连接结束: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS连接结束: {res.optional.event}")
                         await self._connect()
                 except websockets.exceptions.ConnectionClosed as e:
-                    logger.warning(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
+                    logger.bind(tag="TTS").warning(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
                     await self._connect()
                     continue
                 except websockets.exceptions.ConnectionClosedError:
@@ -450,7 +454,7 @@ class TtsClient:
                     logger.debug("TTS接收任务已取消")
                     break
                 except Exception as e:
-                    logger.error(f"接收TTS音频数据失败: {e}")
+                    logger.bind(tag="TTS").error(f"接收TTS音频数据失败: {e}")
                     await self._connect()
                     break
         except Exception as e:
@@ -506,7 +510,7 @@ class TtsClient:
             self.buffer_text = ""
             if end:
                 await self._tts_finish_session(self.ws, self.session_id_str)
-            logger.debug(f"文本已加入发送队列: {text[:50]}...")
+            logger.bind(tag="TTS").debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")
     

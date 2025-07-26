@@ -240,7 +240,7 @@ class LLM_TTSClient(ABC):
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应"""
         if message.get("event") == ServerEvent.ChatResponseParams:
-            self.tts_client.set_tts_params(mood_code=message.get("payload_msg", {}).get("params", {}).get("mood", "neutral"), mood_level=message.get("payload_msg", {}).get("params", {}).get("mood_level", "medium"), speech_rate=message.get("payload_msg", {}).get("params", {}).get("speech_rate", "normal"))
+            await self.tts_client.set_tts_params(mood_code=message.get("payload_msg", {}).get("params", {}).get("mood", "neutral"), mood_level=message.get("payload_msg", {}).get("params", {}).get("mood_level", "medium"), speech_rate=message.get("payload_msg", {}).get("params", {}).get("speech_rate", "normal"))
         elif message.get("event") == ServerEvent.ChatResponse:
             if self.llm_is_chat_started:
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))

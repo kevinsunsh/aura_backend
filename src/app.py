@@ -10,7 +10,7 @@ TAG_COLOR = {
     "BASE": ("<magenta>{extra[tag]}</magenta>", "<white>{message}</white>"),
     "DELAY": ("<cyan>{extra[tag]}</cyan>", "<green>{message}</green>"),
     "CONNECTION": ("<yellow>{extra[tag]}</yellow>", "<blue>{message}</blue>"),
-    "TTS": ("<red>{extra[tag]}</red>", "<red>{message}</red>"),
+    "TTS": ("<red>{extra[tag]}</red>", "<green>{message}</green>"),
 }
 
 def tag_color_format(record):
@@ -27,8 +27,8 @@ def tag_color_format(record):
 
 def log_filter(record):
     tag = record["extra"].get("tag")
-    return tag in ["TTS"]
-    # return False
+    # return tag in ["TTS", "BASE"]
+    return False
     # return tag in ["BASE", "DELAY"]
 
 # 配置输出格式，包含文件名和 tag

@@ -55,9 +55,10 @@ class BaseClient(ABC):
                 self.chat_id = chat_id
                 await self.connect()
                 self.message_loop = asyncio.create_task(self.message_receive_loop())
+                logger.bind(tag="BASE").info(f"启动客户端成功")
                 return True
             except Exception as e:
-                logger.error(f"启动客户端失败（第{attempt}次）: {e}")
+                logger.bind(tag="BASE").info(f"启动客户端失败（第{attempt}次）: {e}")
                 if attempt < max_retries:
                     await asyncio.sleep(2)
                 else:

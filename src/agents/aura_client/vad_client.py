@@ -106,7 +106,7 @@ class VADClient(BaseClient):
             logger.debug("VAD识别出首字")
             self.output_queue.put({"event": ServerEvent.ASRInfo})
         elif event_id == ServerEvent.ASREnded:
-            logger.bind(tag="BASE").info("VAD识别结束")
+            # logger.bind(tag="BASE").info("VAD识别结束")
             self.output_queue.put({"event": ServerEvent.ASREnded})
             self.process_timer.value = time.time()
         else:
