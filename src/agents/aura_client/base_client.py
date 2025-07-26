@@ -31,9 +31,8 @@ class BaseClient(ABC):
                 if self._is_websocket_closed():
                     await self.connect()
                 if not self.is_running:
-                    await asyncio.sleep(0.1)
-                    continue
-                response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
+                    await self.connect()
+                response = await self.receive_server_response()
                 await self._handle_server_response(response)
             except asyncio.TimeoutError:
                 continue
