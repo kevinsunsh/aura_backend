@@ -220,7 +220,7 @@ class MessageProcessorText:
                 if hasattr(chunk, 'content'):
                     logger.debug(f"生成回复内容 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
                     if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
-                        logger.info(f"打断流式响应，继续倾听")  
+                        logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
                     logger.debug(f"生成回复内容: {chunk.content}")
                     final_response += chunk.content
