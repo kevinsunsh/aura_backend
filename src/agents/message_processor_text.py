@@ -25,16 +25,10 @@ from agents.prompts.replying_prompt import (
 )
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
-from utils.todo_mock_func import (
-    _get_persona_text,
-    _build_chat_history_str
-)
 from langchain_core.messages import SystemMessage
 from api_protocol.constant import *
 from agents.doubao_client.doubao_config import speaker_config, MoodLevel, SpeechRate
 import re
-
-history_check_interval = 20000 #ms
 
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
@@ -176,39 +170,10 @@ class MessageProcessorText:
     #     except Exception as e:
     #         logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
-    async def _replying_response_task(self, user_input: str):
-        try:
-            # 获取新消息
-            now_timestamp = int(datetime.now().timestamp() * 1000)
-            history_messages = MessageStore.get_instance().get_messages_by_time_range(
-                self.chat_id, 
-                now_timestamp - history_check_interval, 
-                now_timestamp
-            )
-            
-            # 更新观察信息
-            chat_history_str = _build_chat_history_str(history_messages)
-            chat_history_str += f"{self.user_id}说: {user_input}\n"
-            logger.debug(f"observe_conversation chat_history_str: {chat_history_str}")
-            # plan_model = get_chat_model_by_type("pfc_action_planner")
-            # check_prompt = REPLYING_CHECK_PROMPT.format(chat_history_str=chat_history_str)
-            # check_response = await plan_model.ainvoke([
-            #     SystemMessage(content=check_prompt)
-            # ])
-            # if "false" in check_response.content.lower():
-            #     return
-            
+    async def _replying_response_task(self, input_info: str):
+        try:            
             # 使用LLM生成立即回复
             chat_model = get_chat_model_by_type("pfc_action_planner")
-            thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
-            goals_str = thinking_task_shared_data.get("goals_str", "")
-            knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
-            input_info = f"人设：{_get_persona_text()}。"
-            if len(goals_str) > 0:
-                input_info += f"当前对话目标：{goals_str}\n"
-            if len(knowledge_info_str) > 0:
-                input_info += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
-            input_info += f"最近的聊天记录：{chat_history_str}\n"
             prompt = REPLYING_TASK_PROMPT.format(
                 input_info=input_info,
                 requirement=REPLYING_REQUIREMENT_PROMPT,
@@ -219,7 +184,7 @@ class MessageProcessorText:
             )
             # 生成立即回复
             final_response = ""
-            logger.debug(f"开始回复 delay: {int(datetime.now().timestamp() * 1000) - now_timestamp}ms")
+
             # 状态机解析<response ...>流式内容
             state = "OUTSIDE"
             param_cache = {}
@@ -300,6 +265,9 @@ class MessageProcessorText:
             if self.websocket_send_callback:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
+                    "payload_msg": {
+                        "content": final_response
+                    }
                 })
             save_message_task_handle = asyncio.create_task(self._save_message_task("aura", final_response, update_checked_at=True))
             self.save_message_tasks.append(save_message_task_handle)
