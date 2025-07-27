@@ -20,7 +20,6 @@ class BaseClient(ABC):
         self.session_id = None
         self.ws = None
         self.recv_lock = asyncio.Lock()  # 防止并发recv调用
-        self.is_running = False
         self.message_loop = None
     
     async def message_receive_loop(self):
@@ -31,9 +30,6 @@ class BaseClient(ABC):
                 try:
                     if self._is_websocket_closed():
                         await self.connect()
-                    if not self.is_running:
-                        await asyncio.sleep(0.1)
-                        continue
                     response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
                     await self._handle_server_response(response)
                     logger.bind(tag="BASE").info(f"收到服务器响应: {response}")
@@ -75,7 +71,6 @@ class BaseClient(ABC):
     
     async def connect(self) -> None:
         """建立WebSocket连接"""
-        self.is_running = False
         logger.bind(tag="BASE").info(f"连接服务器: {self.config['base_url']}")
         self.ws = await websockets.connect(
             self.config['base_url'],
@@ -109,7 +104,6 @@ class BaseClient(ABC):
         
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
-        self.is_running = True
         logger.bind(tag="BASE").info(f"WebSocket连接已建立")
     
     async def start_connection(self) -> None:
@@ -269,7 +263,6 @@ class BaseClient(ABC):
             if self.message_loop:
                 self.message_loop.cancel()
                 await self.message_loop
-            self.is_running = False
             await self.finish_session()
             await self.finish_connection()
             await self.close()
