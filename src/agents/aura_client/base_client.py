@@ -25,20 +25,29 @@ class BaseClient(ABC):
     
     async def message_receive_loop(self):
         """服务器响应接收循环"""
-        while True:
-            # 尝试从客户端接收响应
-            try:
-                if self._is_websocket_closed():
-                    await self.connect()
-                if not self.is_running:
-                    await asyncio.sleep(0.1)
+        try:
+            while True:
+                # 尝试从客户端接收响应
+                try:
+                    if self._is_websocket_closed():
+                        await self.connect()
+                    if not self.is_running:
+                        await asyncio.sleep(0.1)
+                        continue
+                    response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
+                    await self._handle_server_response(response)
+                    logger.bind(tag="BASE").info(f"收到服务器响应: {response}")
+                except asyncio.TimeoutError:
+                    # logger.bind(tag="BASE").info(f"收到服务器响应超时")
                     continue
-                response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
-                await self._handle_server_response(response)
-            except asyncio.TimeoutError:
-                continue
-            except Exception as e:
-                await self.connect()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    await self.connect()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"消息接收循环异常: {e}")
     
     @abstractmethod
     async def _handle_server_response(self, response: Dict[str, Any]) -> None:
@@ -71,7 +80,10 @@ class BaseClient(ABC):
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=self.config['headers'],
-            open_timeout=20
+            open_timeout=20,
+            ping_interval=20,
+            ping_timeout=10,
+            max_queue=1024
         )
         
         # 执行连接握手
@@ -256,7 +268,7 @@ class BaseClient(ABC):
         try:
             if self.message_loop:
                 self.message_loop.cancel()
-                self.message_loop = None
+                await self.message_loop
             self.is_running = False
             await self.finish_session()
             await self.finish_connection()

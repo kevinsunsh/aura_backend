@@ -64,7 +64,7 @@ class LLMClient(ABC):
                     await client.text_processor.user_input_interruption()
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
-                    await client.text_processor.handle_text_message({"message": msg["data"]})
+                    await client.text_processor.handle_message({"message": msg["data"]})
     
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应"""
@@ -200,9 +200,9 @@ class LLM_TTSClient(ABC):
                     await client.tts_client.user_input_interruption()
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
-                    await client.text_processor.handle_text_message({"message": msg["data"]})
-                    logger.bind(tag="BASE").info(f"handle_text_message: {msg['data']}")
-                    logger.bind(tag="DELAY").info(f"handle_text_message delay: {int((time.time() - client.process_timer.value) * 1000)}ms")
+                    await client.text_processor.handle_message({"message": msg["data"]})
+                    # logger.bind(tag="BASE").info(f"handle_message: {msg['data']}")
+                    logger.bind(tag="DELAY").info(f"handle_message delay: {int((time.time() - client.process_timer.value) * 1000)}ms")
     
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any], session_id: str) -> None:
@@ -409,13 +409,13 @@ class MessageProcessorAudio:
         self.vad_process.start()
 
         # 启动预处理和后处理子进程
-        self.preprocess_input_queues = multiprocessing.Queue()
+        self.prepost_input_queues = multiprocessing.Queue()
         self.preprocess_output_queue = multiprocessing.Queue()
         self.preprocess_is_process_running = multiprocessing.Value('b', False)
         logger.bind(tag="BASE").info("启动预处理子进程")
         self.preprocess_process = multiprocessing.Process(
             target=MessagePreAndPostProcessor.process_entry,
-            args=(self.preprocess_input_queues, self.preprocess_output_queue, self.preprocess_is_process_running)
+            args=(self.prepost_input_queues, self.preprocess_output_queue, self.preprocess_is_process_running)
         )
         self.preprocess_process.start()
         # # 启动LLM子进程
@@ -498,7 +498,7 @@ class MessageProcessorAudio:
                 async with self.asr_lock:
                     self.asr_is_started = False
                 # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
-                self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
+                self.prepost_input_queues.put({"type": "preprocess", "data": self.asr_result})
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({"event": ServerEvent.ASREnded})
             else:
@@ -659,7 +659,7 @@ class MessageProcessorAudio:
                         async with self.asr_lock:
                             self.asr_is_started = False
                         # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
-                        self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
+                        self.prepost_input_queues.put({"type": "preprocess", "data": self.asr_result})
                     else:
                         logger.debug("VAD识别结束，但ASR未开始")
                         return True, None
@@ -681,11 +681,8 @@ class MessageProcessorAudio:
             if msg:
                 # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
                 self.llm_tts_input_queues.put({"type": "input", "data": msg.get("data")})
-                return True, msg
-            return False, None
         except Exception as e:
             logger.error(f"发送VAD消息失败: {e}")
-            return False, None
     
     async def send_e2e_asr_message(self):
         """
@@ -733,7 +730,7 @@ class MessageProcessorAudio:
                         async with self.asr_lock:
                             self.asr_is_started = False
                         # self.llm_input_queues.put({"type": "input", "data": self.asr_result})
-                        self.llm_tts_input_queues.put({"type": "input", "data": self.asr_result})
+                        self.prepost_input_queues.put({"type": "preprocess", "data": self.asr_result})
                     else:
                         logger.debug("E2E ASR识别结束，但ASR未开始")
                         return True, None
@@ -788,12 +785,15 @@ class MessageProcessorAudio:
                             "session_id": msg.get("session_id")
                         }
                     }
+                    logger.bind(tag="DELAY").info(f"SEND TTS delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                 else:
                     if msg.get('event') == ServerEvent.TTSResponse:
                         if self.sse_started:
                             sleep_time = len(msg.get("payload_msg")) / 32000 * 0.1
                         else:
                             sleep_time = len(msg.get("payload_msg")) / 32000 * 0.6
+                    elif msg.get('event') == ServerEvent.ChatEnded:
+                        self.prepost_input_queues.put({"type": "postprocess", "data": msg.get("payload_msg", {}).get("content", "")})
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")
@@ -853,6 +853,8 @@ class MessageProcessorAudio:
                 if msg:
                     if self.websocket_send_callback:
                         await self.websocket_send_callback(msg)
+                        if msg.get('event') == ServerEvent.TTSSentenceStart:
+                            logger.bind(tag="DELAY").info(f"SEND TTS finished delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
         except asyncio.CancelledError:
             logger.info("消息处理任务已取消")
             raise  # 重新抛出CancelledError
@@ -868,6 +870,7 @@ class MessageProcessorAudio:
         # self.asr_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.vad_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.e2e_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        self.prepost_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
@@ -878,7 +881,7 @@ class MessageProcessorAudio:
                not self.llm_tts_is_process_running.value or
                not self.vad_is_process_running.value):
             if time.time() - start_time > timeout:
-                logger.error("MessageProcessorAudio启动超时")
+                logger.bind(tag="BASE").error("MessageProcessorAudio启动超时")
                 self.e2e_is_process_running.value = True
                 self.llm_tts_is_process_running.value = True
                 self.vad_is_process_running.value = True
@@ -899,6 +902,7 @@ class MessageProcessorAudio:
         # self.asr_input_queues.put({"type": "stop"})
         self.vad_input_queues.put({"type": "stop"})
         self.e2e_input_queues.put({"type": "stop"})
+        self.prepost_input_queues.put({"type": "stop"})
         # self.llm_input_queues.put({"type": "stop"})
         # self.tts_input_queues.put({"type": "stop"})
         self.llm_tts_input_queues.put({"type": "stop"})

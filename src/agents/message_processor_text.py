@@ -65,72 +65,13 @@ class MessageProcessorText:
         # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
     
-    async def handle_text_message(self, 
-                                message_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_message(self, input_info: str) -> Dict[str, Any]:
         """处理文本消息"""
         try:
-            # 支持统一协议格式的payload_msg
-            user_input = None
-            if "message" in message_data and message_data["message"]:
-                # 向后兼容：直接message字段
-                user_input = message_data["message"]
-            
-            if not user_input:
-                return {
-                    "success": False,
-                    "error": "消息中没有找到有效的文本内容",
-                    "message_type": "text"
-                }
-            
             await self.user_input_resume()
-            if self.replying_task_handle and not self.replying_task_handle.done():
-                self.replying_task_handle.cancel()
-                try:
-                    await self.replying_task_handle
-                except asyncio.CancelledError:
-                    pass
-            save_message_task_handle = asyncio.create_task(self._save_message_task(self.user_id, user_input))
-            self.save_message_tasks.append(save_message_task_handle)
-            self.save_message_tasks = [task for task in self.save_message_tasks if not task.done()]
-            replying_task_handle = asyncio.create_task(self._replying_response_task(user_input))
-            self.replying_task_handle = replying_task_handle
-            logger.info(f"文本消息已存储: chat_id={self.chat_id}, content_length={len(user_input)}")
-            
-            return {
-                "success": True,
-                "message_type": "text",
-                "msg_id": str(uuid.uuid4()),
-                "content": user_input,
-                "action": "process_text"
-            }
+            await self._replying_response_task(input_info)
         except Exception as e:
             logger.error(f"处理文本消息失败: {e}")
-            return {
-                "success": False,
-                "error": f"处理文本消息失败: {str(e)}",
-                "message_type": "text"
-            }
-    
-    async def _save_message_task(self, user_id: str, message_str: str, update_checked_at: bool = False):
-        """保存消息任务"""
-        try:
-            # 创建消息对象
-            message = Message(
-                msg_id=str(uuid.uuid4()),
-                chat_id=self.chat_id,
-                user_id=user_id,
-                platform="default",
-                m_type="text",
-                content=message_str,
-                data={},
-                created_at=int(datetime.now().timestamp() * 1000)
-            )
-            # 存储到消息存储
-            MessageStore.get_instance().add_message(message)
-            if update_checked_at:
-                ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
-        except Exception as e:
-            logger.error(f"保存消息任务失败: {e}")
     
     # async def _muttering_process_task(self):
     #     """自言自语任务"""
@@ -269,8 +210,6 @@ class MessageProcessorText:
                         "content": final_response
                     }
                 })
-            save_message_task_handle = asyncio.create_task(self._save_message_task("aura", final_response, update_checked_at=True))
-            self.save_message_tasks.append(save_message_task_handle)
         except asyncio.CancelledError:
             logger.info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:

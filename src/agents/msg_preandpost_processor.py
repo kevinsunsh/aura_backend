@@ -36,13 +36,15 @@ class MessagePreAndPostProcessor(ABC):
         while True:
             msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "start":
-                client.is_process_running.value = True
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
+                client.is_process_running.value = True
+                logger.bind(tag="BASE").info(f"预处理和后处理子进程启动")
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
             elif isinstance(msg, dict) and msg.get("type") == "preprocess":
                 if client.is_process_running.value:
+                    logger.bind(tag="BASE").info(f"预处理用户输入: {msg['data']}")
                     await client.preprocess(msg["data"])
             elif isinstance(msg, dict) and msg.get("type") == "postprocess":
                 if client.is_process_running.value:
@@ -60,10 +62,8 @@ class MessagePreAndPostProcessor(ABC):
         # 更新观察信息
         chat_history_str = _build_chat_history_str(history_messages)
         chat_history_str += f"{self.user_id}说: {user_input}\n"
-        logger.debug(f"observe_conversation chat_history_str: {chat_history_str}")
-        thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
-        goals_str = thinking_task_shared_data.get("goals_str", "")
-        knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
+        goals_str = ""
+        knowledge_info_str = ""
         
         input_info = f"人设：{_get_persona_text()}。"
         if len(goals_str) > 0:
@@ -74,9 +74,7 @@ class MessagePreAndPostProcessor(ABC):
         
         self.output_queue.put({
             "type": "replying_input",
-            "data": {
-                "input_info": input_info
-            }
+            "data": input_info
         })
         # 创建消息对象
         message = Message(

@@ -28,8 +28,8 @@ def tag_color_format(record):
 def log_filter(record):
     tag = record["extra"].get("tag")
     # return tag in ["TTS", "BASE"]
-    return False
-    # return tag in ["BASE", "DELAY"]
+    # return False
+    return tag in ["BASE", "DELAY"]
 
 # 配置输出格式，包含文件名和 tag
 logger.remove()
@@ -42,7 +42,7 @@ logger.add(
 )
 
 from agents.aura import AuraAgent
-from agents.msg_preandpost_processor import MessageProcessorAudio
+from agents.message_processor_audio import MessageProcessorAudio
 
 app = FastAPI(
     title="Aura Agent Service",

@@ -74,10 +74,13 @@ class VADClient(BaseClient):
             msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "start":
                 client.is_process_running.value = await client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
+                logger.bind(tag="BASE").info("VAD客户端启动")
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 await client.cleanup()
                 client.is_process_running.value = False
+                logger.bind(tag="BASE").info("VAD客户端停止")
             elif isinstance(msg, dict) and msg.get("type") == "input":
+                # logger.bind(tag="BASE").info("VAD客户端收到音频数据")
                 if client.is_process_running.value:
                     await client.task_request(msg["data"])
     

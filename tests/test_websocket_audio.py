@@ -1378,7 +1378,7 @@ class WebSocketTestSession:
                     # 使用run_in_executor来处理websocket.recv()，避免阻塞事件循环
                     try:
                         # 使用run_in_executor来处理websocket.recv()
-                        response_data = await asyncio.wait_for(self.websocket.recv(), timeout=0.1)
+                        response_data = await self.websocket.recv()
                         data = client_parse_response(response_data)
                         self.handle_websocket_response(data)
                         await asyncio.sleep(0.01)
@@ -1626,12 +1626,11 @@ class WebSocketTestSession:
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.base_uri + "/ws/stream",
-                ping_interval=120,      # 每120秒发送一次ping（更保守）
-                ping_timeout=60,       # ping超时时间60秒（更宽松）
+                ping_interval=20,      # 每120秒发送一次ping（更保守）
+                ping_timeout=10,       # ping超时时间60秒（更宽松）
                 close_timeout=10,      # 关闭超时时间10秒
-                max_size=1000000000,   # 最大消息大小1GB
                 compression=None,      # 禁用压缩避免问题
-                max_queue=32
+                max_queue=1024
             ) as websocket:
                 self.websocket = websocket
                 logger.info("已连接到WebSocket服务器")
@@ -2136,8 +2135,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    # session = WebSocketTestSession(uri="ws://localhost:5876")
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876")
+    # session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":
