@@ -4,8 +4,8 @@ import uuid
 ws_connect_config = {
     "base_url": "wss://openspeech.bytedance.com/api/v3/realtime/dialogue",
     "headers": {
-        "X-Api-App-ID": "5747111361",
-        "X-Api-Access-Key": "t03OTM_abaNE-o1ZJvhNnPfR4aC4oU3v",
+        "X-Api-App-ID": "4522921771",
+        "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",
         "X-Api-Resource-Id": "volc.speech.dialog",
         "X-Api-App-Key": "PlgvMymc7f3tQnJ6",
         "X-Api-Connect-Id": str(uuid.uuid4()),

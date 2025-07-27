@@ -899,6 +899,7 @@ class WebSocketTestSession:
     
     def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com"):
         self.base_uri = uri
+        self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
@@ -1948,7 +1949,7 @@ class WebSocketTestSession:
         try:
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
-                self.uri,
+                self.base_uri + "/ws/stream",
                 ping_interval=30,      # 每30秒发送一次ping（更保守）
                 ping_timeout=15,       # ping超时时间15秒（更宽松）
                 close_timeout=10,      # 关闭超时时间10秒
@@ -2099,7 +2100,7 @@ class WebSocketTestSession:
             
             # 重新建立连接
             self.websocket = await websockets.connect(
-                self.uri,
+                self.base_uri + "/ws/stream",
                 open_timeout=5,
                 ping_interval=30,      # 每30秒发送一次ping（更保守）
                 ping_timeout=15,       # ping超时时间15秒（更宽松）
