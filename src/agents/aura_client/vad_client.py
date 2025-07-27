@@ -22,6 +22,7 @@ class VADClient(BaseClient):
     async def task_request(self, audio: bytes) -> None:
         """TaskRequest - 客户端事件ID: 200"""
         if not self.is_running:
+            logger.bind(tag="BASE").warning("VAD客户端未启动")
             return
         # 发送前检查SSL连接状态
         if self._is_websocket_closed():

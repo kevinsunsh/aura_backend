@@ -1,27 +1,27 @@
 edition: 3.0.0
-name: aura-backend
+name: aura-backend-dev
 access: "default-ms" # todo: 在系统下新建火山引擎的 AK / SK 密钥
 
 vars:
-  sid: "aurabk"
+  sid: "aurabkdev"
   region: "cn-beijing"
-  functionName: "aura-backend-function"
-  version: "0.0.27"
+  functionName: "aura-backend-function-dev"
+  version: "0.0.3"
 
 resources:
-  aura_backend:
+  aura_backend_dev:
     component: volcano-vefaas
     props:
       common:
         Region: ${vars.region}
       function:
         Name: ${vars.functionName}
-        Description: aura-backend
+        Description: aura-backend-dev
         RequestTimeout: 900
         ExclusiveMode: true
         Runtime: native/v1
         SourceType: image # 支持 image / zip
-        Source: mengs-cn-beijing.cr.volces.com/aura/aura_backend:${vars.version}
+        Source: mengs-cn-beijing.cr.volces.com/aura/aura_backend_dev:${vars.version}
         MemoryMB: 16384
         Processor: cpu
         Envs:
@@ -48,8 +48,8 @@ resources:
         - TriggerName: apig-trigger
           TriggerType: apig
           GatewayId: "gd1qqo74fo0m61h76anf0" # todo: 新建 apig 后填写 gatewayId 即可
-          ServiceName: "service-aurabk"
-          UpstreamName: "upstream-aurabk"
+          ServiceName: "service-aurabkdev"
+          UpstreamName: "upstream-aurabkdev"
           RouteName: default
           Path: "/"
           Method:

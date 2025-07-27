@@ -137,7 +137,7 @@ class MessageProcessorText:
             extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
                     if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
-                        logger.info(f"打断流式响应，继续倾听")  
+                        logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
                     response_buffer += chunk.content
                     if state == "OUTSIDE":
