@@ -13,7 +13,7 @@ from utils.utils import atomic_compare_and_set
 
 class VADClient(BaseClient):
     """VAD客户端"""
-    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, llm_input_queue: multiprocessing.Queue, asr_is_started: multiprocessing.Value, asr_lock: multiprocessing.Lock, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
+    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, llm_input_queue: multiprocessing.Queue, asr_is_started: Any, asr_lock: Any, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
         super().__init__(config)
         self.input_queue = input_queue
         self.llm_input_queue = llm_input_queue
@@ -62,16 +62,19 @@ class VADClient(BaseClient):
                 raise
         
     @staticmethod
-    def process_entry(input_queue, output_queue, is_process_running, process_timer):
-        asyncio.run(VADClient.main(input_queue, output_queue, is_process_running, process_timer))
+    def process_entry(input_queue, llm_input_queue, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+        asyncio.run(VADClient.main(input_queue, llm_input_queue, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, output_queue, is_process_running, process_timer):
+    async def main(input_queue, llm_input_queue, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = VADClient(
             config=vad_config,
             input_queue=input_queue,
-            output_queue=output_queue,
+            llm_input_queue=llm_input_queue,
+            asr_is_started=asr_is_started,
+            asr_lock=asr_lock,
+            output_client_queue=output_client_queue,
             is_process_running=is_process_running,
             process_timer=process_timer
         )

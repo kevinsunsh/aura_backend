@@ -209,9 +209,9 @@ class LLM_TTSClient(ABC):
                 if client.is_process_running.value:
                     await client.text_processor.user_input_interruption()
                     await client.tts_client.user_input_interruption()
-            elif isinstance(msg, dict) and msg.get("type") == "input":
+            elif isinstance(msg, dict) and msg.get("type") == "run":
                 if client.is_process_running.value:
-                    await client.text_processor.handle_text_message({"message": client.asr_result.value})
+                    await client.text_processor.handle_text_message({"message": client.asr_result.value.decode("utf-8")})
         
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any], session_id: str) -> None:
@@ -262,6 +262,7 @@ class E2EClient(ABC):
                  llm_input_queues,
                  asr_result,
                  asr_is_started,
+                 asr_lock,
                  output_client_queue,
                  is_process_running,
                  process_timer):
@@ -269,6 +270,7 @@ class E2EClient(ABC):
         self.llm_input_queues = llm_input_queues
         self.asr_result = asr_result
         self.asr_is_started = asr_is_started
+        self.asr_lock = asr_lock
         self.output_client_queue = output_client_queue
         self.is_process_running = is_process_running
         self.process_timer = process_timer
@@ -285,17 +287,18 @@ class E2EClient(ABC):
         )
     
     @staticmethod
-    def process_entry(input_queue, llm_input_queues, asr_result, asr_is_started, output_client_queue, is_process_running, process_timer):
-        asyncio.run(E2EClient.main(input_queue, llm_input_queues, asr_result, asr_is_started, output_client_queue, is_process_running, process_timer))
+    def process_entry(input_queue, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+        asyncio.run(E2EClient.main(input_queue, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, llm_input_queues, asr_result, asr_is_started, output_client_queue, is_process_running, process_timer):
+    async def main(input_queue, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = E2EClient(
             input_queue=input_queue,
             llm_input_queues=llm_input_queues,
             asr_result=asr_result,
             asr_is_started=asr_is_started,
+            asr_lock=asr_lock,
             output_client_queue=output_client_queue,
             is_process_running=is_process_running,
             process_timer=process_timer
@@ -344,6 +347,7 @@ class E2EClient(ABC):
     
     async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
         """ASR响应事件回调 - 识别出文本内容"""
+        self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
         self.output_client_queue.put({
                     "event": ServerEvent.ASRResponse,
                     "payload_msg": payload})
@@ -354,7 +358,7 @@ class E2EClient(ABC):
             self.output_client_queue.put({"event": ServerEvent.ASREnded})
             self.llm_input_queues.put({"type": "run"})
             self.process_timer.value = time.time()
-            logger.bind(tag="DELAY").info(f"E2E ASREnded，ASR结果: {self.asr_result.value}")
+            logger.bind(tag="DELAY").info(f"E2E ASREnded")
         else:
             logger.bind(tag="DELAY").info("E2E ASREnded，但ASR未开始")
     
@@ -497,7 +501,7 @@ class MessageProcessorAudio:
                 self.llm_tts_input_queues.put({"type": "run"})
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({"event": ServerEvent.ASREnded})
-                logger.bind(tag="DELAY").info(f"SpeakEnded，ASR结果: {self.asr_result}")
+                logger.bind(tag="DELAY").info(f"SpeakEnded")
             else:
                 logger.bind(tag="DELAY").info("SpeakEnded，但ASR未开始")
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
