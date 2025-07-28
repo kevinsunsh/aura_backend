@@ -93,21 +93,21 @@ class VADClient(BaseClient):
         event_id = response.get('event')
         # Connect类事件 (50-52)
         if event_id == ServerEvent.ConnectionStarted:
-            logger.info("连接建立成功")
+            logger.bind(tag="BASE").info("连接建立成功")
         elif event_id == ServerEvent.ConnectionFailed:
-            logger.error("连接建立失败")
+            logger.bind(tag="BASE").error("连接建立失败")
         elif event_id == ServerEvent.ConnectionFinished:
-            logger.info("连接已结束")
+            logger.bind(tag="BASE").info("连接已结束")
         # Session类事件 (150-153)
         elif event_id == ServerEvent.SessionStarted:
-            logger.info("会话启动成功")
+            logger.bind(tag="BASE").info("会话启动成功")
         elif event_id == ServerEvent.SessionFinished:
-            logger.info("会话已结束")
+            logger.bind(tag="BASE").info("会话已结束")
         elif event_id == ServerEvent.SessionFailed:
-            logger.error("会话失败")
+            logger.bind(tag="BASE").error("会话失败")
         # VAD类事件 (450-459)
         elif event_id == ServerEvent.ASRInfo:
-            logger.debug("VAD识别出首字")
+            logger.bind(tag="BASE").debug("VAD识别出首字")
             self.output_queue.put({"event": ServerEvent.ASRInfo})
         elif event_id == ServerEvent.ASREnded:
             # logger.bind(tag="BASE").info("VAD识别结束")
