@@ -21,6 +21,7 @@ class BaseClient(ABC):
         self.ws = None
         self.recv_lock = asyncio.Lock()  # 防止并发recv调用
         self.message_loop = None
+        self.is_running = False
     
     async def message_receive_loop(self):
         """服务器响应接收循环"""
@@ -32,7 +33,7 @@ class BaseClient(ABC):
                         await self.connect()
                     response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
                     await self._handle_server_response(response)
-                    logger.bind(tag="BASE").info(f"收到服务器响应: {response}")
+                    # logger.bind(tag="BASE").info(f"收到服务器响应: {response}")
                 except asyncio.TimeoutError:
                     # logger.bind(tag="BASE").info(f"收到服务器响应超时")
                     continue
@@ -72,6 +73,7 @@ class BaseClient(ABC):
     async def connect(self) -> None:
         """建立WebSocket连接"""
         logger.bind(tag="BASE").info(f"连接服务器: {self.config['base_url']}")
+        self.is_running = False
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=self.config['headers'],
@@ -104,6 +106,7 @@ class BaseClient(ABC):
         
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
+        self.is_running = True
         logger.bind(tag="BASE").info(f"WebSocket连接已建立")
     
     async def start_connection(self) -> None:
@@ -260,6 +263,7 @@ class BaseClient(ABC):
     async def cleanup(self) -> None:
         """清理资源"""
         try:
+            self.is_running = False
             if self.message_loop:
                 self.message_loop.cancel()
                 await self.message_loop

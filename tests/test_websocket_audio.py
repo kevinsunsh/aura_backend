@@ -883,10 +883,6 @@ async def sse_listener(sse_url, session):
                             logger.info(f"ASR收到第{session.chunk_count}个内容片段: '{content}'")
                         elif data.get("event") == 459:  # ASREnded
                             logger.info("🎤 ASR结束")
-                            if session.first_request_send_time is not None:
-                                delay = time.time() - session.first_request_send_time
-                                session.asr_to_tts_delays.append(delay)
-                                logger.info(f"⏱️ ASR结束到第一个request发送完成延迟: {delay:.3f}秒")
                             session.asr_ended_time = time.time()
                             logger.debug(f"⏱️ ASREnded时间戳: {session.asr_ended_time}")
                     except Exception as e:
@@ -899,7 +895,7 @@ class WebSocketTestSession:
     
     def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com"):
         self.base_uri = uri
-        self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
+        # self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
@@ -944,10 +940,11 @@ class WebSocketTestSession:
         self.first_asr_info_received_time = None
         self.second_asr_info_received_time = None
         self.interrupt_audio_send_time = None
-        self.first_request_send_time = None
         # ASREnded和TTSSentenceStart之间的延迟统计
         self.asr_ended_time = None
         self.tts_sentence_start_time = None
+        self.chat_response_start_time = None
+        self.chat_ended_start_time = None
         self.asr_to_tts_delays = []  # 存储所有ASREnded到TTSSentenceStart的延迟
         # 信号处理
         signal.signal(signal.SIGINT, self._keyboard_signal)
@@ -1221,10 +1218,6 @@ class WebSocketTestSession:
                 logger.info(f"ASR收到第{self.chunk_count}个内容片段: '{content}'")
             elif event_id == 459:  # ASREnded
                 logger.info("🎤 ASR结束")
-                if self.first_request_send_time is not None:
-                    delay = time.time() - self.first_request_send_time
-                    self.asr_to_tts_delays.append(delay)
-                    logger.info(f"⏱️ ASR结束到第一个request发送完成延迟: {delay:.3f}秒")
                 self.asr_ended_time = time.time()
                 logger.debug(f"⏱️ ASREnded时间戳: {self.asr_ended_time}")
             elif event_id == 350:  # TTSSentenceStart
@@ -1242,18 +1235,14 @@ class WebSocketTestSession:
                 
                 # 计算ASREnded到TTSSentenceStart的延迟（只计算第一个TTSSentenceStart）
                 if self.asr_ended_time is not None:
-                    total_delay = self.tts_sentence_start_time - self.get_shared_last_speech_end_time()
-                    self.vad_to_tts_delays.append(total_delay)
-                    logger.info(f"⏱️ VAD到TTSSentenceStart总延迟: {total_delay:.3f}秒")
-                    asr_delay = self.asr_ended_time - self.get_shared_last_speech_end_time()
-                    self.asr_to_tts_delays.append(asr_delay)
-                    logger.info(f"⏱️ VAD到ASREnded延迟: {asr_delay:.3f}秒")
                     delay = self.tts_sentence_start_time - self.asr_ended_time
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个TTSSentenceStart延迟: {delay:.3f}秒")
                     
                     # 清除asr_ended_time，避免后续TTSSentenceStart重复计算
                     self.asr_ended_time = None
+                    self.chat_response_start_time = None
+                    self.chat_ended_start_time = None
                     
                     # 输出延迟统计信息
                     if len(self.asr_to_tts_delays) > 1:
@@ -1317,8 +1306,20 @@ class WebSocketTestSession:
                 #     logger.error(f"❌ Opus解码失败: {e}")
             elif event_id == ServerEvent.ChatResponse:  # ChatResponse
                 logger.info(f"🎵 收到ChatResponse事件:{payload_msg.get("content", "")}")
-            elif event_id == 353:  # ChatEnded
+                
+                if self.asr_ended_time is not None and self.chat_response_start_time is None:
+                    self.chat_response_start_time = time.time()
+                    delay = self.chat_response_start_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatResponse延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatEnded:  # ChatEnded
                 logger.info("服务器一次回复结束，等待用户继续说话...")
+                
+                if self.asr_ended_time is not None and self.chat_ended_start_time is None:
+                    self.chat_ended_start_time = time.time()
+                    delay = self.chat_ended_start_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatEnded延迟: {delay:.3f}秒")
             elif event_id == 999:  # Error
                 logger.error(f"发生错误: {data.get('message', '未知错误')}")
                 # 发生错误时也设置响应完成标志
@@ -1623,7 +1624,7 @@ class WebSocketTestSession:
         """启动WebSocket测试会话，并可选启动SSE监听"""
         try:
             sse_task = None
-            sse_task = asyncio.create_task(sse_listener(self.base_uri.replace("ws://", "http://") + "/sse", self))
+            # sse_task = asyncio.create_task(sse_listener(self.base_uri.replace("ws://", "http://") + "/sse", self))
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.base_uri + "/ws/stream",
@@ -1781,15 +1782,10 @@ class WebSocketTestSession:
             
             await send_speak_ended_request(self.websocket, "test_user_123444")
             
-            # 记录第一个request发送完成时间
-            self.first_request_send_time = time.time()
-            logger.info(f"⏱️ 第一个request发送完成时间: {self.first_request_send_time}")
-
             # 等待TTS回复开始
             logger.info("⏳ 等待TTS回复开始...")
             await self._wait_for_tts_start()
             
-            logger.info(f"延迟等待TTS开始播放: {time.time() - self.first_request_send_time}")
             # # 等待一小段时间让TTS开始播放
             await asyncio.sleep(3.0)
             
@@ -2016,13 +2012,6 @@ class WebSocketTestSession:
                 print("🎯 打断测试延迟统计结果")
                 print("="*50)
                 
-                if (self.first_request_send_time is not None and 
-                    self.first_tts_audio_received_time is not None):
-                    delay0 = self.first_tts_audio_received_time - self.first_request_send_time
-                    print(f"⏱️ 延迟0 - 第一个request发送完成到第一个TTS开始: {delay0:.3f}秒")
-                else:
-                    print("⚠️ 未统计到延迟0数据")
-                
                 if (self.interrupt_audio_send_time is not None and 
                     self.second_asr_info_received_time is not None):
                     delay1 = self.second_asr_info_received_time - self.interrupt_audio_send_time
@@ -2136,8 +2125,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    # session = WebSocketTestSession(uri="ws://localhost:5876")
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876")
+    # session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":
