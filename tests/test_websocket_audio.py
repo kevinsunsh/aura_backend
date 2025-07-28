@@ -899,7 +899,7 @@ class WebSocketTestSession:
     
     def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com"):
         self.base_uri = uri
-        self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
+        # self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
@@ -2138,8 +2138,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    # session = WebSocketTestSession(uri="ws://localhost:5876")
-    session = WebSocketTestSession()
+    session = WebSocketTestSession(uri="ws://localhost:5876")
+    # session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":

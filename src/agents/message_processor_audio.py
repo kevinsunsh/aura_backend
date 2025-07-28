@@ -209,9 +209,7 @@ class LLM_TTSClient(ABC):
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
                     await client.text_processor.handle_text_message({"message": msg["data"]})
-                    logger.bind(tag="BASE").info(f"handle_text_message: {msg['data']}")
-                    logger.bind(tag="DELAY").info(f"handle_text_message delay: {int((time.time() - client.process_timer.value) * 1000)}ms")
-    
+        
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any], session_id: str) -> None:
         """TTS句子开始事件回调"""
@@ -219,7 +217,7 @@ class LLM_TTSClient(ABC):
         logger.debug(f"LLM TTS句子开始: {text}")
         self.is_llm_tts_running = True
         self.output_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}, "session_id": session_id})
-        logger.bind(tag="DELAY").info(f"LLM TTS delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
+        logger.bind(tag="DELAY").info(f"TTSSentenceStart delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
     
     async def _llm_on_tts_sentence_end(self, session_id: str) -> None:
         """TTS句子结束事件回调"""
@@ -244,10 +242,11 @@ class LLM_TTSClient(ABC):
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
             else:
                 self.llm_is_chat_started = True
-                logger.bind(tag="DELAY").info(f"LLM delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
+                logger.bind(tag="DELAY").info(f"ChatResponse delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
         elif message.get("event") == ServerEvent.ChatEnded:
             self.llm_is_chat_started = False
+            logger.bind(tag="DELAY").info(f"ChatEnded delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
             await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=False, end=True)
         self.output_queue.put(message)
 

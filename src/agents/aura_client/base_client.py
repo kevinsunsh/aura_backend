@@ -20,24 +20,31 @@ class BaseClient(ABC):
         self.session_id = None
         self.ws = None
         self.recv_lock = asyncio.Lock()  # 防止并发recv调用
-        self.is_running = False
         self.message_loop = None
+        self.is_running = False
     
     async def message_receive_loop(self):
         """服务器响应接收循环"""
-        while True:
-            # 尝试从客户端接收响应
-            try:
-                if self._is_websocket_closed():
+        try:
+            while True:
+                # 尝试从客户端接收响应
+                try:
+                    if self._is_websocket_closed():
+                        await self.connect()
+                    response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
+                    await self._handle_server_response(response)
+                    # logger.bind(tag="BASE").info(f"收到服务器响应: {response}")
+                except asyncio.TimeoutError:
+                    # logger.bind(tag="BASE").info(f"收到服务器响应超时")
+                    continue
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
                     await self.connect()
-                if not self.is_running:
-                    await self.connect()
-                response = await self.receive_server_response()
-                await self._handle_server_response(response)
-            except asyncio.TimeoutError:
-                continue
-            except Exception as e:
-                await self.connect()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"消息接收循环异常: {e}")
     
     @abstractmethod
     async def _handle_server_response(self, response: Dict[str, Any]) -> None:
@@ -54,9 +61,10 @@ class BaseClient(ABC):
                 self.chat_id = chat_id
                 await self.connect()
                 self.message_loop = asyncio.create_task(self.message_receive_loop())
+                logger.bind(tag="BASE").info(f"启动客户端成功")
                 return True
             except Exception as e:
-                logger.error(f"启动客户端失败（第{attempt}次）: {e}")
+                logger.bind(tag="BASE").info(f"启动客户端失败（第{attempt}次）: {e}")
                 if attempt < max_retries:
                     await asyncio.sleep(2)
                 else:
@@ -64,12 +72,15 @@ class BaseClient(ABC):
     
     async def connect(self) -> None:
         """建立WebSocket连接"""
-        self.is_running = False
         logger.bind(tag="BASE").info(f"连接服务器: {self.config['base_url']}")
+        self.is_running = False
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=self.config['headers'],
-            open_timeout=20
+            open_timeout=20,
+            ping_interval=20,
+            ping_timeout=10,
+            max_queue=1024
         )
         
         # 执行连接握手
@@ -252,10 +263,10 @@ class BaseClient(ABC):
     async def cleanup(self) -> None:
         """清理资源"""
         try:
+            self.is_running = False
             if self.message_loop:
                 self.message_loop.cancel()
-                self.message_loop = None
-            self.is_running = False
+                await self.message_loop
             await self.finish_session()
             await self.finish_connection()
             await self.close()

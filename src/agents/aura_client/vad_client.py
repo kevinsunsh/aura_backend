@@ -75,10 +75,13 @@ class VADClient(BaseClient):
             msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "start":
                 client.is_process_running.value = await client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
+                logger.bind(tag="BASE").info("VAD客户端启动")
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 await client.cleanup()
                 client.is_process_running.value = False
+                logger.bind(tag="BASE").info("VAD客户端停止")
             elif isinstance(msg, dict) and msg.get("type") == "input":
+                # logger.bind(tag="BASE").info("VAD客户端收到音频数据")
                 if client.is_process_running.value:
                     await client.task_request(msg["data"])
     
@@ -88,7 +91,6 @@ class VADClient(BaseClient):
         if response.get('event') is None:
             return
         event_id = response.get('event')
-        payload_msg = response.get('payload_msg', {})
         # Connect类事件 (50-52)
         if event_id == ServerEvent.ConnectionStarted:
             logger.info("连接建立成功")
@@ -108,10 +110,8 @@ class VADClient(BaseClient):
             logger.debug("VAD识别出首字")
             self.output_queue.put({"event": ServerEvent.ASRInfo})
         elif event_id == ServerEvent.ASREnded:
-            logger.bind(tag="BASE").info("VAD识别结束")
+            # logger.bind(tag="BASE").info("VAD识别结束")
             self.output_queue.put({"event": ServerEvent.ASREnded})
             self.process_timer.value = time.time()
         else:
             logger.warning(f"未知事件ID: {event_id}")
-        
-
