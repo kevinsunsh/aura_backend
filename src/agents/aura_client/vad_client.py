@@ -9,13 +9,17 @@ from typing import Dict, Any
 from api_protocol.constant import *
 from api_protocol.client_protocol import client_generate_request, client_parse_response
 from .base_client import BaseClient
+from utils.utils import atomic_compare_and_set
 
 class VADClient(BaseClient):
     """VAD客户端"""
-    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, output_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
+    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, llm_input_queue: multiprocessing.Queue, asr_is_started: multiprocessing.Value, asr_lock: multiprocessing.Lock, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
         super().__init__(config)
         self.input_queue = input_queue
-        self.output_queue = output_queue
+        self.llm_input_queue = llm_input_queue
+        self.asr_is_started = asr_is_started
+        self.asr_lock = asr_lock
+        self.output_client_queue = output_client_queue
         self.is_process_running = is_process_running
         self.process_timer = process_timer
     
@@ -107,11 +111,12 @@ class VADClient(BaseClient):
             logger.bind(tag="BASE").error("会话失败")
         # VAD类事件 (450-459)
         elif event_id == ServerEvent.ASRInfo:
-            logger.bind(tag="BASE").debug("VAD识别出首字")
-            self.output_queue.put({"event": ServerEvent.ASRInfo})
+            logger.bind(tag="DELAY").debug("VAD识别出首字")
         elif event_id == ServerEvent.ASREnded:
-            # logger.bind(tag="BASE").info("VAD识别结束")
-            self.output_queue.put({"event": ServerEvent.ASREnded})
-            self.process_timer.value = time.time()
+            if atomic_compare_and_set(self.asr_is_started, self.asr_lock, True, False):
+                self.output_client_queue.put({"event": ServerEvent.ASREnded})
+                self.llm_input_queue.put({"type": "run"})
+                self.process_timer.value = time.time()
+                logger.bind(tag="DELAY").info("VAD识别结束")
         else:
             logger.warning(f"未知事件ID: {event_id}")
