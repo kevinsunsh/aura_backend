@@ -800,6 +800,7 @@ class MessageProcessorAudio:
                     yield f"data: {json.dumps(msg)}\n\n"
                 await asyncio.sleep(0.01)
         except asyncio.CancelledError:
+            self.sse_started = False
             logger.info("SSE消息处理任务已取消")
         except Exception as e:
             logger.error(f"消息处理任务异常: {e}")
@@ -873,6 +874,7 @@ class MessageProcessorAudio:
     async def cleanup(self):
         logger.info(f"开始清理MessageProcessorAudio: chat_id={self.chat_id}")
         self.websocket_send_callback = None
+        self.sse_started = False
         # self.asr_input_queues.put({"type": "stop"})
         self.vad_input_queues.put({"type": "stop"})
         self.e2e_input_queues.put({"type": "stop"})

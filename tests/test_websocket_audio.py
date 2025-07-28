@@ -1623,7 +1623,7 @@ class WebSocketTestSession:
         """启动WebSocket测试会话，并可选启动SSE监听"""
         try:
             sse_task = None
-            sse_task = asyncio.create_task(sse_listener(self.base_uri.replace("ws://", "http://") + "/sse", self))
+            # sse_task = asyncio.create_task(sse_listener(self.base_uri.replace("ws://", "http://") + "/sse", self))
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.base_uri + "/ws/stream",
@@ -2138,8 +2138,8 @@ async def test_audio_websocket_stream():
 
 async def test_microphone_websocket_stream():
     """测试使用麦克风的WebSocket流式接口 - 重构简化版本"""
-    session = WebSocketTestSession(uri="ws://localhost:5876")
-    # session = WebSocketTestSession()
+    # session = WebSocketTestSession(uri="ws://localhost:5876")
+    session = WebSocketTestSession()
     await session.start()
 
 if __name__ == "__main__":
