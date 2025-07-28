@@ -1,12 +1,12 @@
 edition: 3.0.0
 name: aura-backend
-access: "default-ms" # todo: 在系统下新建火山引擎的 AK / SK 密钥
+access: "default" # todo: 在系统下新建火山引擎的 AK / SK 密钥
 
 vars:
   sid: "aurabk"
   region: "cn-beijing"
   functionName: "aura-backend-function"
-  version: "0.0.27"
+  version: "0.0.32"
 
 resources:
   aura_backend:

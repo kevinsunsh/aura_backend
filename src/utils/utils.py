@@ -12,6 +12,18 @@ import sys
 import random
 import asyncio
 
+def atomic_compare_and_set(value_obj: Any, lock: Any, expected: bool, new_value: bool) -> bool:
+    """
+    原子比较并设置操作
+    如果当前值等于expected，则设置为new_value并返回True
+    否则返回False
+    """
+    with lock:
+        if value_obj.value == expected:
+            value_obj.value = new_value
+            return True
+        return False
+
 def random_10_percent() -> bool:
     """返回10%概率的随机布尔值"""
     return random.random() < 0.1

@@ -13,25 +13,29 @@ from utils.todo_mock_func import (
 
 class MessagePreAndPostProcessor(ABC):
     """MISC客户端包装器"""
-    def __init__(self, input_queue, output_queue, is_process_running):
+    def __init__(self, input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
         self.input_queue = input_queue
-        self.output_queue = output_queue
+        self.llm_input_queues = llm_input_queues
+        self.asr_result = asr_result
         self.is_process_running = is_process_running
+        self.process_timer = process_timer
         self.history_check_interval = 20000 #ms
         self.chat_id = None
         self.user_id = None
     
     @staticmethod
-    def process_entry(input_queue, output_queue, is_process_running):
-        asyncio.run(MessagePreAndPostProcessor.main(input_queue, output_queue, is_process_running))
+    def process_entry(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
+        asyncio.run(MessagePreAndPostProcessor.main(input_queue, llm_input_queues, asr_result, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, output_queue, is_process_running):
+    async def main(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = MessagePreAndPostProcessor(
             input_queue=input_queue,
-            output_queue=output_queue,
-            is_process_running=is_process_running
+            llm_input_queues=llm_input_queues,
+            asr_result=asr_result,
+            is_process_running=is_process_running,
+            process_timer=process_timer
         )
         while True:
             msg = await loop.run_in_executor(None, input_queue.get)
@@ -44,13 +48,13 @@ class MessagePreAndPostProcessor(ABC):
                 client.is_process_running.value = False
             elif isinstance(msg, dict) and msg.get("type") == "preprocess":
                 if client.is_process_running.value:
-                    logger.bind(tag="BASE").info(f"预处理用户输入: {msg['data']}")
-                    await client.preprocess(msg["data"])
+                    logger.bind(tag="BASE").info("预处理用户输入")
+                    await client.preprocess()
             elif isinstance(msg, dict) and msg.get("type") == "postprocess":
                 if client.is_process_running.value:
                     await client.postprocess(msg["data"])
     
-    async def preprocess(self, user_input: str) -> str:
+    async def preprocess(self) -> str:
         """预处理用户输入"""
         now_timestamp = int(datetime.now().timestamp() * 1000)
         history_messages = MessageStore.get_instance().get_messages_by_time_range(
@@ -61,21 +65,23 @@ class MessagePreAndPostProcessor(ABC):
         
         # 更新观察信息
         chat_history_str = _build_chat_history_str(history_messages)
-        chat_history_str += f"{self.user_id}说: {user_input}\n"
+        chat_history_str += f"{self.user_id}说:"
+        chat_history_str += """ {user_input}\n"""
         goals_str = ""
         knowledge_info_str = ""
         
-        input_info = f"人设：{_get_persona_text()}。"
+        input_template = f"人设：{_get_persona_text()}。"
         if len(goals_str) > 0:
-            input_info += f"当前对话目标：{goals_str}\n"
+            input_template += f"当前对话目标：{goals_str}\n"
         if len(knowledge_info_str) > 0:
-            input_info += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
-        input_info += f"最近的聊天记录：{chat_history_str}\n"
+            input_template += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
+        input_template += f"最近的聊天记录：{chat_history_str}\n"
         
-        self.output_queue.put({
-            "type": "replying_input",
-            "data": input_info
+        self.llm_input_queues.put({
+            "type": "run",
+            "data": input_template
         })
+        await asyncio.sleep(0.5)
         # 创建消息对象
         message = Message(
             msg_id=str(uuid.uuid4()),
@@ -83,7 +89,7 @@ class MessagePreAndPostProcessor(ABC):
             user_id=self.user_id,
             platform="default",
             m_type="text",
-            content=user_input,
+            content=self.asr_result.value.decode("utf-8"),
             data={},
             created_at=int(datetime.now().timestamp() * 1000)
         )
