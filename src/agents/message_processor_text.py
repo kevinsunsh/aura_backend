@@ -198,7 +198,7 @@ class MessageProcessorText:
             #     return
             
             # 使用LLM生成立即回复
-            chat_model = get_chat_model_by_type("pfc_action_planner")
+            chat_model = get_chat_model_by_type("pfc_chat")
             thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
             goals_str = thinking_task_shared_data.get("goals_str", "")
             knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
