@@ -379,8 +379,12 @@ class TtsClient:
         
         # 建立WebSocket连接
         self.ws = await websockets.connect(self.ws_url, additional_headers=ws_header,
-                                           ping_interval=10,      # 每10秒发送一次ping（更保守）
-                                           ping_timeout=5       # ping超时时间5秒（更宽松）
+                                           ping_interval=5,        # 更频繁的 ping（原来是 120s）
+                                           ping_timeout=3,         # 更短的超时（原来是 60s）
+                                           close_timeout=2,        # 更短的关闭超时
+                                           max_queue=1024,         # 增大队列（原来是 32）
+                                           compression=None,        # 已禁用压缩
+                                           max_size=1000000000,    # 保持大消息支持
                                            )
         
         # 开始连接

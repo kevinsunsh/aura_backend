@@ -470,7 +470,7 @@ class MessageProcessorAudio:
             args=(self.e2e_input_queues, self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock, self.output_client_queue, self.e2e_is_process_running, self.process_timer)
         )
         self.e2e_process.start()
-
+        
         self.llm_is_chat_started = False
         self.active_client = None
         self.message_tasks = None

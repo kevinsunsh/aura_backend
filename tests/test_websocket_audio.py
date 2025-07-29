@@ -1627,12 +1627,12 @@ class WebSocketTestSession:
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.base_uri + "/ws/stream",
-                ping_interval=120,      # 每120秒发送一次ping（更保守）
-                ping_timeout=60,       # ping超时时间60秒（更宽松）
-                close_timeout=10,      # 关闭超时时间10秒
-                max_size=1000000000,   # 最大消息大小1GB
-                compression=None,      # 禁用压缩避免问题
-                max_queue=32
+                ping_interval=5,        # 更频繁的 ping（原来是 120s）
+                ping_timeout=3,         # 更短的超时（原来是 60s）
+                close_timeout=2,        # 更短的关闭超时
+                max_queue=1024,         # 增大队列（原来是 32）
+                compression=None,        # 已禁用压缩
+                max_size=1000000000,    # 保持大消息支持                        
             ) as websocket:
                 self.websocket = websocket
                 logger.info("已连接到WebSocket服务器")
@@ -2107,7 +2107,7 @@ class WebSocketTestSession:
                 close_timeout=10,      # 关闭超时时间10秒
                 max_size=1000000000,   # 最大消息大小1GB
                 compression=None,      # 禁用压缩避免问题
-                max_queue=32,          # 限制队列大小
+                max_queue=1024,          # 限制队列大小
                 write_limit=2**16      # 限制写入缓冲区
             )
             
