@@ -342,8 +342,9 @@ class E2EClient(ABC):
     
     async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
         """ASR响应事件回调 - 识别出文本内容"""
-        self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
-        self.output_client_queue.put({
+        if self.asr_is_started.value:
+            self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
+            self.output_client_queue.put({
                     "event": ServerEvent.ASRResponse,
                     "payload_msg": payload})
     
@@ -478,7 +479,8 @@ class MessageProcessorAudio:
         self.message_tasks = None
 
         self.llm_tts_msg_count = 0
-        
+        self.sleep_time = 0
+
     async def handle_message(self, message_data: Dict[str, Any]):
         """
         分发消息到两个 client 进程
@@ -504,6 +506,7 @@ class MessageProcessorAudio:
                 self.llm_tts_input_queues.put({"type": "run"})
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({"event": ServerEvent.ASREnded})
+                self.process_timer.value = time.time()
                 logger.bind(tag="DELAY").info(f"SpeakEnded")
             else:
                 logger.bind(tag="DELAY").info("SpeakEnded，但ASR未开始")
@@ -894,16 +897,19 @@ class MessageProcessorAudio:
                     }
                 else:
                     if msg.get('event') == ServerEvent.TTSResponse:
-                        if self.sse_started:
-                            sleep_time = len(msg.get("payload_msg")) / 32000 * 0.1
-                        else:
-                            sleep_time = len(msg.get("payload_msg")) / 32000 * 0.6
+                        self.sleep_time += len(msg.get("payload_msg")) / 32000
                     elif msg.get('event') == ServerEvent.ChatEnded:
                         self.prepost_input_queues.put({"type": "postprocess", "data": msg.get("payload_msg", {}).get("content", "")})
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")
                     }
+                    if msg.get('event') == ServerEvent.TTSSentenceEnd:
+                        if self.sse_started:
+                            sleep_time = self.sleep_time * 0.1
+                        else:
+                            sleep_time = self.sleep_time * 0.6
+                        self.sleep_time = 0
                 return send_msg, sleep_time
             return None, sleep_time
         except Exception as e:
