@@ -19,8 +19,18 @@ asr_config = {
 }
 
 vad_config = {
-    "base_url": "ws://sd1vnrgvr8npbn2c42ke0.apigateway-cn-beijing.volceapi.com/ws/stream/vad",
-    # "base_url": "ws://sd20ng67r8npbn2c43olg.apigateway-cn-beijing.volceapi.com/ws/stream/vad",
+    # "base_url": "ws://sd1vnrgvr8npbn2c42ke0.apigateway-cn-beijing.volceapi.com/ws/stream/vad",
+    "base_url": "ws://sd20ng67r8npbn2c43olg.apigateway-cn-beijing.volceapi.com/ws/stream/vad",
+    "headers": {
+        "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
+        "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",
+        "X-Api-App-Key": "4522921771",
+    },
+}
+
+vad_split_config = {
+    # "base_url": "ws://sd1vnrgvr8npbn2c42ke0.apigateway-cn-beijing.volceapi.com/ws/stream/vad_split",
+    "base_url": "ws://sd20ng67r8npbn2c43olg.apigateway-cn-beijing.volceapi.com/ws/stream/vad_split",
     "headers": {
         "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
         "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",
