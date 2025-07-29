@@ -109,7 +109,7 @@ class MessageProcessorText:
     async def _replying_response_task(self, input_info: str):
         try:            
             # 使用LLM生成立即回复
-            chat_model = get_chat_model_by_type("pfc_action_planner")
+            chat_model = get_chat_model_by_type("planner")
             prompt = REPLYING_TASK_PROMPT.format(
                 input_info=input_info,
                 requirement=REPLYING_REQUIREMENT_PROMPT,

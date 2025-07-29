@@ -92,8 +92,8 @@ class SpeechRate:
             SpeechRate.VERY_SLOW: -25,
             SpeechRate.SLOW: -10,
             SpeechRate.NORMAL: 0,
-            SpeechRate.FAST: 25,
-            SpeechRate.VERY_FAST: 50
+            SpeechRate.FAST: 10,
+            SpeechRate.VERY_FAST: 25
         }[speech_rate]
     @staticmethod
     def get_speech_rate_str():
