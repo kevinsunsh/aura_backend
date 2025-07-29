@@ -347,8 +347,9 @@ class E2EClient(ABC):
     
     async def _on_asr_response(self, payload: Dict[str, Any]) -> None:
         """ASR响应事件回调 - 识别出文本内容"""
-        self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
-        self.output_client_queue.put({
+        if self.asr_is_started.value:
+            self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
+            self.output_client_queue.put({
                     "event": ServerEvent.ASRResponse,
                     "payload_msg": payload})
     
@@ -502,6 +503,7 @@ class MessageProcessorAudio:
                 self.llm_tts_input_queues.put({"type": "run"})
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({"event": ServerEvent.ASREnded})
+                self.process_timer.value = time.time()
                 logger.bind(tag="DELAY").info(f"SpeakEnded")
             else:
                 logger.bind(tag="DELAY").info("SpeakEnded，但ASR未开始")

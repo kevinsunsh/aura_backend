@@ -121,5 +121,7 @@ class VADClient(BaseClient):
                 self.llm_input_queue.put({"type": "run"})
                 self.process_timer.value = time.time()
                 logger.bind(tag="DELAY").info("VAD识别结束")
+            else:
+                logger.bind(tag="DELAY").warning("VAD识别结束，但ASR未开始")
         else:
             logger.warning(f"未知事件ID: {event_id}")
