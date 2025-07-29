@@ -31,6 +31,8 @@ class BaseClient(ABC):
                 try:
                     if self._is_websocket_closed():
                         await self.connect()
+                    if self.is_running == False:
+                        await self.connect()
                     response = await asyncio.wait_for(self.receive_server_response(), timeout=0.1)
                     await self._handle_server_response(response)
                     # logger.bind(tag="BASE").info(f"收到服务器响应: {response}")
@@ -40,7 +42,7 @@ class BaseClient(ABC):
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    await self.connect()
+                    self.is_running = False
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -87,7 +89,7 @@ class BaseClient(ABC):
         await self.start_connection()
         response = await self.receive_server_response()
         if response.get("event") != ServerEvent.ConnectionStarted:
-            logger.error(f"连接握手失败: {response}")
+            logger.bind(tag="BASE").error(f"连接握手失败: {response}")
             raise Exception("连接握手失败")
         
         await self.start_session(
@@ -100,10 +102,8 @@ class BaseClient(ABC):
         )
         response = await self.receive_server_response()
         if response.get("event") != ServerEvent.SessionStarted:
-            logger.error(f"会话握手失败: {response}")
+            logger.bind(tag="BASE").error(f"会话握手失败: {response}")
             raise Exception("会话握手失败")
-        logger.bind(tag="BASE").info(f"连接握手响应: {response}")
-        
         # 新版本websockets不再提供获取响应头的方法
         self.logid = ""
         self.is_running = True
