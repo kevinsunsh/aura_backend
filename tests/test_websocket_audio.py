@@ -343,7 +343,7 @@ class AudioDeviceManager:
         
         try:
             self.output_stream = self.pyaudio.open(
-                format=self.output_config.bit_size,
+                format=pyaudio.paInt16,  # 固定使用 int16
                 channels=self.output_config.channels,
                 rate=self.output_config.sample_rate,
                 output=True,
@@ -962,6 +962,7 @@ class WebSocketTestSession:
         # self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
         self.asr_is_started = False
         self.session_id = None
+        self.audio_format = "int16"
 
         # TTS音频录制相关
         self.is_recording_tts = False
@@ -1224,6 +1225,9 @@ class WebSocketTestSession:
                 logger.info("🎵 TTS语音合成开始...")
                 # 记录TTSSentenceStart时间戳
                 session_id = payload_msg.get("session_id", "")
+                audio_format = payload_msg.get("type", "int16")
+                if audio_format != self.audio_format:
+                    self.audio_format = audio_format
                 if self.session_id != session_id:
                     self.asr_is_started = False
                     self.session_id = session_id
@@ -1275,9 +1279,13 @@ class WebSocketTestSession:
             elif event_id == 352:  # TTSResponse
                 if self.asr_is_started:
                     return
-                # 处理TTS音频数据 - 可能是PCM格式，不是Opus
-                audio_data = payload_msg
-                logger.debug(f"🎵 收到TTS音频数据: {len(audio_data)} 字节")
+                if self.audio_format == "float32":
+                    data_buffer = np.frombuffer(payload_msg, dtype=np.float32)
+                    audio_data = (data_buffer * 32767).astype(np.int16).tobytes()
+                else:
+                    # 处理TTS音频数据 - 可能是PCM格式，不是Opus
+                    audio_data = payload_msg
+                    logger.debug(f"🎵 收到TTS音频数据: {len(audio_data)} 字节")
                 
                 # 如果正在录制，保存音频数据
                 if self.is_recording_tts:
@@ -2117,7 +2125,7 @@ class WebSocketTestSession:
     async def _delayed_clear_audio_buffers(self):
         await asyncio.sleep(1.5)
         self._clear_audio_buffers()
-
+    
 async def test_audio_websocket_stream():
     """测试带预处理音频文件的WebSocket流式接口"""
     session = WebSocketTestSession(uri="ws://localhost:5876")

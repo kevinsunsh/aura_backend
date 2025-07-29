@@ -15,18 +15,9 @@ from .aura_client.asr_client import ASRClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
 from .msg_preandpost_processor import MessagePreAndPostProcessor
-from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set
+from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set, ActiveClientType
 from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 from api_protocol.constant import *
-
-class DialogSessionType(Enum):
-    """音频客户端类型枚举"""
-    E2E_SESSION = "e2e_session"  # 端到端语音对话
-    ALT_SESSION = "alt_session"  # 集联语音对话
-
-SESSION_TYPES = [DialogSessionType.E2E_SESSION, DialogSessionType.ALT_SESSION]
-# SESSION_TYPES = [DialogSessionType.E2E_SESSION]
-# SESSION_TYPES = [DialogSessionType.ALT_SESSION]
 
 class LLMClient(ABC):
     """LLM客户端包装器"""
@@ -260,7 +251,9 @@ class E2EClient(ABC):
                  asr_result,
                  asr_is_started,
                  asr_lock,
+                 active_client,
                  output_client_queue,
+                 e2e_output_client_queue,
                  is_process_running,
                  process_timer):
         self.input_queue = input_queue
@@ -269,7 +262,9 @@ class E2EClient(ABC):
         self.asr_result = asr_result
         self.asr_is_started = asr_is_started
         self.asr_lock = asr_lock
+        self.active_client = active_client
         self.output_client_queue = output_client_queue
+        self.e2e_output_client_queue = e2e_output_client_queue
         self.is_process_running = is_process_running
         self.process_timer = process_timer
         self.dialog_session = DialogSession(
@@ -285,11 +280,11 @@ class E2EClient(ABC):
         )
     
     @staticmethod
-    def process_entry(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
-        asyncio.run(E2EClient.main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
+    def process_entry(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, e2e_output_client_queue, is_process_running, process_timer):
+        asyncio.run(E2EClient.main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, e2e_output_client_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+    async def main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, e2e_output_client_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = E2EClient(
             input_queue=input_queue,
@@ -298,7 +293,9 @@ class E2EClient(ABC):
             asr_result=asr_result,
             asr_is_started=asr_is_started,
             asr_lock=asr_lock,
+            active_client=active_client,
             output_client_queue=output_client_queue,
+            e2e_output_client_queue=e2e_output_client_queue,
             is_process_running=is_process_running,
             process_timer=process_timer
         )
@@ -322,24 +319,29 @@ class E2EClient(ABC):
         """TTS句子开始事件回调"""
         text = payload.get("text", "")
         logger.debug(f"E2E TTS句子开始: {text}")
+        self.e2e_output_client_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
     
     async def _e2e_on_tts_sentence_end(self) -> None:
         """TTS句子结束事件回调"""
         logger.debug("E2E TTS句子结束")
+        self.e2e_output_client_queue.put({"event": ServerEvent.TTSSentenceEnd})
     
     async def _e2e_on_tts_response(self, payload: bytes) -> None:
         """TTS音频响应事件回调"""
         # 这里payload应该是二进制音频数据
         logger.debug(f"E2E TTS音频响应: {payload}")
+        self.e2e_output_client_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload})
     
     async def _e2e_on_tts_ended(self) -> None:
         """TTS结束事件回调"""
         logger.debug("E2E TTS合成结束")
+        self.e2e_output_client_queue.put({"event": ServerEvent.TTSEnded})
     
     # ASR类事件回调方法
     async def _on_asr_info(self) -> None:
         """ASR信息事件回调 - 识别出首字"""
         logger.debug("ASR识别出首字")
+        self.active_client.value = ActiveClientType.TBD_CLIENT
         self.output_client_queue.put({"event": ServerEvent.ASRInfo})
         self.llm_input_queues.put({"type": "interruption"})
         self.asr_is_started.value = True
@@ -367,10 +369,12 @@ class E2EClient(ABC):
         """聊天响应事件回调"""
         content = payload.get("content", "")
         logger.debug(f"E2E收到聊天响应: {content[:10]}...")
+        self.e2e_output_client_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": content}})
     
     async def _e2e_on_chat_ended(self) -> None:
         """聊天结束事件回调"""
         logger.debug("E2E聊天响应结束")
+        self.e2e_output_client_queue.put({"event": ServerEvent.ChatEnded})
 
 class MessageProcessorAudio:
     """
@@ -432,11 +436,14 @@ class MessageProcessorAudio:
         # )
         # self.tts_process.start()
         # 服务端输出队列
+        self.e2e_output_client_queue = multiprocessing.Queue()
+        self.alt_output_client_queue = multiprocessing.Queue()
         self.output_client_queue = multiprocessing.Queue()
         # 中间结果
         self.asr_result = multiprocessing.Array(ctypes.c_char, 1024)
         self.asr_is_started = multiprocessing.Value('b', False)
         self.asr_lock = multiprocessing.Lock()
+        self.active_client = multiprocessing.Value('i', ActiveClientType.TBD_CLIENT)
         # 启动LLM_TTS子进程
         self.llm_tts_input_queues = multiprocessing.Queue()
         self.llm_tts_is_process_running = multiprocessing.Value('b', False)
@@ -444,7 +451,7 @@ class MessageProcessorAudio:
         logger.bind(tag="BASE").info("启动LLM_TTS子进程")
         self.llm_tts_process = multiprocessing.Process(
             target=LLM_TTSClient.process_entry,
-            args=(self.llm_tts_input_queues, self.asr_result, self.output_client_queue, self.llm_tts_is_process_running, self.llm_tts_session_id, self.process_timer)
+            args=(self.llm_tts_input_queues, self.asr_result, self.alt_output_client_queue, self.llm_tts_is_process_running, self.llm_tts_session_id, self.process_timer)
         )
         self.llm_tts_process.start()
         # 启动预处理和后处理子进程
@@ -453,7 +460,8 @@ class MessageProcessorAudio:
         logger.bind(tag="BASE").info("启动预处理子进程")
         self.preprocess_process = multiprocessing.Process(
             target=MessagePreAndPostProcessor.process_entry,
-            args=(self.prepost_input_queues, self.llm_tts_input_queues, self.asr_result, self.preprocess_is_process_running, self.process_timer)
+            args=(self.prepost_input_queues, self.llm_tts_input_queues,
+                  self.asr_result, self.active_client, self.preprocess_is_process_running, self.process_timer)
         )
         self.preprocess_process.start()
         # 启动VAD子进程
@@ -462,7 +470,9 @@ class MessageProcessorAudio:
         logger.bind(tag="BASE").info("启动VAD子进程")
         self.vad_process = multiprocessing.Process(
             target=VADClient.process_entry,
-            args=(self.vad_input_queues, self.prepost_input_queues, self.asr_is_started, self.asr_lock, self.output_client_queue, self.vad_is_process_running, self.process_timer)
+            args=(self.vad_input_queues, self.prepost_input_queues,
+                  self.asr_is_started, self.asr_lock, self.output_client_queue,
+                  self.vad_is_process_running, self.process_timer)
         )
         self.vad_process.start()
         # 启动E2E子进程
@@ -474,14 +484,14 @@ class MessageProcessorAudio:
         logger.bind(tag="BASE").info("启动E2E子进程")
         self.e2e_process = multiprocessing.Process(
             target=E2EClient.process_entry,
-            args=(self.e2e_input_queues, self.prepost_input_queues, self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock, self.output_client_queue, self.e2e_is_process_running, self.process_timer)
+            args=(self.e2e_input_queues, self.prepost_input_queues,
+                  self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock,
+                  self.active_client, self.output_client_queue, self.e2e_output_client_queue,
+                  self.e2e_is_process_running, self.process_timer)
         )
         self.e2e_process.start()
-
         self.llm_is_chat_started = False
-        self.active_client = None
         self.message_tasks = None
-
         self.llm_tts_msg_count = 0
         self.sleep_time = 0
 
@@ -880,23 +890,42 @@ class MessageProcessorAudio:
             try:
                 msg = self.output_client_queue.get_nowait()
             except queue.Empty:
-                msg = None
+                if self.active_client.value == ActiveClientType.E2E_CLIENT:
+                    try:
+                        msg = self.e2e_output_client_queue.get_nowait()
+                    except queue.Empty:
+                        msg = None
+                        try:
+                            self.alt_output_client_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                elif self.active_client.value == ActiveClientType.ALT_CLIENT:
+                    try:
+                        msg = self.alt_output_client_queue.get_nowait()
+                    except queue.Empty:
+                        msg = None
+                        try:
+                            self.e2e_output_client_queue.get_nowait()
+                        except queue.Empty:
+                            pass
             if msg:
-                if msg.get('event') in [ServerEvent.TTSResponse, ServerEvent.TTSSentenceStart, ServerEvent.TTSSentenceEnd, ServerEvent.TTSEnded]:
-                    self.llm_tts_msg_count += 1
-                    if self.llm_tts_msg_count % 20 == 0:
-                        logger.bind(tag="BASE").debug(f"收到LLM_TTS消息: {msg.get('event')}, session_id={msg.get('session_id')}, count={self.llm_tts_msg_count}")
-                    if msg.get('session_id').encode('utf-8') != self.llm_tts_session_id.value:
+                if self.active_client.value == ActiveClientType.ALT_CLIENT:
+                    if msg.get('event') in [ServerEvent.TTSResponse, ServerEvent.TTSSentenceStart, ServerEvent.TTSSentenceEnd, ServerEvent.TTSEnded]:
+                        self.llm_tts_msg_count += 1
                         if self.llm_tts_msg_count % 20 == 0:
-                            logger.bind(tag="BASE").debug(f"LLM_TTS消息session_id不匹配: {msg.get('session_id')} != {self.llm_tts_session_id.value}")
-                        return None, sleep_time
+                            logger.bind(tag="BASE").debug(f"收到LLM_TTS消息: {msg.get('event')}, session_id={msg.get('session_id')}, count={self.llm_tts_msg_count}")
+                        if msg.get('session_id').encode('utf-8') != self.llm_tts_session_id.value:
+                            if self.llm_tts_msg_count % 20 == 0:
+                                logger.bind(tag="BASE").debug(f"LLM_TTS消息session_id不匹配: {msg.get('session_id')} != {self.llm_tts_session_id.value}")
+                            return None, sleep_time
                 send_msg = {}
                 if msg.get('event') == ServerEvent.TTSSentenceStart:
                     send_msg = {
                         "event": ServerEvent.TTSSentenceStart,
                         "payload_msg": {
                             "text": msg.get("payload_msg").get("text"),
-                            "session_id": msg.get("session_id")
+                            "session_id": msg.get("session_id"),
+                            "type": "int16" if self.active_client.value == ActiveClientType.ALT_CLIENT else "float32"
                         }
                     }
                 else:
@@ -961,12 +990,14 @@ class MessageProcessorAudio:
         start_time = time.time()
         while (not self.e2e_is_process_running.value or
                not self.llm_tts_is_process_running.value or
-               not self.vad_is_process_running.value):
+               not self.vad_is_process_running.value or
+               not self.preprocess_is_process_running.value):
             if time.time() - start_time > timeout:
                 logger.bind(tag="BASE").error("MessageProcessorAudio启动超时")
                 self.e2e_is_process_running.value = True
                 self.llm_tts_is_process_running.value = True
                 self.vad_is_process_running.value = True
+                self.preprocess_is_process_running.value = True
                 return False
             await asyncio.sleep(0.1)
         # with E2E and VAD and LLM and TTS
@@ -990,7 +1021,7 @@ class MessageProcessorAudio:
         # self.tts_input_queues.put({"type": "stop"})
         self.llm_tts_input_queues.put({"type": "stop"})
         # with E2E
-        while self.e2e_is_process_running.value or self.llm_tts_is_process_running.value or self.vad_is_process_running.value:
+        while self.e2e_is_process_running.value or self.llm_tts_is_process_running.value or self.vad_is_process_running.value or self.preprocess_is_process_running.value:
             await asyncio.sleep(0.1)
         # with E2E and VAD and LLM and TTS
         # while self.e2e_is_process_running.value or self.vad_is_process_running.value or self.llm_is_process_running.value or self.tts_is_process_running.value:

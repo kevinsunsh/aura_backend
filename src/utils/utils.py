@@ -12,6 +12,11 @@ import sys
 import random
 import asyncio
 
+class ActiveClientType():
+    TBD_CLIENT = 0
+    E2E_CLIENT = 1
+    ALT_CLIENT = 2
+
 def atomic_compare_and_set(value_obj: Any, lock: Any, expected: bool, new_value: bool) -> bool:
     """
     原子比较并设置操作
