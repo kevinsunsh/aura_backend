@@ -475,7 +475,8 @@ class MessageProcessorAudio:
         self.message_tasks = None
 
         self.llm_tts_msg_count = 0
-        
+        self.sleep_time = 0
+
     async def handle_message(self, message_data: Dict[str, Any]):
         """
         分发消息到两个 client 进程
@@ -876,14 +877,17 @@ class MessageProcessorAudio:
                     }
                 else:
                     if msg.get('event') == ServerEvent.TTSResponse:
-                        if self.sse_started:
-                            sleep_time = len(msg.get("payload_msg")) / 32000 * 0.1
-                        else:
-                            sleep_time = len(msg.get("payload_msg")) / 32000 * 0.6
+                        self.sleep_time += len(msg.get("payload_msg")) / 32000
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")
                     }
+                    if msg.get('event') == ServerEvent.TTSSentenceEnd:
+                        if self.sse_started:
+                            sleep_time = self.sleep_time * 0.1
+                        else:
+                            sleep_time = self.sleep_time * 0.6
+                        self.sleep_time = 0
                 return send_msg, sleep_time
             return None, sleep_time
         except Exception as e:
