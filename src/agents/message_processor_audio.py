@@ -205,7 +205,8 @@ class LLM_TTSClient(ABC):
                     await client.tts_client.user_input_interruption()
             elif isinstance(msg, dict) and msg.get("type") == "run":
                 if client.is_process_running.value:
-                    await client.text_processor.handle_message({"message": client.asr_result.value.decode("utf-8")})
+                    input_template = msg["data"]
+                    await client.text_processor.handle_message({"message": input_template.format(user_input=client.asr_result.value.decode("utf-8"))})
     
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any], session_id: str) -> None:
@@ -254,6 +255,7 @@ class E2EClient(ABC):
     """端到端语音对话客户端包装器"""
     def __init__(self, 
                  input_queue,
+                 prepost_input_queues,
                  llm_input_queues,
                  asr_result,
                  asr_is_started,
@@ -262,6 +264,7 @@ class E2EClient(ABC):
                  is_process_running,
                  process_timer):
         self.input_queue = input_queue
+        self.prepost_input_queues = prepost_input_queues
         self.llm_input_queues = llm_input_queues
         self.asr_result = asr_result
         self.asr_is_started = asr_is_started
@@ -282,14 +285,15 @@ class E2EClient(ABC):
         )
     
     @staticmethod
-    def process_entry(input_queue, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
-        asyncio.run(E2EClient.main(input_queue, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
+    def process_entry(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+        asyncio.run(E2EClient.main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+    async def main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = E2EClient(
             input_queue=input_queue,
+            prepost_input_queues=prepost_input_queues,
             llm_input_queues=llm_input_queues,
             asr_result=asr_result,
             asr_is_started=asr_is_started,
@@ -352,7 +356,7 @@ class E2EClient(ABC):
         """ASR结束事件回调"""
         if atomic_compare_and_set(self.asr_is_started, self.asr_lock, True, False):
             self.output_client_queue.put({"event": ServerEvent.ASREnded})
-            self.llm_input_queues.put({"type": "run"})
+            self.prepost_input_queues.put({"type": "preprocess"})
             self.process_timer.value = time.time()
             logger.bind(tag="DELAY").info(f"E2E ASREnded")
         else:
@@ -470,7 +474,7 @@ class MessageProcessorAudio:
         logger.bind(tag="BASE").info("启动E2E子进程")
         self.e2e_process = multiprocessing.Process(
             target=E2EClient.process_entry,
-            args=(self.e2e_input_queues, self.prepost_input_queues, self.asr_result, self.asr_is_started, self.asr_lock, self.output_client_queue, self.e2e_is_process_running, self.process_timer)
+            args=(self.e2e_input_queues, self.prepost_input_queues, self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock, self.output_client_queue, self.e2e_is_process_running, self.process_timer)
         )
         self.e2e_process.start()
 
@@ -924,23 +928,7 @@ class MessageProcessorAudio:
         try:
             sleep_time = 0
             while True:
-                if self.sse_started == False:
-                    should_continue, msg = await self.send_vad_message_imp()
-                    if msg:
-                        if self.websocket_send_callback:
-                            await self.websocket_send_callback(msg)
-                    if should_continue:
-                        continue
-                    should_continue, msg = await self.send_e2e_asr_message_imp()
-                    if msg:
-                        if self.websocket_send_callback:
-                            await self.websocket_send_callback(msg)
-                    if should_continue:
-                        continue
-                await self.send_preprocess_message_imp()
-                logger.bind(tag="DELAY").info(f"send_message delay: {sleep_time} ms")
                 await asyncio.sleep(sleep_time)
-                logger.bind(tag="DELAY").info(f"Sleep delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                 msg, sleep_time = await self.send_message_imp()
                 if msg:
                     if self.websocket_send_callback:

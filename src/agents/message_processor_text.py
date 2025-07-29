@@ -37,8 +37,6 @@ class MessageProcessorText:
         self.chat_id = None
         self.user_id = None
         self.websocket_send_callback = websocket_send_callback
-        self.replying_task_handle: asyncio.Task = None
-        self.save_message_tasks: List[asyncio.Task] = []
     
     async def start(self, chat_id: str, user_id: str):
         self.chat_id = chat_id
@@ -56,9 +54,6 @@ class MessageProcessorText:
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
         # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
         # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.PAUSED)
-        logger.info(f"用户输入打断，取消回复任务")
-        if self.replying_task_handle:
-            self.replying_task_handle.cancel()
     
     async def user_input_resume(self):
         await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)

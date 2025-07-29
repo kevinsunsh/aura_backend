@@ -29,7 +29,7 @@ def log_filter(record):
     tag = record["extra"].get("tag")
     # return tag in ["TTS", "BASE"]
     # return False
-    return tag in ["BASE", "DELAY"]
+    return tag in ["BASE", "DELAY", "TTS"]
 
 # 配置输出格式，包含文件名和 tag
 logger.remove()
