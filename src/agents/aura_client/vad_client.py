@@ -41,7 +41,7 @@ class VADClient(BaseClient):
             compression_type=GZIP,
             event=ClientEvent.TaskRequest,
             session_id=self.session_id,
-            skip_audio_compression=True
+            # skip_audio_compression=True
         )
         try:
             await self.ws.send(task_request)
@@ -125,3 +125,7 @@ class VADClient(BaseClient):
                 logger.bind(tag="DELAY").warning("VAD识别结束，但ASR未开始")
         else:
             logger.warning(f"未知事件ID: {event_id}")
+
+    async def cleanup(self) -> None:
+        """清理资源"""
+        await super().cleanup()

@@ -81,7 +81,7 @@ class AuraAgent:
                 # 音频数据不需要JSON序列化，直接发送
                 message_type = SERVER_ACK
                 serial_method = NO_SERIALIZATION
-                skip_audio_compression = True
+                # skip_audio_compression = True
                 compression_type = NO_COMPRESSION
             else:
                 # 其他数据使用JSON序列化，让server_generate_response处理序列化和压缩
@@ -129,8 +129,8 @@ class AuraAgent:
         """使用统一的协议解析方法"""
         try:
             # 使用统一的协议解析函数
-            result = server_parse_request(data, skip_audio_decompression=True)
-            
+            # result = server_parse_request(data, skip_audio_decompression=True)
+            result = server_parse_request(data)
             # 如果解析成功，添加额外的调试信息
             if 'error' not in result:
                 logger.debug(f"协议解析成功: message_type={result.get('message_type')}, "

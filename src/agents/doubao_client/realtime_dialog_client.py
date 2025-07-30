@@ -170,7 +170,7 @@ class RealtimeDialogClient:
             compression_type=GZIP,
             event=ClientEvent.TaskRequest,
             session_id=self.session_id,
-            skip_audio_compression=True
+            # skip_audio_compression=True
         )
         try:
             await self.ws.send(task_request)
@@ -272,7 +272,8 @@ class RealtimeDialogClient:
                 raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
             
             response = await self.ws.recv()
-            data = client_parse_response(response, skip_audio_decompression=True)
+            # data = client_parse_response(response, skip_audio_decompression=True)
+            data = client_parse_response(response)
             return data
         except websockets.exceptions.ConnectionClosed:
             # 重新抛出连接关闭异常

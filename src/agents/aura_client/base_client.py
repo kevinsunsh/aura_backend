@@ -208,7 +208,8 @@ class BaseClient(ABC):
         """接收服务器响应"""
         try:
             response = await self.ws.recv()
-            data = client_parse_response(response, skip_audio_decompression=True)
+            # data = client_parse_response(response, skip_audio_decompression=True)
+            data = client_parse_response(response)
             return data
         except Exception as e:
             await self.connect()
@@ -260,6 +261,7 @@ class BaseClient(ABC):
                 self.ws = None
                 logger.info("WebSocket连接对象已清理")
     
+    @abstractmethod
     async def cleanup(self) -> None:
         """清理资源"""
         try:
