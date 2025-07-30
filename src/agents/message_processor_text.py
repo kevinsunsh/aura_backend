@@ -159,6 +159,13 @@ class MessageProcessorText:
                                     })
                                 state = "INSIDE"
                                 response_buffer = response_buffer[gt_idx+1:]
+                        else:
+                            find_todo_idx = response_buffer.find("</todo_tasks>")
+                            if find_todo_idx != -1:
+                                # 匹配 <todo_tasks> 标签之间的内容
+                                match = re.search(r"<todo_tasks>(.*?)</todo_tasks>", response_buffer, re.DOTALL)
+                                todo_tasks = match.group(1).strip() if match else ""
+                                logger.debug(f"找到可执行任务: {todo_tasks}")
                     elif state == "INSIDE":
                         end_idx = response_buffer.find(end_tag)
                         if end_idx != -1:

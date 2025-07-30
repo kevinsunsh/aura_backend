@@ -1,14 +1,21 @@
 # 回复生成提示词 - 直接回复
 REPLYING_TASK_PROMPT = """
-你的任务是根据输入信息，按要求回复对方。
+你的任务是根据输入信息，任务状态和可执行任务，按要求回复对方。
 输入信息：
 {input_info}
+任务状态：
+{task_status}
+可执行任务：
+{task_list}
 要求：
 {requirement}
 回复请使用以下格式：
 <res mood=({mood}) mood_level=({mood_level}) speech_rate=({speech_rate}) action=({action})>
 .....# response content here
 </res>
+<todo_tasks>
+# request tasks here
+</todo_tasks>
 """
 
 REPLYING_REQUIREMENT_PROMPT = """
