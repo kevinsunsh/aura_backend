@@ -14,8 +14,7 @@ class VADSplitLocal:
     接收TTS音频数据，发送给VAD服务进行时间戳检测，然后插入TTSSentenceStart和TTSSentenceEnd事件
     """
     
-    def __init__(self, config: Dict[str, Any], input_queue: multiprocessing.Queue, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
-        super().__init__(config)
+    def __init__(self, input_queue: multiprocessing.Queue, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
         self.input_queue = input_queue
         self.output_client_queue = output_client_queue
         self.is_process_running = is_process_running
@@ -25,6 +24,11 @@ class VADSplitLocal:
         self.is_tts_start_sent = False
         self.current_session_id = None
         self.vad_engine = VADEngine()
+        # 音频相关
+        self.audio_buffer = np.array([], dtype=np.int16)
+        self.audio_start_time = 0  # 当前音频流的开始时间（毫秒）
+        self.audio_position = 0    # 当前音频位置（毫秒）
+        self.audio_sample_rate = 16 # 16000Hz
     
     @staticmethod
     def process_entry(input_queue, output_client_queue, is_process_running, process_timer):
@@ -201,13 +205,16 @@ class VADSplitLocal:
             if offset_time < self.audio_position:
                 logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置小于VAD开始时间: {offset_time} < {self.audio_position}")
                 return
+            if self.audio_position == offset_time:
+                logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置与VAD开始时间相同: {self.audio_position} == {offset_time}")
+                return
             if not self.is_tts_start_sent:
                 await self._output_tts_sentence_start("", self.current_session_id)
             begin_index = int(self.audio_position * self.audio_sample_rate)
             end_index = int(offset_time * self.audio_sample_rate)
             await self._output_audio_chunk(self.audio_buffer[begin_index:end_index].tobytes(), self.current_session_id)
             await self._output_tts_sentence_end(self.current_session_id)
-            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块: {self.audio_position} - {offset_time}")
+            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块: {self.audio_position} - {offset_time}, delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
             self.audio_position = offset_time
         except Exception as e:
             logger.bind(tag="BASE").error(f"VADSplit处理VAD响应失败: {e}")

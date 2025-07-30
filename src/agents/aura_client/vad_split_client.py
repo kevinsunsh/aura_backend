@@ -257,13 +257,16 @@ class VADSplitClient(BaseClient):
             if offset_time < self.audio_position:
                 logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置小于VAD开始时间: {offset_time} < {self.audio_position}")
                 return
+            if self.audio_position == offset_time:
+                logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置与VAD开始时间相同: {self.audio_position} == {offset_time}")
+                return
             if not self.is_tts_start_sent:
                 await self._output_tts_sentence_start("", self.current_session_id)
             begin_index = int(self.audio_position * self.audio_sample_rate)
             end_index = int(offset_time * self.audio_sample_rate)
             await self._output_audio_chunk(self.audio_buffer[begin_index:end_index].tobytes(), self.current_session_id)
             await self._output_tts_sentence_end(self.current_session_id)
-            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块: {self.audio_position} - {offset_time}")
+            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块: {self.audio_position} - {offset_time}, delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
             self.audio_position = offset_time
         except Exception as e:
             logger.bind(tag="BASE").error(f"VADSplit处理VAD响应失败: {e}")

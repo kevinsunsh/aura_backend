@@ -10,9 +10,11 @@ from enum import Enum
 from abc import ABC, abstractmethod
 
 from .doubao_client.dialog_session import DialogSession
-from .aura_client.vad_client import VADClient
-from .aura_client.vad_split_client import VADSplitClient
-from .aura_client.asr_client import ASRClient
+# from .aura_client.vad_client import VADClient
+# from .aura_client.vad_split_client import VADSplitClient
+# from .aura_client.asr_client import ASRClient
+from .aura_tool.vad_client import VADLocal
+from .aura_tool.vad_split_client import VADSplitLocal
 # from .doubao_client.asr_client import AsrClient
 # from .doubao_client.asr_client_new import AsrClient
 from .doubao_client.tts_client import TtsClient
@@ -455,7 +457,7 @@ class MessageProcessorAudio:
         self.vad_split_is_process_running = multiprocessing.Value('b', False)
         logger.bind(tag="BASE").info("启动TTSSplit子进程")
         self.vad_split_process = multiprocessing.Process(
-            target=VADSplitClient.process_entry,
+            target=VADSplitLocal.process_entry,
             args=(self.vad_split_input_queues, self.output_client_queue, self.vad_split_is_process_running, self.process_timer)
         )
         self.vad_split_process.start()
@@ -474,7 +476,7 @@ class MessageProcessorAudio:
         self.vad_is_process_running = multiprocessing.Value('b', False)
         logger.bind(tag="BASE").info("启动VAD子进程")
         self.vad_process = multiprocessing.Process(
-            target=VADClient.process_entry,
+            target=VADLocal.process_entry,
             args=(self.vad_input_queues, self.llm_tts_input_queues, self.asr_is_started, self.asr_lock, self.output_client_queue, self.vad_is_process_running, self.process_timer)
         )
         self.vad_process.start()
