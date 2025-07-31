@@ -299,7 +299,7 @@ class TtsClient:
 
     async def _tts_start_session(self, websocket, speaker, session_id):
         """TTS开始会话"""
-        logger.info(f"===========TTS开始会话: {session_id}")
+        logger.bind(tag="TTS").info(f"===========TTS开始会话: {session_id}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -318,7 +318,7 @@ class TtsClient:
 
     async def _tts_finish_session(self, ws, session_id):
         """TTS结束会话"""
-        logger.info(f"===========TTS结束会话: {session_id}")
+        logger.bind(tag="TTS").info(f"===========TTS结束会话: {session_id}")
         self._tts_session_active = False
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
@@ -329,7 +329,7 @@ class TtsClient:
     
     async def _tts_cancel_session(self, ws, session_id):
         """TTS取消会话"""
-        logger.info(f"===========TTS取消会话: {session_id}")
+        logger.bind(tag="TTS").info(f"===========TTS取消会话: {session_id}")
         self._tts_session_active = False
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
@@ -428,40 +428,40 @@ class TtsClient:
                             if self.tts_response_callback:
                                 await safe_call(self.tts_response_callback, res.payload, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceStart:
-                        logger.debug(f"TTS句子事件: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS句子事件: {res.optional.event}")
                         json_data = json.loads(res.payload_json)
                         text = json_data.get("text", "")
                         # 第一次开始合成时触发开始回调
                         if self.tts_sentence_start_callback:
                             await safe_call(self.tts_sentence_start_callback, {"text": text}, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceEnd:
-                        logger.debug(f"TTS句子结束: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS句子结束: {res.optional.event}")
                         if self.tts_sentence_end_callback:
                             await safe_call(self.tts_sentence_end_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionStarted:
-                        logger.info(f"TTS会话开始: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS会话开始: {res.optional.event}")
                         self._tts_session_active = True
                     elif res.optional.event == EVENT_SessionCanceled:
-                        logger.info(f"TTS会话取消: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS会话取消: {res.optional.event}")
                         self._tts_session_active = False
                         await self._connect()
                     elif res.optional.event == EVENT_SessionFailed:
-                        logger.error(f"TTS会话失败: {res.optional.event}")
+                        logger.bind(tag="TTS").error(f"TTS会话失败: {res.optional.event}")
                         self._tts_session_active = False
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionFinished:
-                        logger.info(f"TTS会话结束: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS会话结束: {res.optional.event}")
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_ConnectionFailed:
-                        logger.error(f"TTS连接失败: {res.optional.event}")
+                        logger.bind(tag="TTS").error(f"TTS连接失败: {res.optional.event}")
                         await self._connect()
                     elif res.optional.event == EVENT_ConnectionFinished:
-                        logger.info(f"TTS连接结束: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS连接结束: {res.optional.event}")
                         await self._connect()
                 except websockets.exceptions.ConnectionClosed as e:
-                    logger.warning(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
+                    logger.bind(tag="TTS").warning(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
                     await self._connect()
                     continue
                 except websockets.exceptions.ConnectionClosedError:
@@ -472,17 +472,17 @@ class TtsClient:
                     logger.debug("TTS WebSocket连接正常关闭")
                     break
                 except asyncio.CancelledError:
-                    logger.debug("TTS接收任务已取消")
+                    logger.bind(tag="TTS").info("TTS接收任务已取消")
                     break
                 except Exception as e:
-                    logger.error(f"接收TTS音频数据失败: {e}")
+                    logger.bind(tag="TTS").error(f"接收TTS音频数据失败: {e}")
                     await self._connect()
                     break
         except Exception as e:
-            logger.error(f"TTS接收循环出现错误: {e}")
+            logger.bind(tag="TTS").error(f"TTS接收循环出现错误: {e}")
         except asyncio.CancelledError:
-            logger.debug("TTS接收任务已取消")
-                    
+            logger.bind(tag="TTS").info("TTS接收任务已取消")
+    
     async def _cleanup_connection(self):
         """清理连接相关资源（不重置重连状态）"""
         # 关闭WebSocket连接

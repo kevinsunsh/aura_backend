@@ -27,7 +27,7 @@ def tag_color_format(record):
 
 def log_filter(record):
     tag = record["extra"].get("tag")
-    return tag in ["BASE", "DELAY"]
+    return tag in ["BASE", "DELAY", "TTS"]
     # return False
     # return tag in ["BASE", "DELAY"]
 

@@ -232,12 +232,6 @@ class MessageProcessorText:
                                 "content": str(chunk.content)
                             }
                         })
-                    # 如果chunk.content中包含标点符号，则发送ChatEnded事件
-                    if any(p in chunk.content for p in "。！？!.?；;，,"):
-                        if self.websocket_send_callback:
-                            await self.websocket_send_callback({
-                                "event": ServerEvent.ChatResponseWithEnd,
-                            })
             if self.websocket_send_callback:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
