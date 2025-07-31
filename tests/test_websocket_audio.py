@@ -139,13 +139,61 @@ class AudioDeviceManager:
         logger.info("🎧 正在检测音频输入输出设备...")
         
         device_count = self.pyaudio.get_device_count()
-        # 更全面的关键词列表，包含品牌名称
+        
+        # 检查是否在WSL2环境中（无音频设备）
+        if device_count == 0:
+            logger.warning("⚠️ 未检测到音频设备，可能是WSL2环境。将使用虚拟音频模式进行测试。")
+            self.headphone_device_index = None
+            self.headphone_input_device_index = None
+            self.speaker_device_index = None
+            logger.info("=== 设备检测结果总结 ===")
+            logger.info("🎧 耳机输出: 虚拟模式（无实际音频播放）")
+            logger.info("🎤 麦克风设备: 虚拟模式（无实际音频录制）")
+            logger.info("🔊 扬声器: 虚拟模式（无实际音频播放）")
+            return
+        
+        # 扩展的关键词列表，包含更多品牌和设备类型
         headphone_keywords = [
             'headphone', 'headset', 'earphone', 'airpods', 'bluetooth', 'usb',
             'beats', 'sony', 'bose', 'sennheiser', 'audio-technica', 'jbl',
-            'skullcandy', 'plantronics', 'jabra', 'wireless', 'stereo'
+            'skullcandy', 'plantronics', 'jabra', 'wireless', 'stereo',
+            'logitech', 'hyperx', 'razer', 'steelseries', 'corsair', 'astro',
+            'turtle beach', 'tritton', 'akg', 'shure', 'beyerdynamic',
+            'focal', 'audeze', 'hifiman', 'meze', 'fostex', 'denon', 'pioneer',
+            'grados', 'philips', 'panasonic', 'lg', 'samsung',
+            'apple', 'huawei', 'xiaomi', 'oneplus', 'oppo', 'vivo', 'realme',
+            'earbuds', 'in-ear', 'over-ear', 'on-ear', 'closed-back', 'open-back',
+            'noise-cancelling', 'noise canceling', 'active noise', 'anc',
+            'true wireless', 'tws', 'wireless earbuds', 'wireless headphones'
         ]
-        speaker_keywords = ['speaker', 'built-in', 'internal', 'macbook', 'imac']
+        
+        speaker_keywords = [
+            'speaker', 'built-in', 'internal', 'macbook', 'imac', 'monitor',
+            'display', 'laptop', 'notebook', 'desktop', 'pc', 'computer',
+            'system', 'default', 'primary', 'main', 'integrated', 'onboard',
+            'motherboard', 'sound card', 'audio interface', 'dac', 'amplifier',
+            'receiver', 'home theater', 'surround', 'stereo', 'bookshelf',
+            'floor standing', 'subwoofer', 'woofer', 'tweeter', 'midrange'
+        ]
+        
+        # 新增：特定设备型号关键词
+        specific_device_keywords = [
+            'h08a', 'h08', 'h06', 'h04', 'h02', 'h01',  # 特定型号
+            'airpods pro', 'airpods max', 'airpods 3', 'airpods 2', 'airpods 1',
+            'beats studio', 'beats solo', 'beats fit pro', 'beats flex',
+            'sony wh', 'sony wf', 'sony mdr', 'sony xb', 'sony 1000xm',
+            'bose qc', 'bose nc', 'bose quietcomfort', 'bose noise cancelling',
+            'sennheiser hd', 'sennheiser momentum', 'sennheiser ie',
+            'audio-technica ath', 'audio-technica at',
+            'jbl tune', 'jbl live', 'jbl quantum', 'jbl reflect',
+            'logitech g', 'logitech pro', 'logitech zone',
+            'hyperx cloud', 'hyperx alpha', 'hyperx quadcast',
+            'razer kraken', 'razer blackshark', 'razer barracuda',
+            'steelseries arctis', 'steelseries siberia',
+            'corsair void', 'corsair hs', 'corsair virtuoso',
+            'astro a', 'astro mixamp', 'astro tr',
+            'turtle beach elite', 'turtle beach recon', 'turtle beach stealth'
+        ]
         
         headphone_output_devices = []
         headphone_input_devices = []
@@ -153,70 +201,105 @@ class AudioDeviceManager:
         all_output_devices = []
         all_input_devices = []
         
+        # 详细记录所有设备信息
+        logger.info(f"🔍 检测到 {device_count} 个音频设备，开始详细分析...")
+        
         for i in range(device_count):
             try:
                 device_info = self.pyaudio.get_device_info_by_index(i)
                 device_name = device_info['name'].lower()
+                device_name_original = device_info['name']
                 
-                # === 新增：优先检测H08A设备 ===
-                if 'h08a' in device_name:
+                logger.debug(f"🔍 分析设备 {i}: {device_name_original}")
+                logger.debug(f"   输出通道: {device_info['maxOutputChannels']}, 输入通道: {device_info['maxInputChannels']}")
+                logger.debug(f"   默认采样率: {device_info.get('defaultSampleRate', 'N/A')}")
+                
+                # === 优先级1：特定设备型号检测 ===
+                is_specific_device = any(keyword in device_name for keyword in specific_device_keywords)
+                if is_specific_device:
+                    logger.info(f"🎯 发现特定设备型号: {device_name_original} (索引: {i})")
+                    
                     # 作为耳机输出
                     if device_info['maxOutputChannels'] > 0:
                         headphone_output_devices.insert(0, (i, device_info))
-                        logger.info(f"🎧 优先发现H08A耳机输出设备: {device_info['name']} (索引: {i})")
+                        logger.info(f"🎧 优先选择特定设备作为耳机输出: {device_name_original}")
+                    
                     # 作为麦克风输入
                     if device_info['maxInputChannels'] > 0:
                         headphone_input_devices.insert(0, (i, device_info))
-                        logger.info(f"🎤 优先发现H08A麦克风输入设备: {device_info['name']} (索引: {i})")
+                        logger.info(f"🎤 优先选择特定设备作为麦克风输入: {device_name_original}")
                 
-                # 检查是否为耳机设备（更智能的匹配）
-                is_headphone = any(keyword in device_name for keyword in headphone_keywords)
-                is_speaker = any(keyword in device_name for keyword in speaker_keywords)
+                # === 优先级2：H08A设备检测（保持原有逻辑） ===
+                elif 'h08a' in device_name:
+                    # 作为耳机输出
+                    if device_info['maxOutputChannels'] > 0:
+                        headphone_output_devices.insert(0, (i, device_info))
+                        logger.info(f"🎧 优先发现H08A耳机输出设备: {device_name_original} (索引: {i})")
+                    # 作为麦克风输入
+                    if device_info['maxInputChannels'] > 0:
+                        headphone_input_devices.insert(0, (i, device_info))
+                        logger.info(f"🎤 优先发现H08A麦克风输入设备: {device_name_original} (索引: {i})")
                 
-                # 检测输出设备
-                if device_info['maxOutputChannels'] > 0:
-                    all_output_devices.append((i, device_info))
-                    logger.debug(f"检测到输出设备 {i}: {device_info['name']} (输出通道: {device_info['maxOutputChannels']})")
+                # === 优先级3：通用关键词检测 ===
+                else:
+                    # 检查是否为耳机设备（更智能的匹配）
+                    is_headphone = any(keyword in device_name for keyword in headphone_keywords)
+                    is_speaker = any(keyword in device_name for keyword in speaker_keywords)
                     
-                    if is_headphone and not is_speaker:
-                        headphone_output_devices.append((i, device_info))
-                        logger.info(f"🎧 发现耳机输出设备: {device_info['name']} (索引: {i})")
-                    elif is_speaker:
-                        speaker_devices.append((i, device_info))
-                        logger.info(f"🔊 发现扬声器设备: {device_info['name']} (索引: {i})")
-                    elif not is_speaker and i > 0:  # 非默认设备且不是明显的扬声器，可能是耳机
-                        headphone_output_devices.append((i, device_info))
-                        logger.info(f"🎧 推测耳机输出设备: {device_info['name']} (索引: {i})")
-                
-                # 检测输入设备
-                if device_info['maxInputChannels'] > 0:
-                    all_input_devices.append((i, device_info))
-                    logger.debug(f"检测到输入设备 {i}: {device_info['name']} (输入通道: {device_info['maxInputChannels']})")
+                    # 检测输出设备
+                    if device_info['maxOutputChannels'] > 0:
+                        all_output_devices.append((i, device_info))
+                        logger.debug(f"检测到输出设备 {i}: {device_name_original} (输出通道: {device_info['maxOutputChannels']})")
+                        
+                        if is_headphone and not is_speaker:
+                            headphone_output_devices.append((i, device_info))
+                            logger.info(f"🎧 发现耳机输出设备: {device_name_original} (索引: {i})")
+                        elif is_speaker:
+                            speaker_devices.append((i, device_info))
+                            logger.info(f"🔊 发现扬声器设备: {device_name_original} (索引: {i})")
+                        elif not is_speaker and i > 0:  # 非默认设备且不是明显的扬声器，可能是耳机
+                            headphone_output_devices.append((i, device_info))
+                            logger.info(f"🎧 推测耳机输出设备: {device_name_original} (索引: {i})")
                     
-                    # 优先使用Mac内置麦克风，而不是耳机麦克风
-                    if 'macbook' in device_name or 'imac' in device_name or 'built-in' in device_name:
-                        headphone_input_devices.insert(0, (i, device_info))  # 插到前面，优先级最高
-                        logger.info(f"🎤 发现Mac内置麦克风设备: {device_info['name']} (索引: {i})")
-                    elif is_headphone:
-                        headphone_input_devices.append((i, device_info))
-                        logger.info(f"🎤 发现耳机麦克风设备: {device_info['name']} (索引: {i})")
+                    # 检测输入设备
+                    if device_info['maxInputChannels'] > 0:
+                        all_input_devices.append((i, device_info))
+                        logger.debug(f"检测到输入设备 {i}: {device_name_original} (输入通道: {device_info['maxInputChannels']})")
+                        
+                        # 优先使用Mac内置麦克风，而不是耳机麦克风
+                        if 'macbook' in device_name or 'imac' in device_name or 'built-in' in device_name:
+                            headphone_input_devices.insert(0, (i, device_info))  # 插到前面，优先级最高
+                            logger.info(f"🎤 发现Mac内置麦克风设备: {device_name_original} (索引: {i})")
+                        elif is_headphone:
+                            headphone_input_devices.append((i, device_info))
+                            logger.info(f"🎤 发现耳机麦克风设备: {device_name_original} (索引: {i})")
                         
             except Exception as e:
-                logger.debug(f"检测设备 {i} 时出错: {e}")
+                logger.warning(f"❌ 检测设备 {i} 时出错: {e}")
         
+        # === 设备选择逻辑 ===
         # 优先选择耳机输出设备
         if headphone_output_devices:
             self.headphone_device_index = headphone_output_devices[0][0]
-            logger.info(f"✅ 选择耳机输出设备: {headphone_output_devices[0][1]['name']} (索引: {self.headphone_device_index})")
+            selected_device = headphone_output_devices[0][1]['name']
+            logger.info(f"✅ 选择耳机输出设备: {selected_device} (索引: {self.headphone_device_index})")
+        else:
+            logger.warning("⚠️ 未找到耳机输出设备")
         
         # 优先选择麦克风设备（Mac内置麦克风优先）
         if headphone_input_devices:
             self.headphone_input_device_index = headphone_input_devices[0][0]
-            device_name = headphone_input_devices[0][1]['name']
-            if 'macbook' in device_name.lower() or 'imac' in device_name.lower() or 'built-in' in device_name.lower():
-                logger.info(f"✅ 选择Mac内置麦克风设备: {device_name} (索引: {self.headphone_input_device_index})")
+            selected_device = headphone_input_devices[0][1]['name']
+            device_name_lower = selected_device.lower()
+            
+            if 'macbook' in device_name_lower or 'imac' in device_name_lower or 'built-in' in device_name_lower:
+                logger.info(f"✅ 选择Mac内置麦克风设备: {selected_device} (索引: {self.headphone_input_device_index})")
+            elif any(keyword in device_name_lower for keyword in specific_device_keywords):
+                logger.info(f"✅ 选择特定设备作为麦克风: {selected_device} (索引: {self.headphone_input_device_index})")
             else:
-                logger.info(f"✅ 选择耳机麦克风设备: {device_name} (索引: {self.headphone_input_device_index})")
+                logger.info(f"✅ 选择耳机麦克风设备: {selected_device} (索引: {self.headphone_input_device_index})")
+        else:
+            logger.warning("⚠️ 未找到麦克风输入设备")
         
         # 选择扬声器设备作为备选
         if speaker_devices:
@@ -225,28 +308,30 @@ class AudioDeviceManager:
         elif all_output_devices and len(all_output_devices) > 1:
             # 如果没有明显的扬声器，选择第一个设备作为扬声器
             self.speaker_device_index = all_output_devices[0][0]
-            logger.info(f"✅ 使用默认扬声器设备: {all_output_devices[0][1]['name']} (索引: {self.speaker_device_index})")
+            logger.info(f"✅ 使用默认扬声器设备: {all_output_devices[0][1]['name']}")
+        else:
+            self.speaker_device_index = None  # 使用系统默认
+            logger.info("🔊 使用系统默认音频输出设备")
         
-        # 设备检测结果总结
+        # === 设备检测结果总结 ===
         logger.info("=== 设备检测结果总结 ===")
-        logger.info(f"🎧 耳机输出: {'索引 ' + str(self.headphone_device_index) if self.headphone_device_index is not None else '未检测到'}")
+        logger.info(f"🎧 耳机输出: {'索引 ' + str(self.headphone_device_index) + ' (' + self._get_device_name(self.headphone_device_index) + ')' if self.headphone_device_index is not None else '未检测到'}")
         
         # 显示选择的麦克风设备类型
         if self.headphone_input_device_index is not None:
-            # 获取设备名称来判断类型
-            try:
-                device_info = self.pyaudio.get_device_info_by_index(self.headphone_input_device_index)
-                device_name = device_info['name'].lower()
-                if 'macbook' in device_name or 'imac' in device_name or 'built-in' in device_name:
-                    logger.info(f"🎤 Mac内置麦克风: 索引 {self.headphone_input_device_index}")
-                else:
-                    logger.info(f"🎤 耳机麦克风: 索引 {self.headphone_input_device_index}")
-            except:
-                logger.info(f"🎤 麦克风设备: 索引 {self.headphone_input_device_index}")
+            device_name = self._get_device_name(self.headphone_input_device_index)
+            device_name_lower = device_name.lower()
+            
+            if 'macbook' in device_name_lower or 'imac' in device_name_lower or 'built-in' in device_name_lower:
+                logger.info(f"🎤 Mac内置麦克风: 索引 {self.headphone_input_device_index} ({device_name})")
+            elif any(keyword in device_name_lower for keyword in specific_device_keywords):
+                logger.info(f"🎤 特定设备麦克风: 索引 {self.headphone_input_device_index} ({device_name})")
+            else:
+                logger.info(f"🎤 耳机麦克风: 索引 {self.headphone_input_device_index} ({device_name})")
         else:
             logger.info(f"🎤 麦克风设备: 未检测到")
             
-        logger.info(f"🔊 扬声器: {'索引 ' + str(self.speaker_device_index) if self.speaker_device_index is not None else '未检测到'}")
+        logger.info(f"🔊 扬声器: {'索引 ' + str(self.speaker_device_index) + ' (' + self._get_device_name(self.speaker_device_index) + ')' if self.speaker_device_index is not None else '未检测到'}")
         
         # 如果都没有找到，记录所有设备供调试
         if not self.headphone_device_index and not self.speaker_device_index:
@@ -267,10 +352,72 @@ class AudioDeviceManager:
             logger.info("所有输入设备列表:")
             for i, (idx, info) in enumerate(all_input_devices):
                 logger.info(f"  {idx}: {info['name']} (输入通道: {info['maxInputChannels']})")
+        
+        # 新增：显示设备详细信息
+        logger.info("=== 设备详细信息 ===")
+        for i in range(device_count):
+            try:
+                device_info = self.pyaudio.get_device_info_by_index(i)
+                device_type = []
+                if device_info['maxInputChannels'] > 0:
+                    device_type.append("输入")
+                if device_info['maxOutputChannels'] > 0:
+                    device_type.append("输出")
+                
+                logger.info(f"设备 {i}: {device_info['name']} ({', '.join(device_type)})")
+                logger.info(f"  输入通道: {device_info['maxInputChannels']}, 输出通道: {device_info['maxOutputChannels']}")
+                logger.info(f"  默认采样率: {device_info.get('defaultSampleRate', 'N/A')}")
+            except Exception as e:
+                logger.warning(f"获取设备 {i} 详细信息时出错: {e}")
+    
+    def _get_device_name(self, device_index):
+        """获取设备名称的辅助方法"""
+        if device_index is None:
+            return "未知设备"
+        try:
+            device_info = self.pyaudio.get_device_info_by_index(device_index)
+            return device_info['name']
+        except:
+            return "未知设备"
 
     def open_input_stream(self, use_headphone=True):
         """打开音频输入流，优先使用耳机麦克风"""
         if self.input_stream is not None:
+            return self.input_stream
+        
+        # 检查是否有可用的音频设备
+        device_count = self.pyaudio.get_device_count()
+        if device_count == 0:
+            logger.warning("⚠️ 未检测到音频设备，可能是WSL2环境。将使用虚拟音频输入模式。")
+            # 创建一个虚拟的输入流对象，用于测试环境
+            class VirtualInputStream:
+                def __init__(self):
+                    self.is_active_flag = True
+                    self.closed = False
+                
+                def read(self, chunk_size, exception_on_overflow=False):
+                    # 虚拟读取，返回静音数据
+                    import numpy as np
+                    return np.zeros(chunk_size, dtype=np.int16).tobytes()
+                
+                def start_stream(self):
+                    self.is_active_flag = True
+                    logger.info("🔇 虚拟音频输入流已启动（无实际音频录制）")
+                
+                def stop_stream(self):
+                    self.is_active_flag = False
+                    logger.info("🔇 虚拟音频输入流已停止")
+                
+                def close(self):
+                    self.closed = True
+                    logger.info("🔇 虚拟音频输入流已关闭")
+                
+                def is_active(self):
+                    return self.is_active_flag and not self.closed
+            
+            self.input_stream = VirtualInputStream()
+            self.current_input_device = None
+            logger.info("✅ 虚拟音频输入流已创建")
             return self.input_stream
         
         # 选择输入设备
@@ -321,16 +468,52 @@ class AudioDeviceManager:
                     return self.input_stream
                 except Exception as e2:
                     logger.error(f"打开默认麦克风设备也失败: {e2}")
-                    raise
+                    # 如果所有真实设备都失败，使用虚拟设备
+                    logger.warning("⚠️ 所有音频设备都失败，切换到虚拟音频输入模式")
+                    return self.open_input_stream(use_headphone=False)  # 递归调用，会触发虚拟设备创建
             else:
                 raise
 
     def open_output_stream(self, use_headphone=True):
-        """打开音频输出流，可选择耳机或扬声器"""
-        if self.output_stream is not None:
+        """打开音频输出流"""
+        if self.output_stream:
             return self.output_stream
         
-        # 选择输出设备
+        # 检查是否有可用的音频设备
+        device_count = self.pyaudio.get_device_count()
+        if device_count == 0:
+            logger.warning("⚠️ 未检测到音频设备，可能是WSL2环境。将使用虚拟音频输出模式。")
+            # 创建一个虚拟的输出流对象，用于测试环境
+            class VirtualAudioStream:
+                def __init__(self):
+                    self.is_active_flag = True
+                    self.closed = False
+                
+                def write(self, data):
+                    # 虚拟写入，不实际播放音频
+                    pass
+                
+                def start_stream(self):
+                    self.is_active_flag = True
+                    logger.info("🔇 虚拟音频输出流已启动（无实际音频播放）")
+                
+                def stop_stream(self):
+                    self.is_active_flag = False
+                    logger.info("🔇 虚拟音频输出流已停止")
+                
+                def close(self):
+                    self.closed = True
+                    logger.info("🔇 虚拟音频输出流已关闭")
+                
+                def is_active(self):
+                    return self.is_active_flag and not self.closed
+            
+            self.output_stream = VirtualAudioStream()
+            self.current_output_device = None
+            logger.info("✅ 虚拟音频输出流已创建")
+            return self.output_stream
+        
+        # 原有的设备选择逻辑
         if use_headphone and self.headphone_device_index is not None:
             device_index = self.headphone_device_index
             device_type = "耳机"
@@ -374,7 +557,9 @@ class AudioDeviceManager:
                     return self.output_stream
                 except Exception as e2:
                     logger.error(f"打开默认音频输出流也失败: {e2}")
-                    raise
+                    # 如果所有真实设备都失败，使用虚拟设备
+                    logger.warning("⚠️ 所有音频设备都失败，切换到虚拟音频输出模式")
+                    return self.open_output_stream(use_headphone=False)  # 递归调用，会触发虚拟设备创建
             else:
                 raise
     
@@ -810,52 +995,70 @@ def audio_player_process(audio_queue, is_playing_flag):
         input_config=AudioConfig(sample_rate=16000, channels=1, chunk=3200, bit_size=pyaudio.paInt16),
         output_config=AudioConfig(sample_rate=24000, channels=1, chunk=3200, bit_size=pyaudio.paInt16)
     )
-    output_stream = audio_device.open_output_stream()
-    output_stream.start_stream()
-    from loguru import logger
     
-    logger.info("🎵 播放进程已启动，等待音频数据...")
-    while is_playing_flag.value:
-        try:
-            pcm_data = audio_queue.get(timeout=0.01)
-            if pcm_data is not None and output_stream:
-                try:
-                    if output_stream.is_active():
-                        output_stream.write(pcm_data)
-                    else:
-                        logger.warning("音频输出流未激活，跳过播放")
-                        time.sleep(0.01)
-                except Exception as audio_error:
-                    error_msg = str(audio_error)
-                    if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg or "Stream not open" in error_msg:
-                        logger.error(f"PortAudio错误: {error_msg}")
-                        try:
-                            logger.info("尝试重新初始化音频输出流...")
-                            if output_stream:
-                                try:
-                                    if output_stream.is_active():
-                                        output_stream.stop_stream()
-                                    output_stream.close()
-                                except Exception as close_error:
-                                    logger.warning(f"关闭音频流时出错: {close_error}")
-                            output_stream = audio_device.open_output_stream()
-                            output_stream.start_stream()
-                            logger.info("音频输出流重新初始化成功")
-                        except Exception as reinit_error:
-                            logger.error(f"重新初始化音频输出流失败: {reinit_error}")
-                            time.sleep(0.1)
-                    else:
-                        logger.error(f"音频播放错误: {error_msg}")
-                        time.sleep(0.01)
-        except Exception:
-            time.sleep(0.01)
+    try:
+        output_stream = audio_device.open_output_stream()
+        output_stream.start_stream()
+        from loguru import logger
+        
+        logger.info("🎵 播放进程已启动，等待音频数据...")
+        while is_playing_flag.value:
+            try:
+                pcm_data = audio_queue.get(timeout=0.01)
+                if pcm_data is not None and output_stream:
+                    try:
+                        if output_stream.is_active():
+                            output_stream.write(pcm_data)
+                        else:
+                            logger.warning("音频输出流未激活，跳过播放")
+                            time.sleep(0.01)
+                    except Exception as audio_error:
+                        error_msg = str(audio_error)
+                        if "PortAudio" in error_msg or "Internal PortAudio error" in error_msg or "Stream not open" in error_msg:
+                            logger.error(f"PortAudio错误: {error_msg}")
+                            try:
+                                logger.info("尝试重新初始化音频输出流...")
+                                if output_stream:
+                                    try:
+                                        if output_stream.is_active():
+                                            output_stream.stop_stream()
+                                        output_stream.close()
+                                    except Exception as close_error:
+                                        logger.warning(f"关闭音频流时出错: {close_error}")
+                                output_stream = audio_device.open_output_stream()
+                                output_stream.start_stream()
+                                logger.info("音频输出流重新初始化成功")
+                            except Exception as reinit_error:
+                                logger.error(f"重新初始化音频输出流失败: {reinit_error}")
+                                time.sleep(0.1)
+                        else:
+                            logger.error(f"音频播放错误: {error_msg}")
+                            time.sleep(0.01)
+            except Exception:
+                time.sleep(0.01)
+    except Exception as e:
+        from loguru import logger
+        logger.error(f"音频播放进程初始化失败: {e}")
+        # 如果初始化失败，仍然运行循环以处理队列中的数据
+        logger.info("🔇 音频播放进程以虚拟模式运行（无实际音频播放）")
+        while is_playing_flag.value:
+            try:
+                pcm_data = audio_queue.get(timeout=0.01)
+                if pcm_data is not None:
+                    # 虚拟播放，不实际输出音频
+                    pass
+            except Exception:
+                time.sleep(0.01)
+    
     logger.info("🔇 播放进程结束")
     try:
-        if output_stream:
-            if output_stream.is_active():
+        if 'output_stream' in locals() and output_stream:
+            if hasattr(output_stream, 'is_active') and output_stream.is_active():
                 output_stream.stop_stream()
-            output_stream.close()
-        audio_device.cleanup()
+            if hasattr(output_stream, 'close'):
+                output_stream.close()
+        if 'audio_device' in locals():
+            audio_device.cleanup()
     except Exception as e:
         logger.warning(f"播放进程清理资源时出错: {e}")
 
