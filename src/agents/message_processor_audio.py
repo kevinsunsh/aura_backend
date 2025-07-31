@@ -904,7 +904,7 @@ class MessageProcessorAudio:
                 else:
                     if msg.get('event') == ServerEvent.TTSResponse:
                         self.sleep_time += len(msg.get("payload_msg")) / 32000
-                        logger.bind(tag="DELAY").info(f"Send TTSResponse delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
+                        # logger.bind(tag="DELAY").info(f"Send TTSResponse delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")
@@ -953,20 +953,19 @@ class MessageProcessorAudio:
         # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
-        self.vad_split_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        # self.vad_split_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # with E2E
         timeout = 20  # 最多等待10秒
         start_time = time.time()
         while (not self.e2e_is_process_running.value or
                not self.llm_tts_is_process_running.value or
-               not self.vad_is_process_running.value or
-               not self.vad_split_is_process_running.value):
+               not self.vad_is_process_running.value):
             if time.time() - start_time > timeout:
                 logger.error("MessageProcessorAudio启动超时")
                 self.e2e_is_process_running.value = True
                 self.llm_tts_is_process_running.value = True
                 self.vad_is_process_running.value = True
-                self.vad_split_is_process_running.value = True
+                # self.vad_split_is_process_running.value = True
                 return False
             await asyncio.sleep(0.1)
         # with E2E and VAD and LLM and TTS
@@ -988,12 +987,11 @@ class MessageProcessorAudio:
         # self.llm_input_queues.put({"type": "stop"})
         # self.tts_input_queues.put({"type": "stop"})
         self.llm_tts_input_queues.put({"type": "stop"})
-        self.vad_split_input_queues.put({"type": "stop"})
+        # self.vad_split_input_queues.put({"type": "stop"})
         # with E2E
         while (self.e2e_is_process_running.value or 
                self.llm_tts_is_process_running.value or 
-               self.vad_is_process_running.value or
-               self.vad_split_is_process_running.value):
+               self.vad_is_process_running.value):
             await asyncio.sleep(0.1)
         # with E2E and VAD and LLM and TTS
         # while self.e2e_is_process_running.value or self.vad_is_process_running.value or self.llm_is_process_running.value or self.tts_is_process_running.value:
