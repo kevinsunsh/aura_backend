@@ -201,7 +201,7 @@ class LLM_TTSClient(ABC):
         while True:
             msg = await loop.run_in_executor(None, input_queue.get)
             if isinstance(msg, dict) and msg.get("type") == "start":
-                await client.text_processor.start(msg["data"]["chat_id"], msg["data"]["user_id"])
+                await client.text_processor.start(msg["data"]["chat_id"], msg["data"]["user_id"], msg["data"]["session_prompt"])
                 await client.tts_client.start(msg["data"]["chat_id"], msg["data"]["user_id"])
                 client.is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
@@ -942,7 +942,7 @@ class MessageProcessorAudio:
             logger.error(f"消息处理任务异常: {e}")
             raise  # 重新抛出异常
     
-    async def start(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
+    async def start(self, chat_id: str, user_id: str, session_prompt: str = "", websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
         self.chat_id = chat_id
         self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
@@ -952,7 +952,7 @@ class MessageProcessorAudio:
         self.e2e_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
-        self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
+        self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id, "session_prompt": session_prompt}})
         # self.vad_split_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # with E2E
         timeout = 20  # 最多等待10秒

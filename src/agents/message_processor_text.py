@@ -27,7 +27,6 @@ from agents.prompts.replying_prompt import (
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
-    _get_persona_text,
     _build_chat_history_str
 )
 from langchain_core.messages import SystemMessage
@@ -45,9 +44,10 @@ class MessageProcessorText:
         self.replying_task_handle: asyncio.Task = None
         self.save_message_tasks: List[asyncio.Task] = []
     
-    async def start(self, chat_id: str, user_id: str):
+    async def start(self, chat_id: str, user_id: str, session_prompt: str = ""):
         self.chat_id = chat_id
         self.user_id = user_id
+        self.session_prompt = session_prompt
         TaskManager.initialize()
         # await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
@@ -203,7 +203,8 @@ class MessageProcessorText:
             thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
             goals_str = thinking_task_shared_data.get("goals_str", "")
             knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
-            persona_text = _get_persona_text()
+            persona_text = self.session_prompt
+            logger.bind(tag="BASE").info(f"persona_text: {persona_text}")
             # 格式化提示词
             prompt = REPLYING_GENERATOR_DIRECT_PROMPT.format(
                 persona_text=persona_text,

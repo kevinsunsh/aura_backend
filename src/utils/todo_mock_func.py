@@ -4,17 +4,6 @@ from typing import List, Dict, Any, Tuple
 from agents.aura_memory.message_store import Message
 from configuration.config import Config, global_config
 
-def _set_persona_text(persona_text: str):
-    """设置人设文本"""
-    global session_prompt
-    session_prompt = persona_text
-
-def _get_persona_text() -> str:
-    """获取人设文本"""
-    global session_prompt
-    # 这里可以从配置中获取人设信息
-    return session_prompt
-
 # 工具函数
 def _build_goals_str(goals: List[Dict[str, str]]) -> str:
     """构建目标字符串"""

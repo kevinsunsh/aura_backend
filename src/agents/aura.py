@@ -19,7 +19,6 @@ from .message_processor_audio import MessageProcessorAudio
 from api_protocol.constant import *
 from api_protocol.server_protocol import server_parse_request, server_generate_response
 from utils.utils import performance_point_context
-from utils.todo_mock_func import _set_persona_text
 
 class MessageType(Enum):
     """消息类型枚举"""
@@ -40,6 +39,7 @@ class AuraAgent:
         # WebSocket相关
         self.websocket_connection = None  # 存储WebSocket连接
         self.last_message_time = time.time()
+        self.session_prompt = ""
     
     async def send_websocket_message(self, message: dict):
         """发送WebSocket消息，使用统一的协议格式"""
@@ -260,9 +260,8 @@ class AuraAgent:
             if message_data.get("event") == ClientEvent.StartSession:
                 chat_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("chat_id", None)
                 user_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("user_id", None)
-                session_prompt = message_data.get("payload_msg", {}).get("dialog", {}).get("system_role", "你是一个AI助手，性格温和友善，喜欢帮助朋友解决问题。") + "\n" + message_data.get("payload_msg", {}).get("dialog", {}).get("speaking_style", "说话风趣幽默有梗")
-                logger.bind(tag="BASE").info(f"收到开始session消息: session_prompt={session_prompt}")
-                _set_persona_text(session_prompt)
+                self.session_prompt = message_data.get("payload_msg", {}).get("dialog", {}).get("system_role", "你是一个AI助手，性格温和友善，喜欢帮助朋友解决问题。") + "\n" + message_data.get("payload_msg", {}).get("dialog", {}).get("speaking_style", "说话风趣幽默有梗")
+                logger.bind(tag="BASE").info(f"收到开始session消息: session_prompt={self.session_prompt}")
                 if chat_id is None or user_id is None:
                     logger.error(f"开始session消息中没有chat_id或user_id")
                     return False
@@ -282,7 +281,7 @@ class AuraAgent:
                         })
                         return False
                 
-                result = await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
+                result = await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.session_prompt, self.send_websocket_message)
                 if result == False:
                     await self.send_websocket_message({
                         "event": ServerEvent.SessionFailed, 
