@@ -21,9 +21,6 @@ from agents.prompts.muttering_prompt import (
 )
 from agents.aura_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
-from utils.todo_mock_func import (
-    _get_persona_text
-)
 from agents.task_manager import TaskManager, TaskType, TaskStateType
 
 

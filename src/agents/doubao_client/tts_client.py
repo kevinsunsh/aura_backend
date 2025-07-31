@@ -272,7 +272,7 @@ class TtsClient:
 
     async def _tts_start_session(self, websocket, speaker, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
         """TTS开始会话"""
-        logger.bind(tag="TTS").info(f"===========TTS开始会话: {session_id} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
+        logger.bind(tag="TTS").bind(tag="TTS").info(f"===========TTS开始会话: {session_id} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -363,8 +363,12 @@ class TtsClient:
         
         # 建立WebSocket连接
         self.ws = await websockets.connect(self.ws_url, additional_headers=ws_header,
-                                           ping_interval=10,      # 每10秒发送一次ping（更保守）
-                                           ping_timeout=5       # ping超时时间5秒（更宽松）
+                                           ping_interval=5,        # 更频繁的 ping（原来是 120s）
+                                           ping_timeout=3,         # 更短的超时（原来是 60s）
+                                           close_timeout=2,        # 更短的关闭超时
+                                           max_queue=1024,         # 增大队列（原来是 32）
+                                           compression=None,        # 已禁用压缩
+                                           max_size=1000000000,    # 保持大消息支持
                                            )
         
         # 开始连接
@@ -407,14 +411,14 @@ class TtsClient:
                             if self.tts_response_callback:
                                 await safe_call(self.tts_response_callback, res.payload, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceStart:
-                        logger.debug(f"TTS句子事件: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS句子开始: {res.optional.event}")
                         json_data = json.loads(res.payload_json)
                         text = json_data.get("text", "")
                         # 第一次开始合成时触发开始回调
                         if self.tts_sentence_start_callback:
                             await safe_call(self.tts_sentence_start_callback, {"text": text}, res.optional.sessionId)
                     elif res.optional.event == EVENT_TTSSentenceEnd:
-                        logger.debug(f"TTS句子结束: {res.optional.event}")
+                        logger.bind(tag="TTS").info(f"TTS句子结束: {res.optional.event}")
                         if self.tts_sentence_end_callback:
                             await safe_call(self.tts_sentence_end_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionStarted:
@@ -451,17 +455,17 @@ class TtsClient:
                     logger.debug("TTS WebSocket连接正常关闭")
                     break
                 except asyncio.CancelledError:
-                    logger.debug("TTS接收任务已取消")
+                    logger.bind(tag="TTS").info("TTS接收任务已取消")
                     break
                 except Exception as e:
                     logger.bind(tag="TTS").error(f"接收TTS音频数据失败: {e}")
                     await self._connect()
                     break
         except Exception as e:
-            logger.error(f"TTS接收循环出现错误: {e}")
+            logger.bind(tag="TTS").error(f"TTS接收循环出现错误: {e}")
         except asyncio.CancelledError:
-            logger.debug("TTS接收任务已取消")
-                    
+            logger.bind(tag="TTS").info("TTS接收任务已取消")
+    
     async def _cleanup_connection(self):
         """清理连接相关资源（不重置重连状态）"""
         # 关闭WebSocket连接

@@ -24,7 +24,6 @@ from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
-    _get_persona_text,
     _build_action_history_summary
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
@@ -41,7 +40,7 @@ async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
         chat_model = get_chat_model_by_type("pfc_action_planner")
         
         # 构建提示词参数
-        persona_text = _get_persona_text()
+        persona_text = ""
         action_history_summary = _build_action_history_summary(state.get("action_history", []))
         observing_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.OBSERVING)
         processed_chat_history_str = observing_task_shared_data.get("processed_chat_history_str", "还没有聊天记录。")
@@ -160,7 +159,7 @@ async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig
         # 使用LLM生成立即回复
         chat_model = get_chat_model_by_type("pfc_chat")
         
-        persona_text = _get_persona_text()
+        persona_text = ""
         
         # 使用从checkpoint获取的共享变量，如果没有则使用state中的默认值
         goals_str = state.get("goals_str", "")

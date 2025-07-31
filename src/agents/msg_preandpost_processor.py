@@ -7,7 +7,6 @@ from .task_manager import TaskManager, TaskType
 from agents.aura_memory.chat_stream import ChatStreamManager
 from agents.aura_memory.message_store import MessageStore, Message
 from utils.todo_mock_func import (
-    _get_persona_text,
     _build_chat_history_str
 )
 from agents.prompts.check_response_prompt import CHECK_RESPONSE_PROMPT
@@ -27,6 +26,7 @@ class MessagePreAndPostProcessor(ABC):
         self.history_check_interval = 20000 #ms
         self.chat_id = None
         self.user_id = None
+        self.session_prompt = ""
     
     @staticmethod
     def process_entry(input_queue, llm_input_queues, asr_result, active_client, is_process_running, process_timer):
@@ -48,8 +48,8 @@ class MessagePreAndPostProcessor(ABC):
             if isinstance(msg, dict) and msg.get("type") == "start":
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
+                client.session_prompt = msg["data"]["session_prompt"]
                 client.is_process_running.value = True
-                logger.bind(tag="BASE").info(f"预处理和后处理子进程启动")
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
             elif isinstance(msg, dict) and msg.get("type") == "preprocess":
@@ -76,7 +76,7 @@ class MessagePreAndPostProcessor(ABC):
         goals_str = ""
         knowledge_info_str = ""
         
-        input_template = f"人设：{_get_persona_text()}。"
+        input_template = f"人设：{self.session_prompt}"
         if len(goals_str) > 0:
             input_template += f"当前对话目标：{goals_str}\n"
         if len(knowledge_info_str) > 0:

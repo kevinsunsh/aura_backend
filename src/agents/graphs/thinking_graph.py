@@ -25,7 +25,6 @@ from agents.prompts.thinking_prompt import (
 from agents.aura_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
-    _get_persona_text,
     _build_chat_history_str,
     _build_goals_str,
     _build_action_history_summary,
@@ -42,7 +41,7 @@ async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
         chat_model = get_chat_model_by_type("pfc_action_planner")
         
         # 构建提示词参数
-        persona_text = _get_persona_text()
+        persona_text = ""
         observing_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.OBSERVING)
         processed_chat_history_str = observing_task_shared_data.get("processed_chat_history_str", "还没有聊天记录。")
         unprocessed_chat_history_str = observing_task_shared_data.get("unprocessed_chat_history_str", "还没有聊天记录。")

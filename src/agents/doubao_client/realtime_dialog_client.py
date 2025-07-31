@@ -36,7 +36,12 @@ class RealtimeDialogClient:
         self.ws = await websockets.connect(
             self.config['base_url'],
             additional_headers=headers,
-            ping_interval=None
+            ping_interval=5,        # 更频繁的 ping（原来是 120s）
+            ping_timeout=3,         # 更短的超时（原来是 60s）
+            close_timeout=2,        # 更短的关闭超时
+            max_queue=1024,         # 增大队列（原来是 32）
+            compression=None,        # 已禁用压缩
+            max_size=1000000000,    # 保持大消息支持
         )
         logger.info(f"WebSocket连接已建立")
     
@@ -165,7 +170,7 @@ class RealtimeDialogClient:
             compression_type=GZIP,
             event=ClientEvent.TaskRequest,
             session_id=self.session_id,
-            skip_audio_compression=True
+            # skip_audio_compression=True
         )
         try:
             await self.ws.send(task_request)
@@ -267,7 +272,8 @@ class RealtimeDialogClient:
                 raise websockets.exceptions.ConnectionClosed(None, 1000, "WebSocket connection is closed")
             
             response = await self.ws.recv()
-            data = client_parse_response(response, skip_audio_decompression=True)
+            # data = client_parse_response(response, skip_audio_decompression=True)
+            data = client_parse_response(response)
             return data
         except websockets.exceptions.ConnectionClosed:
             # 重新抛出连接关闭异常

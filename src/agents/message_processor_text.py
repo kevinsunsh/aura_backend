@@ -1,3 +1,4 @@
+import re
 import asyncio
 from loguru import logger
 import uuid
@@ -25,6 +26,9 @@ from agents.prompts.replying_prompt import (
 )
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
+from utils.todo_mock_func import (
+    _build_chat_history_str
+)
 from langchain_core.messages import SystemMessage
 from api_protocol.constant import *
 from agents.doubao_client.doubao_config import speaker_config, MoodLevel, SpeechRate
@@ -38,9 +42,10 @@ class MessageProcessorText:
         self.user_id = None
         self.websocket_send_callback = websocket_send_callback
     
-    async def start(self, chat_id: str, user_id: str):
+    async def start(self, chat_id: str, user_id: str, session_prompt: str = ""):
         self.chat_id = chat_id
         self.user_id = user_id
+        self.session_prompt = session_prompt
         TaskManager.initialize()
         # await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
         # await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
@@ -112,6 +117,8 @@ class MessageProcessorText:
             chat_model = get_chat_model_by_type("planner")
             prompt = REPLYING_TASK_PROMPT.format(
                 input_info=input_info,
+                task_status="无",
+                task_list="无",
                 requirement=REPLYING_REQUIREMENT_PROMPT,
                 mood=speaker_config["female_2"]["mood_str"],
                 mood_level=MoodLevel.get_mood_level_str(),

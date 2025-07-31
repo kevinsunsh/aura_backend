@@ -35,7 +35,7 @@ class ASRClient(BaseClient):
             compression_type=GZIP,
             event=ClientEvent.TaskRequest,
             session_id=self.session_id,
-            skip_audio_compression=True
+            # skip_audio_compression=True
         )
         try:
             await self.ws.send(task_request)

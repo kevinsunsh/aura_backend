@@ -24,7 +24,6 @@ from agents.aura_memory.message_store import MessageStore, Message
 from agents.aura_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
-    _get_persona_text,
     _build_chat_history_str
 )
 from agents.task_manager import TaskManager, TaskType, TaskStateType
@@ -112,7 +111,7 @@ async def _generate_reply(state: ReplayingTaskState, config: RunnableConfig):
         thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
         goals_str = thinking_task_shared_data.get("goals_str", "")
         knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
-        persona_text = _get_persona_text()
+        persona_text = ""
 
         # 格式化提示词
         prompt = REPLYING_GENERATOR_DIRECT_PROMPT.format(

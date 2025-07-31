@@ -4,11 +4,6 @@ from typing import List, Dict, Any, Tuple
 from agents.aura_memory.message_store import Message
 from configuration.config import Config, global_config
 
-def _get_persona_text() -> str:
-    """获取人设文本"""
-    # 这里可以从配置中获取人设信息
-    return "你的名字是aura，性格温和友善，喜欢帮助朋友解决问题。"
-
 # 工具函数
 def _build_goals_str(goals: List[Dict[str, str]]) -> str:
     """构建目标字符串"""
