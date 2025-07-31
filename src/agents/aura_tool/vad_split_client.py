@@ -7,14 +7,17 @@ import numpy as np
 from api_protocol.constant import *
 from utils.utils import atomic_compare_and_set
 from .vad_engine import VADEngine
+from multiprocessing import Process, Queue
+from .base_client import BaseClient
 
-class VADSplitLocal:
+class VADSplitLocal(BaseClient):
     """
     VAD Split客户端，用于处理TTS音频的智能断句
     接收TTS音频数据，发送给VAD服务进行时间戳检测，然后插入TTSSentenceStart和TTSSentenceEnd事件
     """
-    
     def __init__(self, input_queue: multiprocessing.Queue, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
+        self.audio_sample_rate = 24 # 24000Hz
+        super().__init__()
         self.input_queue = input_queue
         self.output_client_queue = output_client_queue
         self.is_process_running = is_process_running
@@ -23,12 +26,13 @@ class VADSplitLocal:
         self.is_vad_started = False
         self.is_tts_start_sent = False
         self.current_session_id = None
-        self.vad_engine = VADEngine()
         # 音频相关
         self.audio_buffer = np.array([], dtype=np.int16)
-        self.audio_start_time = 0  # 当前音频流的开始时间（毫秒）
+        self.audio_buffer_lock = asyncio.Lock()
+        self.audio_start_sample = 0  # 当前音频流的开始时间（毫秒）
         self.audio_position = 0    # 当前音频位置（毫秒）
-        self.audio_sample_rate = 16 # 16000Hz
+        self.audio_position_lock = asyncio.Lock()
+        self.audio_min_offset = 120 # 音频最小偏移量 = 50ms
     
     @staticmethod
     def process_entry(input_queue, output_client_queue, is_process_running, process_timer):
@@ -69,8 +73,10 @@ class VADSplitLocal:
         """处理TTS音频响应事件"""
         # 将音频数据添加到缓冲区
         audio_array = np.frombuffer(payload, dtype=np.int16)
-        # logger.bind(tag="DELAY").info(f"VADSplit收到TTS音频响应: {len(audio_array)}字节")
-        self.audio_buffer = np.concatenate([self.audio_buffer, audio_array])
+        logger.bind(tag="DELAY").info(f"VADSplit收到TTS音频响应: {len(audio_array)} samples")
+        async with self.audio_buffer_lock:
+            self.audio_buffer = np.concatenate([self.audio_buffer, audio_array])
+        logger.bind(tag="DELAY").info(f"VADSplit audio buffer size: {len(self.audio_buffer)} samples")
         # 发送给VAD进行断句检测
         await self._send_audio_to_vad(payload)
     
@@ -79,7 +85,11 @@ class VADSplitLocal:
         text = payload.get("text", "")
         logger.bind(tag="DELAY").info(f"VADSplit收到TTS句子开始: {text} delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
         self.current_session_id = session_id
-        self.audio_position = 0
+        async with self.audio_position_lock:
+            self.audio_position = 0
+        async with self.audio_buffer_lock:
+            del self.audio_buffer
+            self.audio_buffer = np.array([], dtype=np.int16)
         # self._split_text_by_punctuation(text)
         self.is_tts_started = True
         await self._output_tts_sentence_start(text, self.current_session_id)
@@ -88,17 +98,20 @@ class VADSplitLocal:
         """处理TTS句子结束事件"""
         logger.bind(tag="DELAY").info("VADSplit收到TTS句子结束")
         self.is_tts_started = False
+        async with self.audio_position_lock:
+            last_position = self.audio_position
+            self.audio_position = len(self.audio_buffer)
         # 直接输出剩余的音频数据
-        begin_index = int(self.audio_position * self.audio_sample_rate)
-        audio_buffer = self.audio_buffer[begin_index:]
-        if len(audio_buffer) > 0:
+        logger.bind(tag="DELAY").info(f"total size {len(self.audio_buffer)}, delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
+        if last_position < len(self.audio_buffer):
+            async with self.audio_buffer_lock:
+                audio_buffer = self.audio_buffer[last_position:]
+            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块 in handle_tts_sentence_end: {last_position} - {self.audio_position}, delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
             if not self.is_tts_start_sent:
                 await self._output_tts_sentence_start("", self.current_session_id)
             await self._output_audio_chunk(audio_buffer.tobytes(), self.current_session_id)
             await self._output_tts_sentence_end(self.current_session_id)
-            self.audio_start_time = int(len(self.audio_buffer) / self.audio_sample_rate)
-            del self.audio_buffer
-            self.audio_buffer = np.array([], dtype=np.int16)
+        self.audio_start_sample += len(self.audio_buffer)
     
     async def _handle_tts_ended(self, session_id: str = None):
         """处理TTS结束事件"""
@@ -141,97 +154,95 @@ class VADSplitLocal:
         self.output_client_queue.put(output_msg)
         self.is_tts_start_sent = False
     
+    def consumer_worker(self, input_queue, output_queue, is_process_running):
+        """常驻worker进程：负责音频处理"""
+        engine = VADEngine(input_sample_rate=self.audio_sample_rate * 1000)
+        while True:
+            msg = input_queue.get()
+            if isinstance(msg, dict) and msg.get("type") == "start":
+                engine.start()
+                is_process_running.value = True
+            elif isinstance(msg, dict) and msg.get("type") == "stop":
+                engine.cleanup()
+                is_process_running.value = False
+            elif isinstance(msg, dict) and msg.get("type") == "input":
+                if is_process_running.value:
+                    result = engine.process_audio_chunk(msg["data"])
+                    if result is not None:
+                        output_queue.put(result)
+    
     async def _send_audio_to_vad(self, audio_data: bytes):
         """发送音频数据给VAD进行断句检测"""
         try:
-            result = self.vad_engine.process_audio_chunk(audio_data)
-            if result is not None:
-                await self._handle_vad_response(result)
+            self.internal_input_queue.put({"type": "input", "data": audio_data})
         except Exception as e:
             logger.error(f"VADSplit发送音频数据给VAD失败: {e}")
     
     async def _handle_server_response(self, response: Dict[str, Any]):
-        """处理服务器响应"""
-        try:
-            # 处理事件类型响应
-            if response.get('event') is None:
-                return
-            event_id = response.get('event')
-            # Connect类事件 (50-52)
-            if event_id == ServerEvent.ConnectionStarted:
-                logger.bind(tag="BASE").info("VADSplit连接建立成功")
-            elif event_id == ServerEvent.ConnectionFailed:
-                logger.bind(tag="BASE").error("VADSplit连接建立失败")
-            elif event_id == ServerEvent.ConnectionFinished:
-                logger.bind(tag="BASE").info("VADSplit连接已结束")
-            # Session类事件 (150-153)
-            elif event_id == ServerEvent.SessionStarted:
-                logger.bind(tag="BASE").info("VADSplit会话启动成功")
-            elif event_id == ServerEvent.SessionFinished:
-                logger.bind(tag="BASE").info("VADSplit会话已结束")
-            elif event_id == ServerEvent.SessionFailed:
-                logger.bind(tag="BASE").error("VADSplit会话失败")
-            # VAD类事件 - 新的VADResponse格式
-            elif event_id == ServerEvent.VADResponse:
-                logger.bind(tag="DELAY").info(f"VADSplit收到VAD响应: {response}")
-                await self._handle_vad_response(response)
-            else:
-                logger.bind(tag="DELAY").warning(f"VADSplit收到未知事件: {event_id}")
-        except Exception as e:
-            logger.error(f"VADSplit处理服务器响应失败: {e}")
-    
-    async def _handle_vad_response(self, vad_response: Dict[str, Any]):
         """处理VAD响应，根据时间戳插入断句事件"""
         try:
             if not self.is_tts_started:
                 return
+            logger.bind(tag="DELAY").info(f"VADSplit收到VAD响应: {response}")
             # 解析VAD时间戳数据
-            timestamps = vad_response[0][0]
+            timestamps = response[0][0]
             if not self.is_vad_started:
                 self.is_vad_started = True
+                logger.bind(tag="DELAY").info(f"VADSplit vad started: {timestamps}")
                 if timestamps[0] == -1:
-                    self.audio_start_time = 0
+                    self.audio_start_sample = 0
                 else:
-                    self.audio_start_time = timestamps[0]
-            
+                    self.audio_start_sample = timestamps[0] * self.audio_sample_rate
+            logger.bind(tag="DELAY").info(f"VADSplit audio start sample: {self.audio_start_sample}")
             if timestamps[0] == -1:
-                end_time = timestamps[1]
+                end_position = timestamps[1] * self.audio_sample_rate
             else:
-                end_time = timestamps[0]
-            if end_time < self.audio_start_time:
-                logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频开始时间小于VAD开始时间: {end_time} < {self.audio_start_time}")
+                end_position = timestamps[0] * self.audio_sample_rate
+            if end_position < self.audio_start_sample:
+                logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频开始时间小于VAD开始时间: {end_position} < {self.audio_start_sample}")
                 return
-            offset_time = end_time - self.audio_start_time
-            if offset_time < self.audio_position:
-                logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置小于VAD开始时间: {offset_time} < {self.audio_position}")
-                return
-            if self.audio_position == offset_time:
-                logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置与VAD开始时间相同: {self.audio_position} == {offset_time}")
-                return
+            offset_position = end_position - self.audio_start_sample
+            async with self.audio_position_lock:
+                if offset_position < self.audio_position:
+                    logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置小于VAD开始时间: {offset_position} < {self.audio_position}")
+                    return
+                if offset_position - 120 < self.audio_position:
+                    logger.bind(tag="BASE").info(f"VADSplit收到VAD响应，但音频位置与VAD开始时间约等于相同: {self.audio_position} == {offset_position}")
+                    return
+                last_position = self.audio_position
+                self.audio_position = offset_position
             if not self.is_tts_start_sent:
                 await self._output_tts_sentence_start("", self.current_session_id)
-            begin_index = int(self.audio_position * self.audio_sample_rate)
-            end_index = int(offset_time * self.audio_sample_rate)
-            await self._output_audio_chunk(self.audio_buffer[begin_index:end_index].tobytes(), self.current_session_id)
+            async with self.audio_buffer_lock:
+                audio_buffer = self.audio_buffer[last_position:offset_position]
+            await self._output_audio_chunk(audio_buffer.tobytes(), self.current_session_id)
             await self._output_tts_sentence_end(self.current_session_id)
-            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块: {self.audio_position} - {offset_time}, delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
-            self.audio_position = offset_time
+            logger.bind(tag="DELAY").info(f"VADSplit输出音频数据块 in handle_server_response: {last_position} - {offset_position} size: {len(audio_buffer)}, delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
         except Exception as e:
             logger.bind(tag="BASE").error(f"VADSplit处理VAD响应失败: {e}")
     
     async def start(self, chat_id: str, user_id: str) -> bool:
-        self.vad_engine.start()
+        is_success = await super().start(chat_id, user_id)
+        if not is_success:
+            return False
+        self.internal_input_queue.put({"type": "start"})
+        while not self.internal_is_process_running.value:
+            await asyncio.sleep(0.1)
         return True
     
     async def cleanup(self) -> None:
         """清理资源"""
-        self.vad_engine.cleanup()
+        await super().cleanup()
+        self.internal_input_queue.put({"type": "stop"})
+        while self.internal_is_process_running.value:
+            await asyncio.sleep(0.1)
         self.is_tts_started = False
         self.is_vad_started = False
         self.is_tts_start_sent = False
         self.current_session_id = None
         # 音频相关
-        del self.audio_buffer
-        self.audio_buffer = np.array([], dtype=np.int16)
-        self.audio_start_time = 0  # 当前音频流的开始时间（毫秒）
+        async with self.audio_buffer_lock:
+            del self.audio_buffer
+            self.audio_buffer = np.array([], dtype=np.int16)
+        self.audio_start_sample = 0  # 当前音频流的开始时间（毫秒）
         self.audio_position = 0    # 当前音频位置（毫秒）

@@ -127,6 +127,8 @@ class VADSplitClient(BaseClient):
         logger.bind(tag="DELAY").info(f"VADSplit收到TTS句子开始: {text} delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
         self.current_session_id = session_id
         self.audio_position = 0
+        del self.audio_buffer
+        self.audio_buffer = np.array([], dtype=np.int16)
         # self._split_text_by_punctuation(text)
         self.is_tts_started = True
         await self._output_tts_sentence_start(text, self.current_session_id)
@@ -144,8 +146,6 @@ class VADSplitClient(BaseClient):
             await self._output_audio_chunk(audio_buffer.tobytes(), self.current_session_id)
             await self._output_tts_sentence_end(self.current_session_id)
             self.audio_start_time = int(len(self.audio_buffer) / self.audio_sample_rate)
-            del self.audio_buffer
-            self.audio_buffer = np.array([], dtype=np.int16)
     
     async def _handle_tts_ended(self, session_id: str = None):
         """处理TTS结束事件"""

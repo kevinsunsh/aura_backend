@@ -2,14 +2,16 @@ import time
 import asyncio
 import multiprocessing
 from loguru import logger
-from typing import Any
+from typing import Any, Dict
 from api_protocol.constant import *
 from utils.utils import atomic_compare_and_set
 from .vad_engine import VADEngine
+from .base_client import BaseClient
 
-class VADLocal:
+class VADLocal(BaseClient):
     """VAD客户端"""
     def __init__(self, input_queue: multiprocessing.Queue, llm_input_queue: multiprocessing.Queue, asr_is_started: Any, asr_lock: Any, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
+        super().__init__()
         self.input_queue = input_queue
         self.llm_input_queue = llm_input_queue
         self.asr_is_started = asr_is_started
@@ -17,7 +19,6 @@ class VADLocal:
         self.output_client_queue = output_client_queue
         self.is_process_running = is_process_running
         self.process_timer = process_timer
-        self.vad_engine = VADEngine()
     
     @staticmethod
     def process_entry(input_queue, llm_input_queue, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
@@ -46,21 +47,48 @@ class VADLocal:
                 logger.bind(tag="BASE").info("VAD客户端停止")
             elif isinstance(msg, dict) and msg.get("type") == "input":
                 if client.is_process_running.value:
-                    result = client.vad_engine.process_audio_chunk(msg["data"])
+                    client.internal_input_queue.put({"type": "input", "data": msg["data"]})
+    
+    async def _handle_server_response(self, response: Dict[str, Any]):
+        if response[0][0][0] == -1:
+            if atomic_compare_and_set(self.asr_is_started, self.asr_lock, True, False):
+                self.output_client_queue.put({"event": ServerEvent.ASREnded})
+                self.llm_input_queue.put({"type": "run"})
+                self.process_timer.value = time.time()
+                logger.bind(tag="DELAY").info("VAD识别结束")
+            else:
+                logger.bind(tag="DELAY").warning("VAD识别结束，但ASR未开始")
+    
+    def consumer_worker(self, input_queue, output_queue, is_process_running):
+        """常驻worker进程：负责音频处理"""
+        engine = VADEngine()
+        while True:
+            msg = input_queue.get()
+            if isinstance(msg, dict) and msg.get("type") == "start":
+                engine.start()
+                is_process_running.value = True
+            elif isinstance(msg, dict) and msg.get("type") == "stop":
+                engine.cleanup()
+                is_process_running.value = False
+            elif isinstance(msg, dict) and msg.get("type") == "input":
+                if is_process_running.value:
+                    result = engine.process_audio_chunk(msg["data"])
                     if result is not None:
-                        if result[0][0][0] == -1:
-                            if atomic_compare_and_set(client.asr_is_started, client.asr_lock, True, False):
-                                client.output_client_queue.put({"event": ServerEvent.ASREnded})
-                                client.llm_input_queue.put({"type": "run"})
-                                client.process_timer.value = time.time()
-                                logger.bind(tag="DELAY").info("VAD识别结束")
-                            else:
-                                logger.bind(tag="DELAY").warning("VAD识别结束，但ASR未开始")
+                        output_queue.put(result)
     
     async def start(self, chat_id: str, user_id: str) -> bool:
-        self.vad_engine.start()
+        is_success = await super().start(chat_id, user_id)
+        if not is_success:
+            return False
+        self.internal_input_queue.put({"type": "start"})
+        while not self.internal_is_process_running.value:
+            await asyncio.sleep(0.1)
         return True
     
     async def cleanup(self) -> None:
         """清理资源"""
-        self.vad_engine.cleanup()
+        await super().cleanup()
+        self.internal_input_queue.put({"type": "stop"})
+        while self.internal_is_process_running.value:
+            await asyncio.sleep(0.1)
+

@@ -899,9 +899,11 @@ class MessageProcessorAudio:
                             "session_id": msg.get("session_id")
                         }
                     }
+                    logger.bind(tag="DELAY").info(f"Send TTSSentenceStart delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                 else:
                     if msg.get('event') == ServerEvent.TTSResponse:
                         self.sleep_time += len(msg.get("payload_msg")) / 32000
+                        logger.bind(tag="DELAY").info(f"Send TTSResponse delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")
@@ -912,6 +914,7 @@ class MessageProcessorAudio:
                         else:
                             sleep_time = self.sleep_time * 0.6
                         self.sleep_time = 0
+                        logger.bind(tag="DELAY").info(f"Send TTSSentenceEnd delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                 return send_msg, sleep_time
             return None, sleep_time
         except Exception as e:
@@ -951,7 +954,7 @@ class MessageProcessorAudio:
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.vad_split_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # with E2E
-        timeout = 10  # 最多等待10秒
+        timeout = 20  # 最多等待10秒
         start_time = time.time()
         while (not self.e2e_is_process_running.value or
                not self.llm_tts_is_process_running.value or
