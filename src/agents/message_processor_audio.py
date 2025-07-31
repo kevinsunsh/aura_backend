@@ -161,7 +161,6 @@ class LLM_TTSClient(ABC):
                  input_queue,
                  asr_result,
                  output_client_queue,
-                 vad_split_input_queue,
                  is_process_running,
                  session_id,
                  process_timer):
@@ -170,7 +169,6 @@ class LLM_TTSClient(ABC):
         self.output_client_queue = output_client_queue
         self.is_process_running = is_process_running
         self.session_id = session_id
-        self.vad_split_input_queue = vad_split_input_queue
         self.text_processor = MessageProcessorText(
             websocket_send_callback=self._text_processor_callback
         )
@@ -186,17 +184,16 @@ class LLM_TTSClient(ABC):
         self.process_timer = process_timer
     
     @staticmethod
-    def process_entry(input_queue, asr_result, output_client_queue, vad_split_input_queue, is_process_running, session_id, process_timer):
-        asyncio.run(LLM_TTSClient.main(input_queue, asr_result, output_client_queue, vad_split_input_queue, is_process_running, session_id, process_timer))
+    def process_entry(input_queue, asr_result, output_client_queue, is_process_running, session_id, process_timer):
+        asyncio.run(LLM_TTSClient.main(input_queue, asr_result, output_client_queue, is_process_running, session_id, process_timer))
     
     @staticmethod
-    async def main(input_queue, asr_result, output_client_queue, vad_split_input_queue, is_process_running, session_id, process_timer):
+    async def main(input_queue, asr_result, output_client_queue, is_process_running, session_id, process_timer):
         loop = asyncio.get_event_loop()
         client = LLM_TTSClient(
             input_queue=input_queue,
             asr_result=asr_result,
             output_client_queue=output_client_queue,
-            vad_split_input_queue=vad_split_input_queue,
             is_process_running=is_process_running,
             session_id=session_id,
             process_timer=process_timer,
@@ -225,32 +222,32 @@ class LLM_TTSClient(ABC):
         text = payload.get("text", "")
         logger.debug(f"LLM TTS句子开始: {text}")
         self.is_llm_tts_running = True
-        self.vad_split_input_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}, "session_id": session_id})
-        # self.output_client_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}, "session_id": session_id})
+        # self.vad_split_input_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}, "session_id": session_id})
+        self.output_client_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}, "session_id": session_id})
         logger.bind(tag="DELAY").info(f"TTSSentenceStart delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
 
     async def _llm_on_tts_sentence_end(self, session_id: str) -> None:
         """TTS句子结束事件回调"""
         logger.debug("LLM TTS句子结束")
         # 转发给VADSplitClient
-        self.vad_split_input_queue.put({"event": ServerEvent.TTSSentenceEnd, "session_id": session_id})
-        # self.output_client_queue.put({"event": ServerEvent.TTSSentenceEnd, "session_id": session_id})
+        # self.vad_split_input_queue.put({"event": ServerEvent.TTSSentenceEnd, "session_id": session_id})
+        self.output_client_queue.put({"event": ServerEvent.TTSSentenceEnd, "session_id": session_id})
         logger.bind(tag="DELAY").info(f"TTSSentenceEnd delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
     
     async def _llm_on_tts_response(self, payload: bytes, session_id: str) -> None:
         """TTS音频响应事件回调"""
         # 这里payload应该是二进制音频数据
         # 转发给VADSplitClient
-        self.vad_split_input_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload, "session_id": session_id})
-        # self.output_client_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload, "session_id": session_id})
+        # self.vad_split_input_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload, "session_id": session_id})
+        self.output_client_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload, "session_id": session_id})
     
     async def _llm_on_tts_ended(self, session_id: str) -> None:
         """TTS结束事件回调"""
         logger.debug("LLM TTS合成结束")
         self.is_llm_tts_running = False
         # 转发给VADSplitClient
-        self.vad_split_input_queue.put({"event": ServerEvent.TTSEnded, "session_id": session_id})
-        # self.output_client_queue.put({"event": ServerEvent.TTSEnded, "session_id": session_id})
+        # self.vad_split_input_queue.put({"event": ServerEvent.TTSEnded, "session_id": session_id})
+        self.output_client_queue.put({"event": ServerEvent.TTSEnded, "session_id": session_id})
     
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应"""
@@ -447,51 +444,55 @@ class MessageProcessorAudio:
         # )
         # self.tts_process.start()
         # 服务端输出队列
-        self.output_client_queue = multiprocessing.Queue()
-        # 中间结果
-        self.asr_result = multiprocessing.Array(ctypes.c_char, 1024)
-        self.asr_is_started = multiprocessing.Value('b', False)
-        self.asr_lock = multiprocessing.Lock()
-        # 启动TTSSPLIT子进程
-        self.vad_split_input_queues = multiprocessing.Queue()
-        self.vad_split_is_process_running = multiprocessing.Value('b', False)
-        logger.bind(tag="BASE").info("启动TTSSplit子进程")
-        self.vad_split_process = multiprocessing.Process(
-            target=VADSplitLocal.process_entry,
-            args=(self.vad_split_input_queues, self.output_client_queue, self.vad_split_is_process_running, self.process_timer)
-        )
-        self.vad_split_process.start()
-        # 启动LLM_TTS子进程
-        self.llm_tts_input_queues = multiprocessing.Queue()
-        self.llm_tts_is_process_running = multiprocessing.Value('b', False)
-        self.llm_tts_session_id = multiprocessing.Array(ctypes.c_char, 33)
-        logger.bind(tag="BASE").info("启动LLM_TTS子进程")
-        self.llm_tts_process = multiprocessing.Process(
-            target=LLM_TTSClient.process_entry,
-            args=(self.llm_tts_input_queues, self.asr_result, self.output_client_queue, self.vad_split_input_queues, self.llm_tts_is_process_running, self.llm_tts_session_id, self.process_timer)
-        )
-        self.llm_tts_process.start()
-        # 启动VAD子进程
-        self.vad_input_queues = multiprocessing.Queue()
-        self.vad_is_process_running = multiprocessing.Value('b', False)
-        logger.bind(tag="BASE").info("启动VAD子进程")
-        self.vad_process = multiprocessing.Process(
-            target=VADLocal.process_entry,
-            args=(self.vad_input_queues, self.llm_tts_input_queues, self.asr_is_started, self.asr_lock, self.output_client_queue, self.vad_is_process_running, self.process_timer)
-        )
-        self.vad_process.start()
-        # 启动E2E子进程
-        self.e2e_input_queues = multiprocessing.Queue()
-        self.e2e_asr_output_queue = self.llm_tts_input_queues
-        self.e2e_llm_output_queue = multiprocessing.Queue()
-        self.e2e_tts_output_queue = multiprocessing.Queue()
-        self.e2e_is_process_running = multiprocessing.Value('b', False)
-        logger.bind(tag="BASE").info("启动E2E子进程")
-        self.e2e_process = multiprocessing.Process(
-            target=E2EClient.process_entry,
-            args=(self.e2e_input_queues, self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock, self.output_client_queue, self.e2e_is_process_running, self.process_timer)
-        )
-        self.e2e_process.start()
+        try:
+            self.output_client_queue = multiprocessing.Queue()
+            # 中间结果
+            self.asr_result = multiprocessing.Array(ctypes.c_char, 1024)
+            self.asr_is_started = multiprocessing.Value('b', False)
+            self.asr_lock = multiprocessing.Lock()
+            # 启动TTSSPLIT子进程
+            # self.vad_split_input_queues = multiprocessing.Queue()
+            # self.vad_split_is_process_running = multiprocessing.Value('b', False)
+            # logger.bind(tag="BASE").info("启动TTSSplit子进程")
+            # self.vad_split_process = multiprocessing.Process(
+            #     target=VADSplitLocal.process_entry,
+            #     args=(self.vad_split_input_queues, self.output_client_queue, self.vad_split_is_process_running, self.process_timer)
+            # )
+            # self.vad_split_process.start()
+            # 启动LLM_TTS子进程
+            self.llm_tts_input_queues = multiprocessing.Queue()
+            self.llm_tts_is_process_running = multiprocessing.Value('b', False)
+            self.llm_tts_session_id = multiprocessing.Array(ctypes.c_char, 33)
+            logger.bind(tag="BASE").info("启动LLM_TTS子进程")
+            self.llm_tts_process = multiprocessing.Process(
+                target=LLM_TTSClient.process_entry,
+                args=(self.llm_tts_input_queues, self.asr_result, self.output_client_queue, self.llm_tts_is_process_running, self.llm_tts_session_id, self.process_timer)
+            )
+            self.llm_tts_process.start()
+            # 启动VAD子进程
+            self.vad_input_queues = multiprocessing.Queue()
+            self.vad_is_process_running = multiprocessing.Value('b', False)
+            logger.bind(tag="BASE").info("启动VAD子进程")
+            self.vad_process = multiprocessing.Process(
+                target=VADLocal.process_entry,
+                args=(self.vad_input_queues, self.llm_tts_input_queues, self.asr_is_started, self.asr_lock, self.output_client_queue, self.vad_is_process_running, self.process_timer)
+            )
+            self.vad_process.start()
+            # 启动E2E子进程
+            self.e2e_input_queues = multiprocessing.Queue()
+            self.e2e_asr_output_queue = self.llm_tts_input_queues
+            self.e2e_llm_output_queue = multiprocessing.Queue()
+            self.e2e_tts_output_queue = multiprocessing.Queue()
+            self.e2e_is_process_running = multiprocessing.Value('b', False)
+            logger.bind(tag="BASE").info("启动E2E子进程")
+            self.e2e_process = multiprocessing.Process(
+                target=E2EClient.process_entry,
+                args=(self.e2e_input_queues, self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock, self.output_client_queue, self.e2e_is_process_running, self.process_timer)
+            )
+            self.e2e_process.start()
+        except Exception as e:
+            logger.bind(tag="BASE").error(f"启动子进程失败: {e}")
+            raise e
         
         self.llm_is_chat_started = False
         self.active_client = None

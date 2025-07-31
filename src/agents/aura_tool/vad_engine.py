@@ -14,13 +14,13 @@ class VADEngine:
         self.chunk_size = 200
         self.model = None
         # 初始化流式识别参数
-        self.chunk_stride = int(self.chunk_size * self.sample_rate / 1000)
+        self.chunk_stride = int(self.chunk_size * self.input_sample_rate / 1000)
         # 计算重采样比例
         self.resample_ratio = self.sample_rate / self.input_sample_rate
     
-    def start(self):
+    def start(self, model_path: str):
         """启动ASR引擎"""
-        self.model = Fsmn_vad_online(os.path.join(os.path.dirname(__file__), "model/vad"), quantize=True)
+        self.model = Fsmn_vad_online(model_path, quantize=True, intra_op_num_threads=8)
     
     def resample_audio(self, audio_data: np.ndarray) -> np.ndarray:
         """将音频从输入采样率重采样到目标采样率"""
@@ -52,7 +52,9 @@ class VADEngine:
             self.audio_buffer = self.audio_buffer[self.chunk_stride:]
             
             # 重采样音频数据
-            speech_chunk = self.resample_audio(speech_chunk)
+            # logger.bind(tag="BASE").info(f"before resample: {speech_chunk.shape}")
+            # speech_chunk = self.resample_audio(speech_chunk)
+            # logger.bind(tag="BASE").info(f"after resample: {speech_chunk.shape}")
             
             try:
                 # 使用FunASR流式识别

@@ -1,3 +1,4 @@
+import os
 import time
 import asyncio
 import multiprocessing
@@ -160,7 +161,7 @@ class VADSplitLocal(BaseClient):
         while True:
             msg = input_queue.get()
             if isinstance(msg, dict) and msg.get("type") == "start":
-                engine.start()
+                engine.start(os.path.join(os.path.dirname(__file__), "model/vad_split"))
                 is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 engine.cleanup()
