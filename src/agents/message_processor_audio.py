@@ -265,7 +265,6 @@ class E2EClient(ABC):
                  asr_lock,
                  active_client,
                  output_client_queue,
-                 e2e_output_client_queue,
                  is_process_running,
                  process_timer):
         self.input_queue = input_queue
@@ -276,7 +275,6 @@ class E2EClient(ABC):
         self.asr_lock = asr_lock
         self.active_client = active_client
         self.output_client_queue = output_client_queue
-        self.e2e_output_client_queue = e2e_output_client_queue
         self.is_process_running = is_process_running
         self.process_timer = process_timer
         self.dialog_session = DialogSession(
@@ -292,11 +290,11 @@ class E2EClient(ABC):
         )
     
     @staticmethod
-    def process_entry(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, e2e_output_client_queue, is_process_running, process_timer):
-        asyncio.run(E2EClient.main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, e2e_output_client_queue, is_process_running, process_timer))
+    def process_entry(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, is_process_running, process_timer):
+        asyncio.run(E2EClient.main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, e2e_output_client_queue, is_process_running, process_timer):
+    async def main(input_queue, prepost_input_queues, llm_input_queues, asr_result, asr_is_started, asr_lock, active_client, output_client_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = E2EClient(
             input_queue=input_queue,
@@ -307,7 +305,6 @@ class E2EClient(ABC):
             asr_lock=asr_lock,
             active_client=active_client,
             output_client_queue=output_client_queue,
-            e2e_output_client_queue=e2e_output_client_queue,
             is_process_running=is_process_running,
             process_timer=process_timer
         )
@@ -331,23 +328,19 @@ class E2EClient(ABC):
         """TTS句子开始事件回调"""
         text = payload.get("text", "")
         logger.debug(f"E2E TTS句子开始: {text}")
-        self.e2e_output_client_queue.put({"event": ServerEvent.TTSSentenceStart, "payload_msg": {"text": text}})
     
     async def _e2e_on_tts_sentence_end(self) -> None:
         """TTS句子结束事件回调"""
         logger.debug("E2E TTS句子结束")
-        self.e2e_output_client_queue.put({"event": ServerEvent.TTSSentenceEnd})
     
     async def _e2e_on_tts_response(self, payload: bytes) -> None:
         """TTS音频响应事件回调"""
         # 这里payload应该是二进制音频数据
         logger.debug(f"E2E TTS音频响应: {payload}")
-        self.e2e_output_client_queue.put({"event": ServerEvent.TTSResponse, "payload_msg": payload})
     
     async def _e2e_on_tts_ended(self) -> None:
         """TTS结束事件回调"""
         logger.debug("E2E TTS合成结束")
-        self.e2e_output_client_queue.put({"event": ServerEvent.TTSEnded})
     
     # ASR类事件回调方法
     async def _on_asr_info(self) -> None:
@@ -381,12 +374,10 @@ class E2EClient(ABC):
         """聊天响应事件回调"""
         content = payload.get("content", "")
         logger.debug(f"E2E收到聊天响应: {content[:10]}...")
-        self.e2e_output_client_queue.put({"event": ServerEvent.ChatResponse, "payload_msg": {"content": content}})
-    
+
     async def _e2e_on_chat_ended(self) -> None:
         """聊天结束事件回调"""
         logger.debug("E2E聊天响应结束")
-        self.e2e_output_client_queue.put({"event": ServerEvent.ChatEnded})
 
 class MessageProcessorAudio:
     """
@@ -416,8 +407,6 @@ class MessageProcessorAudio:
             # self.send_llm_tts_message()
         )
         try:
-            self.e2e_output_client_queue = multiprocessing.Queue()
-            self.alt_output_client_queue = multiprocessing.Queue()
             self.output_client_queue = multiprocessing.Queue()
             # 中间结果
             self.asr_result = multiprocessing.Array(ctypes.c_char, 1024)
@@ -441,7 +430,7 @@ class MessageProcessorAudio:
             logger.bind(tag="BASE").info("启动LLM_TTS子进程")
             self.llm_tts_process = multiprocessing.Process(
                 target=LLM_TTSClient.process_entry,
-                args=(self.llm_tts_input_queues, self.asr_result, self.alt_output_client_queue,
+                args=(self.llm_tts_input_queues, self.asr_result, self.output_client_queue,
                     self.llm_tts_is_process_running, self.llm_tts_session_id, self.process_timer)
             )
             self.llm_tts_process.start()
@@ -476,7 +465,7 @@ class MessageProcessorAudio:
                 target=E2EClient.process_entry,
                 args=(self.e2e_input_queues, self.prepost_input_queues,
                     self.llm_tts_input_queues, self.asr_result, self.asr_is_started, self.asr_lock,
-                    self.active_client, self.output_client_queue, self.e2e_output_client_queue,
+                    self.active_client, self.output_client_queue,
                     self.e2e_is_process_running, self.process_timer)
             )
             self.e2e_process.start()
@@ -883,24 +872,7 @@ class MessageProcessorAudio:
             try:
                 msg = self.output_client_queue.get_nowait()
             except queue.Empty:
-                if self.active_client.value == ActiveClientType.E2E_CLIENT:
-                    try:
-                        msg = self.e2e_output_client_queue.get_nowait()
-                    except queue.Empty:
-                        msg = None
-                        try:
-                            self.alt_output_client_queue.get_nowait()
-                        except queue.Empty:
-                            pass
-                elif self.active_client.value == ActiveClientType.ALT_CLIENT:
-                    try:
-                        msg = self.alt_output_client_queue.get_nowait()
-                    except queue.Empty:
-                        msg = None
-                        try:
-                            self.e2e_output_client_queue.get_nowait()
-                        except queue.Empty:
-                            pass
+                msg = None
             if msg:
                 if self.active_client.value == ActiveClientType.ALT_CLIENT:
                     if msg.get('event') in [ServerEvent.TTSResponse, ServerEvent.TTSSentenceStart, ServerEvent.TTSSentenceEnd, ServerEvent.TTSEnded]:
