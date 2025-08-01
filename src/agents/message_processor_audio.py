@@ -33,9 +33,7 @@ class ASRClient(ABC):
             asr_result,
             asr_is_started,
             asr_lock,
-            active_client,
             output_client_queue,
-            e2e_output_client_queue,
             is_process_running,
             process_timer):
         self.input_queue = input_queue
@@ -44,10 +42,9 @@ class ASRClient(ABC):
         self.asr_is_started = asr_is_started
         self.asr_lock = asr_lock
         self.output_client_queue = output_client_queue
-        self.e2e_output_client_queue = e2e_output_client_queue
         self.is_process_running = is_process_running
         self.process_timer = process_timer
-        self.dialog_session = DialogSession(
+        self.dialog_session = AsrClient(
             asr_start_callback=self._on_asr_info,
             asr_response_callback=self._on_asr_response,
             asr_end_callback=self._on_asr_ended,

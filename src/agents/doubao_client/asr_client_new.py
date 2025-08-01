@@ -392,33 +392,6 @@ class AsrClient:
             logger.error(f"Failed to send full client request: {e}")
             raise
     
-    async def _send_wav_header(self):
-        """发送WAV文件头"""
-        # 构建一个标准的16kHz、16bit、单声道的WAV文件头
-        wav_header = (
-            b'RIFF' +
-            (36).to_bytes(4, 'little') +  # ChunkSize: 36 + SubChunk2Size（此处先写36，后续音频数据长度为0）
-            b'WAVE' +
-            b'fmt ' +
-            (16).to_bytes(4, 'little') +  # Subchunk1Size: 16 for PCM
-            (1).to_bytes(2, 'little') +   # AudioFormat: 1 for PCM
-            (1).to_bytes(2, 'little') +   # NumChannels: 1
-            (16000).to_bytes(4, 'little') +  # SampleRate: 16000
-            (16000 * 1).to_bytes(4, 'little') +  # ByteRate: SampleRate * NumChannels * BitsPerSample/8
-            (1).to_bytes(2, 'little') +   # BlockAlign: NumChannels * BitsPerSample/8
-            (16).to_bytes(2, 'little') +  # BitsPerSample: 16
-            b'data' +
-            (0).to_bytes(4, 'little')     # Subchunk2Size: 0（无音频数据）
-        )
-        request = RequestBuilder.new_audio_only_request(wav_header, self.seq)
-        self.seq += 1  # 发送后递增
-        try:
-            await self.ws.send(request)
-            logger.info(f"Sent wav header request with seq: {self.seq-1}")
-        except Exception as e:
-            logger.error(f"Failed to send wav header request: {e}")
-            raise
-    
     async def _receive_loop(self):
         """接收循环"""
         try:
