@@ -5,13 +5,14 @@ from loguru import logger
 
 class TaskStateType(Enum):
     """任务状态类型枚举"""
+    READY = "ready"
     RUNNING = "running"
-    PAUSED = "paused"
-    STOPPED = "stopped"
+    FINISHED = "finished"
+    COMMITTING = "committing"
 
 class TaskMetadata:
     """任务元数据"""
-    task_state: TaskStateType = TaskStateType.PAUSED
+    task_state: TaskStateType = TaskStateType.READY
     shared_data: Dict[str, Any] = {}
 
 class AgentTask:
@@ -20,13 +21,52 @@ class AgentTask:
         self.task_lock = asyncio.Lock()
 
 class TaskType(Enum):
-    SPEAKING = "speaking"
-    REPLYING = "replying"
-    MUTTERING = "muttering"
-    THINKING = "thinking"
-    OBSERVING = "observing"
-    RECALLING = "recalling"
-    MEMORIZING = "memorizing"
+    SINGING = "singing"
+
+from sqlalchemy import (
+    create_engine,
+    Column,
+    String,
+    Integer,
+    Boolean,
+    Text,
+    Float, 
+    DateTime,
+    Double,
+    UniqueConstraint,
+    Index,
+    BigInteger
+)
+from agents.aura_memory.database.database import Base, Database
+import threading
+from loguru import logger
+import time
+from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional
+from sqlalchemy import text
+from utils.utils import performance_point_context
+from configuration.config import get_db_conn_string
+
+class TaskModel(Base):
+    """任务数据库模型"""
+    __tablename__ = 'tasks'
+
+    user_id = Column(String, primary_key=True)
+    task_id = Column(String, primary_key=True)
+    task_type = Column(String, nullable=False)
+    task_state = Column(String, nullable=False)
+    task_data = Column(Text, nullable=False)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    task_locked = Column(Boolean, nullable=False, default=False)  # 处理器锁
+    task_heartbeat = Column(BigInteger, nullable=False, default=0)  # 处理器心跳
+
+    # 索引
+    __table_args__ = (
+        Index('idx_chat_streams_chatstream_checked_at', 'chatstream_checked_at'),
+        Index('idx_chat_streams_created_at', 'created_at'),
+    )
 
 class TaskManager:
     _instance = None
@@ -39,14 +79,6 @@ class TaskManager:
     
     def __init__(self):
         if not self._initialized:
-            self._task_map: Dict[TaskType, AgentTask] = {}
-            self._task_map[TaskType.REPLYING] = AgentTask()
-            self._task_map[TaskType.SPEAKING] = AgentTask()
-            self._task_map[TaskType.MUTTERING] = AgentTask()
-            self._task_map[TaskType.THINKING] = AgentTask()
-            self._task_map[TaskType.OBSERVING] = AgentTask()
-            self._task_map[TaskType.RECALLING] = AgentTask()
-            self._task_map[TaskType.MEMORIZING] = AgentTask()
             self._initialized = True
     
     @classmethod
@@ -61,7 +93,7 @@ class TaskManager:
         """初始化TaskManager单例"""
         if cls._instance is None:
             cls._instance = cls()
-        elif not cls._initialized:
+        if not cls._initialized:
             # 如果实例存在但未初始化，重新初始化
             cls._instance.__init__()
         return cls._instance

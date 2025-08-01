@@ -46,24 +46,17 @@ class MessageProcessorText:
         self.chat_id = chat_id
         self.user_id = user_id
         self.session_prompt = session_prompt
+        self.is_interruption = False
+        self.interruption_lock = asyncio.Lock()
         TaskManager.initialize()
-        # await TaskManager.get_instance().set_task_state(TaskType.THINKING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.OBSERVING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.RECALLING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.MEMORIZING, TaskStateType.RUNNING)
-
+    
     async def user_input_interruption(self):
-        await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.PAUSED)
-        # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.PAUSED)
-        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.PAUSED)
+        async with self.interruption_lock:
+            self.is_interruption = True
     
     async def user_input_resume(self):
-        await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.SPEAKING, TaskStateType.RUNNING)
-        # await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+        async with self.interruption_lock:
+            self.is_interruption = False
     
     async def handle_message(self, input_info: str) -> Dict[str, Any]:
         """处理文本消息"""
@@ -138,7 +131,7 @@ class MessageProcessorText:
             ],
             extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
-                    if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.PAUSED:
+                    if self.is_interruption:
                         logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
                     response_buffer += chunk.content
