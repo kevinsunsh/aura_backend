@@ -16,13 +16,48 @@ from .doubao_client.dialog_session import DialogSession
 from .aura_tool.vad_client import VADLocal
 from .aura_tool.vad_split_client import VADSplitLocal
 # from .doubao_client.asr_client import AsrClient
-# from .doubao_client.asr_client_new import AsrClient
+from .doubao_client.asr_client_new import AsrClient
 from .doubao_client.tts_client import TtsClient
 from .message_processor_text import MessageProcessorText
 from .msg_preandpost_processor import MessagePreAndPostProcessor
 from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set, ActiveClientType
 from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 from api_protocol.constant import *
+
+class ASRClient(ABC):
+    """ASR客户端包装器"""
+    def __init__(self, 
+            input_queue,
+            prepost_input_queues,
+            llm_input_queues,
+            asr_result,
+            asr_is_started,
+            asr_lock,
+            active_client,
+            output_client_queue,
+            e2e_output_client_queue,
+            is_process_running,
+            process_timer):
+        self.input_queue = input_queue
+        self.llm_input_queues = llm_input_queues
+        self.asr_result = asr_result
+        self.asr_is_started = asr_is_started
+        self.asr_lock = asr_lock
+        self.output_client_queue = output_client_queue
+        self.e2e_output_client_queue = e2e_output_client_queue
+        self.is_process_running = is_process_running
+        self.process_timer = process_timer
+        self.dialog_session = DialogSession(
+            asr_start_callback=self._on_asr_info,
+            asr_response_callback=self._on_asr_response,
+            asr_end_callback=self._on_asr_ended,
+            tts_sentence_start_callback=self._e2e_on_tts_sentence_start,
+            tts_response_callback=self._e2e_on_tts_response,
+            tts_sentence_end_callback=self._e2e_on_tts_sentence_end,
+            tts_ended_callback=self._e2e_on_tts_ended,
+            chat_response_callback=self._e2e_on_chat_response,
+            chat_end_callback=self._e2e_on_chat_ended
+        )
 
 class LLMClient(ABC):
     """LLM客户端包装器"""
