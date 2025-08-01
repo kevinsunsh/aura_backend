@@ -37,18 +37,18 @@ default_session_req = {
 
 # ASR API配置
 asr_config = {
-    "ws_url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+    "ws_url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
     "headers": {
         "X-Api-Resource-Id": "volc.bigasr.sauc.duration",
-        "X-Api-Access-Key": "wo4mooD0lf3nNJlfNoYsnHzrx7Dl5jrl",
-        "X-Api-App-Key": "4427555468",
+        "X-Api-Access-Key": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",
+        "X-Api-App-Key": "4522921771",
     },
     "audio": {
         "format": "pcm",
         "sample_rate": 16000,
         "bits": 16,
         "channel": 1,
-        "codec": "raw"
+        "language": "zh-CN"
     },
     "seg_duration": 200  # 分片时长(ms) - 双向流式模式推荐200ms以获得最优性能
 }
