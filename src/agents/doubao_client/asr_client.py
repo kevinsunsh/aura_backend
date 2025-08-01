@@ -400,7 +400,7 @@ class AsrClient:
         if result.code == INVALID_AUDIO_FORMAT:
             logger.bind(tag="BASE").error("音频格式错误")
             return
-        logger.bind(tag="BASE").info(f"ASR响应: {result.to_dict()}")
+        # logger.bind(tag="BASE").info(f"ASR响应: {result.to_dict()}")
         # 处理ASR结果
         if result.code == 0:
             if result.is_last_package:

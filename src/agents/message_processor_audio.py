@@ -93,7 +93,7 @@ class ASRClient(ABC):
         """ASR响应事件回调 - 识别出文本内容"""
         if self.asr_is_started.value:
             self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
-            logger.bind(tag="BASE").info(f"ASR响应: {payload}")
+            # logger.bind(tag="BASE").info(f"ASR响应: {payload}")
             self.output_client_queue.put({
                     "event": ServerEvent.ASRResponse,
                     "payload_msg": payload})
