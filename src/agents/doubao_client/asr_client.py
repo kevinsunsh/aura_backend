@@ -421,7 +421,6 @@ class AsrClient:
                 await self._on_asr_response(asr_payload)
                 if result.is_last_package:
                     self.is_asr_info = False
-                    await self._on_asr_ended()
     
     async def on_speak_started(self):
         try:
@@ -434,6 +433,7 @@ class AsrClient:
     async def on_speak_ended(self):
         try:
             self.is_speaking = False
+            await self._on_asr_ended()
             async with self.seq_lock:
                 request = RequestBuilder.new_audio_only_request(self.seq, b"", True)
                 await self.ws.send(request)
@@ -476,10 +476,7 @@ class AsrClient:
             
             while len(self.audio_queue) > 0:
                 audio_buffing = self.audio_queue.popleft()
-                async with self.seq_lock:
-                    request = RequestBuilder.new_audio_only_request(self.seq, audio_buffing)
-                    self.seq += 1
-                    await self.ws.send(request)
+                audio_chunk = audio_buffing + audio_chunk
             async with self.seq_lock:
                 request = RequestBuilder.new_audio_only_request(self.seq, audio_chunk)
                 self.seq += 1

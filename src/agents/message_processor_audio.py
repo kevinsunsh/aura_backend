@@ -82,6 +82,7 @@ class ASRClient(ABC):
                     await client.asr_client.process_audio_chunk(msg["data"])
             elif isinstance(msg, dict) and msg.get("type") == "speak_ended":
                 if client.is_process_running.value:
+                    logger.bind(tag="DELAY").info(f"ASR发送Speak end delay: {int((time.time() - client.process_timer.value) * 1000)}ms")
                     await client.asr_client.on_speak_ended()
             elif isinstance(msg, dict) and msg.get("type") == "speak_started":
                 if client.is_process_running.value:
@@ -90,7 +91,7 @@ class ASRClient(ABC):
     # ASR类事件回调方法
     async def _on_asr_info(self) -> None:
         """ASR信息事件回调 - 识别出首字"""
-        logger.bind(tag="DELAY").info("ASR识别出首字")
+        logger.bind(tag="DELAY").info(f"识别ASRInfo")
         self.output_client_queue.put({"event": ServerEvent.ASRInfo})
         self.llm_input_queues.put({"type": "interruption"})
     
@@ -98,15 +99,16 @@ class ASRClient(ABC):
         """ASR响应事件回调 - 识别出文本内容"""
         self.asr_result.value = payload.get("results", [{}])[0].get("text", "").encode("utf-8")
         # logger.bind(tag="BASE").info(f"ASR响应: {payload}")
-        self.output_client_queue.put({
-                "event": ServerEvent.ASRResponse,
-                "payload_msg": payload})
+        if self.asr_is_started.value:
+            self.output_client_queue.put({
+                    "event": ServerEvent.ASRResponse,
+                    "payload_msg": payload})
     
     async def _on_asr_ended(self) -> None:
         """ASR结束事件回调"""
         self.output_client_queue.put({"event": ServerEvent.ASREnded})
         self.prepost_input_queues.put({"type": "preprocess"})
-        logger.bind(tag="DELAY").info(f"ASR ASREnded")
+        logger.bind(tag="DELAY").info(f"ASR ASREnded delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
 
 class LLMClient(ABC):
     """LLM客户端包装器"""
@@ -286,6 +288,7 @@ class LLM_TTSClient(ABC):
             elif isinstance(msg, dict) and msg.get("type") == "run":
                 if client.is_process_running.value:
                     input_template = msg["data"]
+                    logger.bind(tag="DELAY").info(f"LLM TTSClient run delay: {int((time.time() - client.process_timer.value) * 1000)}ms")
                     await client.text_processor.handle_message({"message": input_template.format(user_input=client.asr_result.value.decode("utf-8"))})
     
     # TTS类事件回调方法
