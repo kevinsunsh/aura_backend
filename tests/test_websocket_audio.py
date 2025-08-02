@@ -1645,7 +1645,7 @@ class WebSocketTestSession:
                     )
                     # logger.info(f"🎵 发送音频: {len(audio_chunk)}")
                     # 获取当前时间戳
-                    await send_audio_task_request(self.websocket, audio_chunk, "test_user_123444")
+                    await send_audio_task_request(self.websocket, audio_chunk, "test_user_1234445555")
                     
                     await asyncio.sleep(0.1)
                 except websockets.exceptions.ConnectionClosed:

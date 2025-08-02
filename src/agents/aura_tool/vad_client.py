@@ -53,12 +53,16 @@ class VADLocal(BaseClient):
     async def _handle_server_response(self, response: Dict[str, Any]):
         if response[0][0][0] == -1:
             if atomic_compare_and_set(self.asr_is_started, self.asr_lock, True, False):
+                # self.asr_input_queues.put({"type": "speak_ended"})
                 self.output_client_queue.put({"event": ServerEvent.ASREnded})
                 self.prepost_input_queues.put({"type": "preprocess"})
                 self.process_timer.value = time.time()
                 logger.bind(tag="DELAY").info("VAD识别结束")
             else:
                 logger.bind(tag="DELAY").warning("VAD识别结束，但ASR未开始")
+        # elif response[0][0][1] == -1:
+        #     self.asr_is_started.value = True
+        #     self.asr_input_queues.put({"type": "speak_started"})
     
     def consumer_worker(self, input_queue, output_queue, is_process_running):
         """常驻worker进程：负责音频处理"""
