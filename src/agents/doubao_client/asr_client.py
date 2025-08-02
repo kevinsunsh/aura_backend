@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import collections
 import gzip
 import json
 import time
@@ -15,7 +16,7 @@ import websockets
 from utils.utils import start_performance_point, end_performance_point
 from .doubao_config import asr_config
 import fastrand
-
+from api_protocol.constant import *
 
 INVALID_AUDIO_FORMAT = 45000151
 # 常量定义
@@ -289,8 +290,8 @@ class AsrClient:
 
         # 连接状态
         self.ws = None
+        self.is_speaking = False
         self.is_running = False
-        self.asr_started = False
         self.seq = 1
         self.seq_lock = asyncio.Lock()
         # 接收任务
@@ -298,10 +299,11 @@ class AsrClient:
         
         # 共享变量 - 会被更新的状态
         self.server_asr_result = ""  # 当前utterance文本
-        
-        # 发送队列和保活机制
-        self.asrend_task = None
-                    
+        self.audio_queue = collections.deque(maxlen=2)
+
+        # 是否识别出首字
+        self.is_asr_info = False
+    
     async def start(self):
         """启动ASR连接"""
         if self.is_running:
@@ -343,9 +345,6 @@ class AsrClient:
             max_size=1000000000,    # 保持大消息支持
         )
         logger.bind(tag="BASE").info("ASR WebSocket连接已建立")
-        self.seq = 1
-        # 发送初始请求
-        await self._send_initial_request()
         self.is_running = True
     
     async def _send_initial_request(self):
@@ -366,9 +365,8 @@ class AsrClient:
             while True:
                 try:
                     if not self.is_running or not self.ws:
-                        logger.bind(tag="BASE").warning("ASR连接未就绪，无法处理音频")
+                        logger.bind(tag="BASE").warning("receive_loop 未就绪，无法处理音频")
                         await self._connect()
-                        continue
                     # 检查WebSocket连接状态
                     if hasattr(self.ws, 'closed') and self.ws.closed:
                         logger.bind(tag="BASE").warning("ASR WebSocket连接已关闭，停止接收")
@@ -400,13 +398,17 @@ class AsrClient:
         if result.code == INVALID_AUDIO_FORMAT:
             logger.bind(tag="BASE").error("音频格式错误")
             return
-        # logger.bind(tag="BASE").info(f"ASR响应: {result.to_dict()}")
+        if result.event == ServerEvent.ConnectionFinished:
+            logger.bind(tag="BASE").info(f"ASR 连接结束: {result.to_dict()}")
+            return
+        logger.bind(tag="BASE").info(f"ASR 响应: {result.to_dict()}")
         # 处理ASR结果
         if result.code == 0:
-            if result.is_last_package:
-                return
             asr_result = result.payload_msg.get("result", {})
             if "text" in asr_result:
+                if not self.is_asr_info:
+                    self.is_asr_info = True
+                    await self._on_asr_info()
                 text = asr_result.get("text")
                 asr_payload = {
                         "results": [
@@ -416,27 +418,27 @@ class AsrClient:
                             }
                         ]
                     }
-                if not self.asr_started:
-                    self.asr_started = True
-                    await self._on_asr_info()
                 await self._on_asr_response(asr_payload)
-                if self.asrend_task is not None:
-                    self.asrend_task.cancel()
-                self.asrend_task = asyncio.create_task(self._asrend_timer())
+                if result.is_last_package:
+                    self.is_asr_info = False
+                    await self._on_asr_ended()
     
-    async def _asrend_timer(self):
+    async def on_speak_started(self):
         try:
-            await asyncio.sleep(1)
-            # 300ms内没有新字，发送asrend消息
-            if self.asr_started:
-                await self._on_asr_ended()
-                self.asr_started = False
+            self.seq = 1
+            await self._send_initial_request()
+            self.is_speaking = True
+        except Exception as e:
+            logger.bind(tag="BASE").error(f"ASR发送Speak start 失败: {e}")
+    
+    async def on_speak_ended(self):
+        try:
+            self.is_speaking = False
             async with self.seq_lock:
                 request = RequestBuilder.new_audio_only_request(self.seq, b"", True)
-                self.seq = 1
                 await self.ws.send(request)
-        except asyncio.CancelledError:
-            pass
+        except Exception as e:
+            logger.bind(tag="BASE").error(f"ASR发送Speak end 失败: {e}")
     
     async def _cleanup_connection(self):
         """清理连接相关资源（不重置重连状态）"""
@@ -468,6 +470,16 @@ class AsrClient:
             logger.bind(tag="BASE").warning("ASR连接未就绪，无法处理音频")
             return
         try:
+            if not self.is_speaking:
+                self.audio_queue.append(audio_chunk)
+                return
+            
+            while len(self.audio_queue) > 0:
+                audio_buffing = self.audio_queue.popleft()
+                async with self.seq_lock:
+                    request = RequestBuilder.new_audio_only_request(self.seq, audio_buffing)
+                    self.seq += 1
+                    await self.ws.send(request)
             async with self.seq_lock:
                 request = RequestBuilder.new_audio_only_request(self.seq, audio_chunk)
                 self.seq += 1

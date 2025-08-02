@@ -11,10 +11,10 @@ from .base_client import BaseClient
 
 class VADLocal(BaseClient):
     """VAD客户端"""
-    def __init__(self, input_queue: multiprocessing.Queue, prepost_input_queues: multiprocessing.Queue, asr_is_started: Any, asr_lock: Any, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
+    def __init__(self, input_queue: multiprocessing.Queue, asr_input_queues: multiprocessing.Queue, asr_is_started: Any, asr_lock: Any, output_client_queue: multiprocessing.Queue, is_process_running: Any, process_timer: Any):
         super().__init__()
         self.input_queue = input_queue
-        self.prepost_input_queues = prepost_input_queues
+        self.asr_input_queues = asr_input_queues
         self.asr_is_started = asr_is_started
         self.asr_lock = asr_lock
         self.output_client_queue = output_client_queue
@@ -22,15 +22,15 @@ class VADLocal(BaseClient):
         self.process_timer = process_timer
     
     @staticmethod
-    def process_entry(input_queue, prepost_input_queues, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
-        asyncio.run(VADLocal.main(input_queue, prepost_input_queues, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
+    def process_entry(input_queue, asr_input_queues, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+        asyncio.run(VADLocal.main(input_queue, asr_input_queues, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, prepost_input_queues, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
+    async def main(input_queue, asr_input_queues, asr_is_started, asr_lock, output_client_queue, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = VADLocal(
             input_queue=input_queue,
-            prepost_input_queues=prepost_input_queues,
+            asr_input_queues=asr_input_queues,
             asr_is_started=asr_is_started,
             asr_lock=asr_lock,
             output_client_queue=output_client_queue,
@@ -53,12 +53,14 @@ class VADLocal(BaseClient):
     async def _handle_server_response(self, response: Dict[str, Any]):
         if response[0][0][0] == -1:
             if atomic_compare_and_set(self.asr_is_started, self.asr_lock, True, False):
-                self.output_client_queue.put({"event": ServerEvent.ASREnded})
-                self.prepost_input_queues.put({"type": "preprocess"})
+                self.asr_input_queues.put({"type": "speak_ended"})
                 self.process_timer.value = time.time()
                 logger.bind(tag="DELAY").info("VAD识别结束")
             else:
                 logger.bind(tag="DELAY").warning("VAD识别结束，但ASR未开始")
+        elif response[0][0][1] == -1:
+            self.asr_is_started.value = True
+            self.asr_input_queues.put({"type": "speak_started"})
     
     def consumer_worker(self, input_queue, output_queue, is_process_running):
         """常驻worker进程：负责音频处理"""
