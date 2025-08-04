@@ -254,19 +254,6 @@ def clear_performance_data():
     """清空全局性能数据"""
     _global_monitor.clear()
 
-
-# 便捷的上下文管理器
-@contextmanager
-def performance_point_context(name: str, metadata: Optional[Dict[str, Any]] = None):
-    """性能统计点上下文管理器（全局监控器）
-    
-    Args:
-        name: 统计点名称
-        metadata: 附加元数据
-    """
-    with _global_monitor.point(name, metadata) as point_id:
-        yield point_id
-
 async def safe_call(func: Callable | None, *args, **kwargs) -> Tuple[Any, Optional[Exception]]:
     """
     安全调用传入的函数func，支持同步和异步函数，捕获异常并返回结果或异常信息。
@@ -323,10 +310,7 @@ if __name__ == "__main__":
     
     # 示例2: 使用上下文管理器
     def process_data():
-        with performance_point_context("数据处理"):
-            time.sleep(0.05)  # 模拟数据处理
-            with performance_point_context("数据验证"):
-                time.sleep(0.02)  # 模拟数据验证
+        time.sleep(0.05)  # 模拟数据处理
     
     # 示例3: 手动控制
     def complex_operation():

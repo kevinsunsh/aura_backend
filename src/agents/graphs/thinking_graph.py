@@ -30,7 +30,7 @@ from utils.todo_mock_func import (
     _build_action_history_summary,
     _build_knowledge_info_str
 )
-from agents.task_manager import TaskManager, TaskType, TaskStateType
+from agents.task.task_manager import TaskManager, TaskType, TaskStateType
 
 async def _analyze_goals(state: ThinkingTaskState, config: RunnableConfig):
     """分析对话目标"""

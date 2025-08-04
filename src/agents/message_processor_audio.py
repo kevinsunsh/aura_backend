@@ -995,7 +995,7 @@ class MessageProcessorAudio:
                     if msg.get('event') == ServerEvent.TTSResponse:
                         self.sleep_time += len(msg.get("payload_msg")) / 32000
                     elif msg.get('event') == ServerEvent.ChatEnded:
-                        self.prepost_input_queues.put({"type": "postprocess", "data": msg.get("payload_msg", {}).get("content", "")})
+                        self.prepost_input_queues.put({"type": "postprocess", "data": msg.get("payload_msg", {})})
                     send_msg = {
                         "event": msg.get('event'),
                         "payload_msg": msg.get("payload_msg")

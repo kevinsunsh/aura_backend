@@ -18,7 +18,6 @@ from .aura_memory.chat_stream import ChatStreamManager
 from .message_processor_audio import MessageProcessorAudio
 from api_protocol.constant import *
 from api_protocol.server_protocol import server_parse_request, server_generate_response
-from utils.utils import performance_point_context
 
 class MessageType(Enum):
     """消息类型枚举"""
@@ -260,7 +259,7 @@ class AuraAgent:
             if message_data.get("event") == ClientEvent.StartSession:
                 chat_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("chat_id", None)
                 user_id = message_data.get("payload_msg", {}).get("chat_info", {}).get("user_id", None)
-                self.session_prompt = message_data.get("payload_msg", {}).get("dialog", {}).get("system_role", "你是一个AI助手，性格温和友善，喜欢帮助朋友解决问题。") + "\n" + message_data.get("payload_msg", {}).get("dialog", {}).get("speaking_style", "说话风趣幽默有梗")
+                self.session_prompt = message_data.get("payload_msg", {}).get("dialog", {}).get("system_role", "你是一个AI助手，性格温和友善，喜欢帮助朋友解决问题。") + "\n" + message_data.get("payload_msg", {}).get("dialog", {}).get("speaking_style", "说话风趣幽默有梗。")
                 logger.bind(tag="BASE").info(f"收到开始session消息: session_prompt={self.session_prompt}")
                 if chat_id is None or user_id is None:
                     logger.error(f"开始session消息中没有chat_id或user_id")
@@ -269,17 +268,15 @@ class AuraAgent:
                 logger.info(f"收到开始session消息: chat_id={chat_id}")
                 
                 # 初始化聊天流和锁
-                with performance_point_context("获取聊天流"):
-                    self.chat_stream = ChatStreamManager.get_instance().get_or_create_chat_stream(chat_id)
-                with performance_point_context("聊天流加锁"):
-                    locked = ChatStreamManager.get_instance().acquire_lock(chat_id)
-                    if not locked:
-                        logger.warning(f"加锁失败: chat_id={chat_id}")
-                        await self.send_websocket_message({
-                            "event": ServerEvent.SessionFailed, 
-                            "payload_msg": {"status": "failed", "message": "无法获取session锁"}
-                        })
-                        return False
+                self.chat_stream = ChatStreamManager.get_instance().get_or_create_chat_stream(chat_id)
+                locked = ChatStreamManager.get_instance().acquire_lock(chat_id)
+                if not locked:
+                    logger.warning(f"加锁失败: chat_id={chat_id}")
+                    await self.send_websocket_message({
+                        "event": ServerEvent.SessionFailed, 
+                        "payload_msg": {"status": "failed", "message": "无法获取session锁"}
+                    })
+                    return False
                 
                 result = await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.session_prompt, self.send_websocket_message)
                 if result == False:

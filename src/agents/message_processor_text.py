@@ -1,38 +1,16 @@
 import re
 import asyncio
 from loguru import logger
-import uuid
-import json
-import random
-from typing import Dict, Any, Callable, Optional, List
-from datetime import datetime
-from enum import Enum
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-# from agents.graphs.thinking_graph import builder as thinking_graph_builder
-# from agents.graphs.observing_graph import builder as observing_graph_builder
-# from agents.graphs.replying_graph import builder as replying_graph_builder
-# from agents.graphs.speaking_graph import builder as speaking_graph_builder
-# from agents.graphs.muttering_graph import builder as muttering_graph_builder
-# from agents.graphs.recalling_graph import builder as recalling_graph_builder
-# from agents.graphs.memorizing_graph import builder as memorizing_graph_builder
-from .aura_memory.message_store import MessageStore, Message
-from utils.utils import performance_point_context
-from .task_manager import TaskManager, TaskType, TaskStateType
-from configuration import get_db_conn_string, get_chat_model_by_type
+from typing import Dict, Any, Callable
+from configuration import get_chat_model_by_type
 from agents.prompts.replying_prompt import (
     REPLYING_TASK_PROMPT,
     REPLYING_REQUIREMENT_PROMPT
 )
-from agents.aura_memory.chat_stream import ChatStreamManager
-from utils.utils import start_performance_point, end_performance_point
-from utils.todo_mock_func import (
-    _build_chat_history_str
-)
 from langchain_core.messages import SystemMessage
 from api_protocol.constant import *
 from agents.doubao_client.doubao_config import speaker_config, MoodLevel, SpeechRate
-import re
+from agents.task.task_manager import TaskManager
 
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
@@ -48,7 +26,6 @@ class MessageProcessorText:
         self.session_prompt = session_prompt
         self.is_interruption = False
         self.interruption_lock = asyncio.Lock()
-        TaskManager.initialize()
     
     async def user_input_interruption(self):
         async with self.interruption_lock:
@@ -110,22 +87,23 @@ class MessageProcessorText:
             chat_model = get_chat_model_by_type("planner")
             prompt = REPLYING_TASK_PROMPT.format(
                 input_info=input_info,
-                task_status="无",
-                task_list="无",
                 requirement=REPLYING_REQUIREMENT_PROMPT,
                 mood=speaker_config["female_2"]["mood_str"],
                 mood_level=MoodLevel.get_mood_level_str(),
                 speech_rate=SpeechRate.get_speech_rate_str(),
-                action="Tilt_head(for question)|Nod(for agreement)|No_action(for neutral/ignore)"
+                action="Tilt_head(for question)|Nod(for agreement)|No_action(for neutral/ignore)",
+                request_tasks_prompt=TaskManager.get_instance().get_request_tasks_prompt(),
+                dismiss_tasks_prompt=TaskManager.get_instance().get_dismiss_tasks_prompt()
             )
+            
             # 生成立即回复
             final_response = ""
-
-            # 状态机解析<response ...>流式内容
+            request_tasks = ""
+            # 状态机解析XML流式内容
             state = "OUTSIDE"
             param_cache = {}
             response_buffer = ""
-            end_tag = "</res>"
+            
             async for chunk in chat_model.astream([
                 SystemMessage(content=prompt)
             ],
@@ -135,21 +113,40 @@ class MessageProcessorText:
                         logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
                     response_buffer += chunk.content
+                    logger.bind(tag="TASK").info(f"response_buffer: {response_buffer}")
                     if state == "OUTSIDE":
-                        idx = response_buffer.find("<res")
-                        if idx != -1:
-                            gt_idx = response_buffer.find(">", idx)
-                            if gt_idx != -1:
-                                tag_str = response_buffer[idx:gt_idx+1]
-                                # 用key=value正则提取参数
-                                params = dict(re.findall(r'(\w+)=([\w\-]+)', tag_str))
-                                param_cache = {
-                                    'mood': params.get('mood'),
-                                    'mood_level': params.get('mood_level'),
-                                    'speech_rate': params.get('speech_rate'),
-                                    'action': params.get('action'),
-                                }
-                                # 解析出参数后立即发送一次消息，event 留 TODO
+                        # 查找开始标签
+                        start_match = re.search(r'<(\w+)>', response_buffer)
+                        if start_match:
+                            tag_name = start_match.group(1)
+                            logger.bind(tag="TASK").info(f"tag_name: {tag_name}")
+                            if tag_name in ["mood", "mood_level", "speech_rate", "action"]:
+                                state = "PARAMS"
+                                current_tag = tag_name
+                                response_buffer = response_buffer[start_match.end():]
+                            elif tag_name == "content":
+                                state = "CONTENT"
+                                response_buffer = response_buffer[start_match.end():]
+                            elif tag_name == "request_tasks":
+                                state = "REQUEST_TASKS"
+                                response_buffer = response_buffer[start_match.end():]
+                            elif tag_name == "dismiss_tasks":
+                                state = "DISMISS_TASKS"
+                                response_buffer = response_buffer[start_match.end():]
+                            else:
+                                response_buffer = response_buffer[start_match.end():]
+                    elif state == "PARAMS":
+                        logger.bind(tag="TASK").info(f"response_buffer in PARAMS: {response_buffer}")
+                        # 处理参数标签
+                        end_tag = f"</{current_tag}>"
+                        end_pos = response_buffer.find(end_tag)
+                        if end_pos != -1:
+                            param_value = response_buffer[:end_pos].strip()
+                            param_cache[current_tag] = param_value
+                            response_buffer = response_buffer[end_pos + len(end_tag):]
+                            
+                            # 如果所有参数都收集完了，发送参数
+                            if len(param_cache) >= 4:  # mood, mood_level, speech_rate, action
                                 if self.websocket_send_callback:
                                     await self.websocket_send_callback({
                                         "event": ServerEvent.ChatResponseParams,
@@ -157,19 +154,16 @@ class MessageProcessorText:
                                             "params": param_cache
                                         }
                                     })
-                                state = "INSIDE"
-                                response_buffer = response_buffer[gt_idx+1:]
-                        else:
-                            find_todo_idx = response_buffer.find("</todo_tasks>")
-                            if find_todo_idx != -1:
-                                # 匹配 <todo_tasks> 标签之间的内容
-                                match = re.search(r"<todo_tasks>(.*?)</todo_tasks>", response_buffer, re.DOTALL)
-                                todo_tasks = match.group(1).strip() if match else ""
-                                logger.debug(f"找到可执行任务: {todo_tasks}")
-                    elif state == "INSIDE":
-                        end_idx = response_buffer.find(end_tag)
-                        if end_idx != -1:
-                            content_piece = response_buffer[:end_idx]
+                            logger.bind(tag="TASK").info(f"param_cache: {param_cache}")
+                            state = "OUTSIDE"
+                    
+                    elif state == "CONTENT":
+                        logger.bind(tag="TASK").info(f"response_buffer in CONTENT: {response_buffer}")
+                        # 处理内容标签
+                        end_tag = "</content>"
+                        end_pos = response_buffer.find(end_tag)
+                        if end_pos != -1:
+                            content_piece = response_buffer[:end_pos]
                             if content_piece:
                                 logger.debug(f"生成回复内容: {content_piece}")
                                 final_response += content_piece
@@ -180,7 +174,7 @@ class MessageProcessorText:
                                             "content": str(content_piece)
                                         }
                                     })
-                            response_buffer = response_buffer[end_idx+len(end_tag):]
+                            response_buffer = response_buffer[end_pos + len(end_tag):]
                             state = "OUTSIDE"
                         else:
                             # 高效end_tag前缀判断逻辑：逐位比较，只要有一位不等立即break
@@ -205,13 +199,35 @@ class MessageProcessorText:
                                     })
                                 response_buffer = response_buffer[send_len:]
                             # 如果全部是前缀，先不发，等下次token
+                    
+                    elif state == "REQUEST_TASKS":
+                        logger.bind(tag="TASK").info(f"response_buffer in REQUEST_TASKS: {response_buffer}")
+                        # 处理任务标签
+                        end_pos = response_buffer.find("</request_tasks>")
+                        if end_pos != -1:
+                            request_tasks = response_buffer[:end_pos].strip()
+                            logger.bind(tag="TASK").info(f"request_tasks: {request_tasks}")
+                            response_buffer = response_buffer[end_pos + len("</request_tasks>"):]
+                            state = "OUTSIDE"
+                    elif state == "DISMISS_TASKS":
+                        logger.bind(tag="TASK").info(f"response_buffer in DISMISS_TASKS: {response_buffer}")
+                        # 处理任务标签
+                        end_pos = response_buffer.find("</dismiss_tasks>")
+                        if end_pos != -1:
+                            dismiss_tasks = response_buffer[:end_pos].strip()
+                            logger.bind(tag="TASK").info(f"dismiss_tasks: {dismiss_tasks}")
+                            response_buffer = response_buffer[end_pos + len("</dismiss_tasks>"):]
+                            state = "OUTSIDE"
             if self.websocket_send_callback:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
                     "payload_msg": {
-                        "content": final_response
+                        "content": final_response,
+                        "request_tasks": request_tasks,
+                        "dismiss_tasks": dismiss_tasks
                     }
                 })
+            logger.bind(tag="TASK").info(f"final_response: {final_response}, request_tasks: {request_tasks}, dismiss_tasks: {dismiss_tasks}")
         except asyncio.CancelledError:
             logger.info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:

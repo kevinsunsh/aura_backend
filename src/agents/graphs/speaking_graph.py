@@ -26,7 +26,7 @@ from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
     _build_action_history_summary
 )
-from agents.task_manager import TaskManager, TaskType, TaskStateType
+from agents.task.task_manager import TaskManager, TaskType, TaskStateType
 
 
 reply_max_latency = 30 #s
