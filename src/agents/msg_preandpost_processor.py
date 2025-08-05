@@ -126,14 +126,6 @@ class MessagePreAndPostProcessor(ABC):
         )
         # 存储到消息存储
         MessageStore.get_instance().add_message(message)
-        # 处理异常未调度的started任务
-        started_tasks = TaskManager.get_instance().get_task_instances_by_state(self.user_id, TaskStateType.STARTED)
-        if started_tasks:
-            try:
-                for task in started_tasks:
-                    TaskManager.get_instance().call_task_executor(task.task_instance_id, task.task_params)
-            except Exception as e:
-                logger.bind(tag="TASK").error(f"started_tasks 任务解析异常: {e}")
     
     async def postprocess(self, bot_response: dict) -> str:
         """后处理用户输入"""
@@ -219,6 +211,16 @@ class MessagePreAndPostProcessor(ABC):
                 logger.bind(tag="TASK").warning(f"dismiss_tasks XML解析失败: {e}")
             except Exception as e:
                 logger.bind(tag="TASK").error(f"dismiss_tasks 任务解析异常: {e}")
+        
+        # 处理异常未调度的started任务
+        started_tasks = TaskManager.get_instance().get_task_instances_by_state(self.user_id, TaskStateType.STARTED)
+        if started_tasks:
+            try:
+                for task in started_tasks:
+                    if task.created_at < int(datetime.now().timestamp() * 1000) - 60 * 1000:
+                        TaskManager.get_instance().call_task_executor(task.task_instance_id, task.task_params)
+            except Exception as e:
+                logger.bind(tag="TASK").error(f"started_tasks 任务解析异常: {e}")
 
         # 处理time_out_running_tasks
         running_tasks = TaskManager.get_instance().get_task_instances_by_state(self.user_id, TaskStateType.RUNNING)
