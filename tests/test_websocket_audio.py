@@ -1098,7 +1098,7 @@ class WebSocketTestSession:
     
     def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com"):
         self.base_uri = uri
-        # self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
+        self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
@@ -1428,7 +1428,8 @@ class WebSocketTestSession:
                 logger.info("🎵 TTS语音合成开始...")
                 # 记录TTSSentenceStart时间戳
                 session_id = payload_msg.get("session_id", "")
-                audio_format = payload_msg.get("type", "int16")
+                # audio_format = payload_msg.get("type", "int16")
+                audio_format = "int16"
                 if audio_format != self.audio_format:
                     self.audio_format = audio_format
                 if self.session_id != session_id:

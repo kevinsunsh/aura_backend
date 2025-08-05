@@ -7,9 +7,6 @@ REPLYING_TASK_PROMPT = """
 {requirement}
 请严格按照以下xml格式回复：
 <response>
-<content>
-# response content here in string
-</content>
 <mood>
 {mood}
 </mood>
@@ -22,6 +19,9 @@ REPLYING_TASK_PROMPT = """
 <action>
 {action}
 </action>
+<content>
+# response content here in string
+</content>
 <request_tasks>
 {request_tasks_prompt}
 </request_tasks>

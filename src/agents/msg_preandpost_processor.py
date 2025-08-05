@@ -18,11 +18,10 @@ from utils.utils import ActiveClientType
 
 class MessagePreAndPostProcessor(ABC):
     """MISC客户端包装器"""
-    def __init__(self, input_queue, llm_input_queues, asr_result, active_client, is_process_running, process_timer):
+    def __init__(self, input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
         self.input_queue = input_queue
         self.llm_input_queues = llm_input_queues
         self.asr_result = asr_result
-        self.active_client = active_client
         self.is_process_running = is_process_running
         self.process_timer = process_timer
         self.history_check_interval = 20000 #ms
@@ -31,17 +30,16 @@ class MessagePreAndPostProcessor(ABC):
         self.session_prompt = ""
     
     @staticmethod
-    def process_entry(input_queue, llm_input_queues, asr_result, active_client, is_process_running, process_timer):
-        asyncio.run(MessagePreAndPostProcessor.main(input_queue, llm_input_queues, asr_result, active_client, is_process_running, process_timer))
+    def process_entry(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
+        asyncio.run(MessagePreAndPostProcessor.main(input_queue, llm_input_queues, asr_result, is_process_running, process_timer))
     
     @staticmethod
-    async def main(input_queue, llm_input_queues, asr_result, active_client, is_process_running, process_timer):
+    async def main(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
         loop = asyncio.get_event_loop()
         client = MessagePreAndPostProcessor(
             input_queue=input_queue,
             llm_input_queues=llm_input_queues,
             asr_result=asr_result,
-            active_client=active_client,
             is_process_running=is_process_running,
             process_timer=process_timer
         )
@@ -99,20 +97,8 @@ class MessagePreAndPostProcessor(ABC):
             "type": "run",
             "data": input_template
         })
-        self.active_client.value = ActiveClientType.ALT_CLIENT
         await asyncio.sleep(0.5)
-        # chat_model = get_chat_model_by_type("planner")
-        # prompt = CHECK_RESPONSE_PROMPT.format(
-        #     user_input=self.asr_result.value.decode("utf-8")
-        # )
-        # result = await chat_model.ainvoke([
-        #     SystemMessage(content=prompt)
-        # ])
-        # is_chat = ("true" in result.content.lower())
-        # if is_chat:
-        #     self.active_client.value = ActiveClientType.E2E_CLIENT
-        # else:
-        #     self.active_client.value = ActiveClientType.ALT_CLIENT
+        
         # 创建消息对象
         message = Message(
             msg_id=str(uuid.uuid4()),

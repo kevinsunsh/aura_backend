@@ -40,7 +40,8 @@ logger.add(
     sys.stdout,
     level="INFO",
     filter=log_filter,
-    format=tag_color_format
+    format=tag_color_format,
+    encoding="utf-8"
 )
 
 from agents.aura import AuraAgent
