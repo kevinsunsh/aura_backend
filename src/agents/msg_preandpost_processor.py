@@ -1,16 +1,17 @@
 import uuid
+import json
 import asyncio
 from abc import ABC
 from loguru import logger
 from datetime import datetime
 import xml.etree.ElementTree as ET
-from .task.task_manager import TaskManager, TaskStateType
-from agents.aura_memory.chat_stream import ChatStreamManager
-from agents.aura_memory.message_store import MessageStore, Message
+from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
+from agents.agent_memory.chat_stream import ChatStreamManager
+from agents.agent_memory.message_store import MessageStore, Message
 from utils.todo_mock_func import (
     _build_chat_history_str
 )
-from agents.prompts.check_response_prompt import CHECK_RESPONSE_PROMPT
+from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 from configuration import get_chat_model_by_type
 from langchain_core.messages import SystemMessage
 from utils.utils import ActiveClientType
@@ -70,7 +71,8 @@ class MessagePreAndPostProcessor(ABC):
             now_timestamp - self.history_check_interval, 
             now_timestamp
         )
-        
+        logger.bind(tag="DELAY").info(f"history_messages delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+
         # 更新观察信息
         chat_history_str = _build_chat_history_str(history_messages)
         chat_history_str += f"{self.user_id}说:"
@@ -85,11 +87,14 @@ class MessagePreAndPostProcessor(ABC):
             input_template += f"当前对话目标：{goals_str}\n"
         if len(knowledge_info_str) > 0:
             input_template += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
-        input_template += TaskManager.get_instance().get_all_tasks_status_prompt_for_llm(self.user_id)
+        input_template += TaskManager.get_instance().get_all_tasks_status_prompt_for_llm(self.user_id).replace('{', '').replace('}', '').replace('"', '')
+        logger.bind(tag="DELAY").info(f"Task status delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
         input_template += TaskManager.get_instance().get_task_prompt_for_llm_by_type("search_info")
+        logger.bind(tag="DELAY").info(f"search_info task delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
         input_template += f"最近的聊天记录：{chat_history_str}\n"
         
         logger.bind(tag="TASK").info(f"input_template: {input_template}")
+        logger.bind(tag="DELAY").info(f"Preprocess delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
         self.llm_input_queues.put({
             "type": "run",
             "data": input_template
@@ -121,14 +126,14 @@ class MessagePreAndPostProcessor(ABC):
         )
         # 存储到消息存储
         MessageStore.get_instance().add_message(message)
-
-        started_tasks = TaskManager.get_instance().get_tasks_by_state(self.user_id, TaskStateType.STARTED)
+        # 处理异常未调度的started任务
+        started_tasks = TaskManager.get_instance().get_task_instances_by_state(self.user_id, TaskStateType.STARTED)
         if started_tasks:
-            for task in started_tasks:
-                # TEMP: 模拟任务结果 todo: 根据任务类型和参数，调用不同的任务执行函数
-                if task.task_name == "web_search":
-                    TaskManager.get_instance().set_task_state_and_result(self.user_id, task.task_id, TaskStateType.FINISHED, "搜索结果：上海天气晴朗，气温20-25度，空气质量良好。")
-                    break
+            try:
+                for task in started_tasks:
+                    TaskManager.get_instance().call_task_executor(task.task_instance_id, task.task_params)
+            except Exception as e:
+                logger.bind(tag="TASK").error(f"started_tasks 任务解析异常: {e}")
     
     async def postprocess(self, bot_response: dict) -> str:
         """后处理用户输入"""
@@ -169,14 +174,25 @@ class MessagePreAndPostProcessor(ABC):
                 for task_elem in task_elements:
                     task_name = task_elem.get('name')
                     task_params = task_elem.get('params', '')  # params可能不存在
-                    
                     if task_name:
                         logger.bind(tag="TASK").info(f"解析到任务: name={task_name}, params={task_params}")
-                        
+                        task_info = TaskManager.get_instance().get_task_by_name(task_name)
+                        if task_info:
+                            task_params_schema = task_info.task_request_params_schema
+                        else:
+                            continue
+                        chat_model = get_chat_model_by_type("planner")
+                        prompt = TASK_PARAMS_PROMPT.format(
+                            params_input=task_params,
+                            params_schema=task_params_schema
+                        )
+                        task_params_str = await chat_model.ainvoke([
+                            SystemMessage(content=prompt)
+                        ])
                         # 调度任务
-                        task_id = TaskManager.get_instance().schedule_task(self.user_id, task_name, task_params)
-                        if task_id:
-                            logger.bind(tag="TASK").info(f"成功调度任务: {task_id}")
+                        task_instance_id = TaskManager.get_instance().schedule_task_instance(self.user_id, task_name, json.loads(task_params_str.content))
+                        if task_instance_id:
+                            logger.bind(tag="TASK").info(f"成功调度任务: {task_instance_id}")
                         else:
                             logger.bind(tag="TASK").warning(f"调度任务失败: {task_name}")
             except ET.ParseError as e:
@@ -195,24 +211,37 @@ class MessagePreAndPostProcessor(ABC):
                 root = ET.fromstring(dismiss_tasks)
                 task_elements = root.findall('task')
                 for task_elem in task_elements:
-                    task_id = task_elem.get('id')
-                    if task_id:
-                        TaskManager.get_instance().dismiss_task(self.user_id, task_id, TaskStateType.FINISHED)
-                        logger.bind(tag="TASK").info(f"重置任务状态: {task_id}")
+                    task_instance_id = task_elem.get('id')
+                    if task_instance_id:
+                        TaskManager.get_instance().dismiss_task_instance(self.user_id, task_instance_id, TaskStateType.FINISHED)
+                        logger.bind(tag="TASK").info(f"重置任务状态: {task_instance_id}")
             except ET.ParseError as e:
                 logger.bind(tag="TASK").warning(f"dismiss_tasks XML解析失败: {e}")
             except Exception as e:
                 logger.bind(tag="TASK").error(f"dismiss_tasks 任务解析异常: {e}")
 
-        # 处理time_out_tasks
-        running_tasks = TaskManager.get_instance().get_tasks_by_state(self.user_id, TaskStateType.RUNNING)
+        # 处理time_out_running_tasks
+        running_tasks = TaskManager.get_instance().get_task_instances_by_state(self.user_id, TaskStateType.RUNNING)
         if running_tasks:
             try:
                 for task in running_tasks:
                     if task.updated_at < int(datetime.now().timestamp() * 1000) - 60 * 1000:
-                        TaskManager.get_instance().dismiss_task(self.user_id, task.task_id, TaskStateType.RUNNING)
-                        logger.bind(tag="TASK").info(f"忽略超时任务: {task.task_id}")
+                        TaskManager.get_instance().dismiss_task_instance(self.user_id, task.task_instance_id, TaskStateType.RUNNING)
+                        logger.bind(tag="TASK").info(f"忽略超时任务: {task.task_instance_id}")
             except ET.ParseError as e:
-                logger.bind(tag="TASK").warning(f"time_out_tasks XML解析失败: {e}")
+                logger.bind(tag="TASK").warning(f"time_out_running_tasks XML解析失败: {e}")
             except Exception as e:
-                logger.bind(tag="TASK").error(f"time_out_tasks 任务解析异常: {e}")
+                logger.bind(tag="TASK").error(f"time_out_running_tasks 任务解析异常: {e}")
+        
+        # 处理time_out_finished_tasks
+        finished_tasks = TaskManager.get_instance().get_task_instances_by_state(self.user_id, TaskStateType.FINISHED)
+        if finished_tasks:
+            try:
+                for task in finished_tasks:
+                    if task.updated_at < int(datetime.now().timestamp() * 1000) - 120 * 1000:
+                        TaskManager.get_instance().dismiss_task_instance(self.user_id, task.task_instance_id, TaskStateType.FINISHED)
+                        logger.bind(tag="TASK").info(f"忽略超时任务: {task.task_instance_id}")
+            except ET.ParseError as e:
+                logger.bind(tag="TASK").warning(f"time_out_finished_tasks XML解析失败: {e}")
+            except Exception as e:
+                logger.bind(tag="TASK").error(f"time_out_finished_tasks 任务解析异常: {e}")

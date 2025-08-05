@@ -20,8 +20,8 @@ from agents.prompts.speaking_prompt import (
     SPEAKING_ACTION_PLANNER_PROMPT,
     SPEAKING_GENERATOR_FOLLOW_UP_PROMPT
 )
-from agents.aura_memory.message_store import MessageStore, Message
-from agents.aura_memory.chat_stream import ChatStreamManager
+from agents.agent_memory.message_store import MessageStore, Message
+from agents.agent_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
     _build_action_history_summary

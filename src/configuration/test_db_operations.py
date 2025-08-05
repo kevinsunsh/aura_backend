@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 import asyncio
 from loguru import logger
-from agents.aura_memory.Hippocampus import EntorhinalCortex, Hippocampus, GraphNodes, GraphEdges
-from agents.aura_memory.message_store import MessageStore
+from agents.agent_memory.Hippocampus import EntorhinalCortex, Hippocampus, GraphNodes, GraphEdges
+from agents.agent_memory.message_store import MessageStore
 
 async def test_entorhinal_cortex_db_operations():
     """测试EntorhinalCortex类的数据库操作"""

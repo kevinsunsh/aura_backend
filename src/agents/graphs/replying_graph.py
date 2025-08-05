@@ -20,8 +20,8 @@ from agents.prompts.replying_prompt import (
     REPLYING_GENERATOR_DIRECT_PROMPT,
     REPLYING_CHECK_PROMPT
 )
-from agents.aura_memory.message_store import MessageStore, Message
-from agents.aura_memory.chat_stream import ChatStreamManager
+from agents.agent_memory.message_store import MessageStore, Message
+from agents.agent_memory.chat_stream import ChatStreamManager
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
     _build_chat_history_str

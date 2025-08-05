@@ -7,6 +7,9 @@ REPLYING_TASK_PROMPT = """
 {requirement}
 请严格按照以下xml格式回复：
 <response>
+<content>
+# response content here in string
+</content>
 <mood>
 {mood}
 </mood>
@@ -19,9 +22,6 @@ REPLYING_TASK_PROMPT = """
 <action>
 {action}
 </action>
-<content>
-# response content here in string
-</content>
 <request_tasks>
 {request_tasks_prompt}
 </request_tasks>
@@ -32,19 +32,18 @@ REPLYING_TASK_PROMPT = """
 """
 
 REPLYING_REQUIREMENT_PROMPT = """
-回复应该：
-1. 选择合适的情绪，语速和动作，避免过于平淡
-2. 以"你"的角度发言（不要自己与自己对话！）
-3. 符合你的性格特征和身份细节
-4. 可以适当利用相关知识，但不要生硬引用
-
 任务使用要求：
 1. 同样的任务同样参数不要重复request
 2. request任务的事不用告诉用户
-3. 通过聊天向用户收集足够的参数
+3. 通过聊天向用户收集足够信息转化为参数, 当你觉得参数足够时，才request任务，反之不要request任务
 4. 对于running状态的任务，请用户耐心等待结果
-5. 对于finished状态的任务，找机会告诉用户结果即可
-6. 告诉过用户结果的任务或者觉得用户不需要结果的任务记得dismiss
+5. 对于finished状态的任务，找机会告诉用户结果即可，记得dismiss不需要的finished任务
+
+回复应该：
+1. 选择合适的情绪，语速和动作，避免过于平淡
+2. 在引用相关知识和任务结果时，要转化成自己的语言口语化表达，不要直接引用
+3. 符合你的性格特征和身份细节
+4. 以"你"的角度接着聊天发言（不要自己与自己对话！）
 """
 
 REPLYING_CHECK_PROMPT = """

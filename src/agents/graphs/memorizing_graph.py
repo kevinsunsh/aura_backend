@@ -14,9 +14,9 @@ from langgraph.types import Command
 from agents.states.memorizing_state import MemorizingTaskState
 from configuration.config import GraphConfiguration
 from loguru import logger
-from agents.aura_memory.message_store import MessageStore, Message
-from agents.aura_memory.Hippocampus import hippocampus_manager
-from agents.aura_memory.memory_monitor import monitor_memory_operation, get_memory_monitor
+from agents.agent_memory.message_store import MessageStore, Message
+from agents.agent_memory.Hippocampus import hippocampus_manager
+from agents.agent_memory.memory_monitor import monitor_memory_operation, get_memory_monitor
 from agents.task.task_manager import TaskManager, TaskType, TaskStateType
 
 

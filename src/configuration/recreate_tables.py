@@ -8,7 +8,7 @@
 
 import sys
 import os
-from agents.aura_memory.database.database import Database
+from agents.agent_memory.database.database import Database
 from configuration.database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
 from configuration.config import get_db_conn_string
 

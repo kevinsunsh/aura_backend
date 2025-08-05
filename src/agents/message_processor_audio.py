@@ -243,7 +243,8 @@ class LLM_TTSClient(ABC):
         self.is_process_running = is_process_running
         self.session_id = session_id
         self.text_processor = MessageProcessorText(
-            websocket_send_callback=self._text_processor_callback
+            websocket_send_callback=self._text_processor_callback,
+            process_timer=process_timer
         )
         self.tts_client = TtsClient(
             tts_sentence_start_callback=self._llm_on_tts_sentence_start,

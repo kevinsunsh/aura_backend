@@ -76,7 +76,7 @@ Aura Backend 系统使用 PostgreSQL 数据库，包含多个功能模块的数�
 ## 消息系统相关表
 
 ### 4. messages (消息表)
-**文件**: `src/agents/aura_memory/message_store.py`
+**文件**: `src/agents/agent_memory/message_store.py`
 
 | 字段 | 类型 | 说明 | 约束 |
 |------|------|------|------|
@@ -96,7 +96,7 @@ Aura Backend 系统使用 PostgreSQL 数据库，包含多个功能模块的数�
 - `idx_messages_platform` (platform)
 
 ### 5. chat_streams (聊天流表)
-**文件**: `src/agents/aura_memory/chat_stream.py`
+**文件**: `src/agents/agent_memory/chat_stream.py`
 
 | 字段 | 类型 | 说明 | 约束 |
 |------|------|------|------|
@@ -113,7 +113,7 @@ Aura Backend 系统使用 PostgreSQL 数据库，包含多个功能模块的数�
 ## 记忆系统相关表
 
 ### 6. graph_nodes (记忆图节点表)
-**文件**: `src/agents/aura_memory/Hippocampus.py`
+**文件**: `src/agents/agent_memory/Hippocampus.py`
 
 | 字段 | 类型 | 说明 | 约束 |
 |------|------|------|------|
@@ -129,7 +129,7 @@ Aura Backend 系统使用 PostgreSQL 数据库，包含多个功能模块的数�
 - `idx_graph_nodes_last_modified` (last_modified)
 
 ### 7. graph_edges (记忆图边表)
-**文件**: `src/agents/aura_memory/Hippocampus.py`
+**文件**: `src/agents/agent_memory/Hippocampus.py`
 
 | 字段 | 类型 | 说明 | 约束 |
 |------|------|------|------|
@@ -291,7 +291,7 @@ WHERE tablename IN ('configurations', 'messages', 'chat_streams', 'graph_nodes',
 
 ### 连接池状态
 ```python
-from agents.aura_memory.database.database import Database
+from agents.agent_memory.database.database import Database
 db = Database()
 pool_info = db.get_connection_info()
 print(pool_info)

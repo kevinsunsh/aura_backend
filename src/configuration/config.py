@@ -2,14 +2,10 @@ import os
 from enum import Enum
 from dataclasses import dataclass, fields
 from typing import Any, Optional, Dict, Literal
-import threading
-import time
-
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
-
-# 导入新的数据库配置系统
+from agents.agent_memory.database.connection_config import DatabaseConfigManager
 from .config_loader import load_config, load_specific_config, get_config_loader, Config
 
 # 模型缓存
@@ -119,22 +115,6 @@ def get_chat_model_by_type(
             }
         )
 
-# 数据库配置相关函数
-def get_db_conn_string() -> str:
-    """
-    获取数据库连接字符串
-    
-    Returns:
-        数据库连接字符串
-    """
-    from config import settings
-    
-    return (
-        f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
-        f"@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
-        "?sslmode=disable"
-    )
-
 def load_config_from_database(environment: str = "production") -> Any:
     """
     从数据库加载配置
@@ -145,7 +125,7 @@ def load_config_from_database(environment: str = "production") -> Any:
     Returns:
         配置对象
     """
-    db_conn_string = get_db_conn_string()
+    db_conn_string = DatabaseConfigManager.get_config_by_environment().get_connection_string()
     return load_config(environment=environment, db_conn_string=db_conn_string)
 
 def load_specific_config_from_database(config_name: str, environment: str = "production") -> Any:

@@ -6,14 +6,12 @@
 
 # 导入主要组件
 from .config_loader import (
-    DatabaseConfigLoader,
+    ConfigLoader,
     load_config,
     load_specific_config,
     get_config_loader,
     Config
 )
-
-from .config_manager import DatabaseConfigManager
 
 from .database_models import (
     ConfigurationModel,
@@ -26,7 +24,6 @@ from .config import (
     load_specific_config_from_database,
     initialize_database_configs,
     migrate_file_config_to_database,
-    get_db_conn_string,
     global_config,
     get_chat_model_by_type,
     GraphConfiguration
@@ -41,9 +38,6 @@ __all__ = [
     'get_config_loader',
     'Config',
     
-    # 配置管理器
-    'DatabaseConfigManager',
-    
     # 数据库模型
     'ConfigurationModel',
     'ConfigurationHistoryModel',
@@ -54,7 +48,6 @@ __all__ = [
     'load_specific_config_from_database',
     'initialize_database_configs',
     'migrate_file_config_to_database',
-    'get_db_conn_string',
     'global_config',
     'get_chat_model_by_type',
     'GraphConfiguration'

@@ -19,7 +19,7 @@ from loguru import logger
 from agents.prompts.muttering_prompt import (
     MUTTERING_CHOOSER_PROMPT
 )
-from agents.aura_memory.message_store import Message
+from agents.agent_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
 from agents.task.task_manager import TaskManager, TaskType, TaskStateType
 

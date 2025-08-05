@@ -8,8 +8,7 @@ from sqlalchemy import and_, or_
 import threading
 from datetime import datetime
 
-from agents.aura_memory.database.database import Database
-from agents.aura_memory.database.connection_config import DatabaseConfigManager
+from agents.agent_memory.database.database import Database
 from .database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
 from .config_base import ConfigBase
 from .official_configs import (
@@ -31,7 +30,7 @@ class ConfigCache:
     version: str
     environment: str
 
-class DatabaseConfigManager:
+class ConfigManager:
     """数据库配置管理器"""
     
     def __init__(self, db_conn_string: str = None):

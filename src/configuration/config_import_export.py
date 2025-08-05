@@ -16,9 +16,9 @@ import argparse
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from configuration.config_manager import DatabaseConfigManager
-from configuration.config_loader import DatabaseConfigLoader
-from configuration.config import get_db_conn_string
+from configuration.config_manager import ConfigManager
+from configuration.config_loader import ConfigLoader
+from agents.agent_memory.database.connection_config import DatabaseConfigManager
 
 class ConfigImportExport:
     """配置导入导出工具"""
@@ -30,9 +30,9 @@ class ConfigImportExport:
         Args:
             db_conn_string: 数据库连接字符串
         """
-        self.db_conn_string = db_conn_string or get_db_conn_string()
-        self.config_manager = DatabaseConfigManager(self.db_conn_string)
-        self.config_loader = DatabaseConfigLoader(self.db_conn_string)
+        self.db_conn_string = db_conn_string or DatabaseConfigManager.get_config_by_environment().get_connection_string()
+        self.config_manager = ConfigManager(self.db_conn_string)
+        self.config_loader = ConfigLoader(self.db_conn_string)
     
     def export_configs(self, categories: List[str] = None, environment: str = "production", output_file: str = None) -> Dict[str, Any]:
         """

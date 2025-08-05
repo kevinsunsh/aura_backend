@@ -1,10 +1,7 @@
-from sqlalchemy import Column, String, Integer, Boolean, Text, Float, DateTime, BigInteger, Index, JSON, PrimaryKeyConstraint
+from typing import Dict, Any
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.sql import func
-from agents.aura_memory.database.database import Base
-import json
-from typing import Dict, Any, Optional
-from datetime import datetime
+from agents.agent_memory.database.database import Base
+from sqlalchemy import Column, String, Integer, Boolean, Text, Float, DateTime, BigInteger, Index, JSON, PrimaryKeyConstraint
 
 class ConfigurationModel(Base):
     """配置数据库模型"""

@@ -1,7 +1,7 @@
 import re
 from loguru import logger
 from typing import List, Dict, Any, Tuple
-from agents.aura_memory.message_store import Message
+from agents.agent_memory.message_store import Message
 from configuration.config import Config, global_config
 
 # 工具函数

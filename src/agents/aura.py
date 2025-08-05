@@ -14,7 +14,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 # 配置相关
 from config import settings
 
-from .aura_memory.chat_stream import ChatStreamManager
+from .agent_memory.chat_stream import ChatStreamManager
 from .message_processor_audio import MessageProcessorAudio
 from api_protocol.constant import *
 from api_protocol.server_protocol import server_parse_request, server_generate_response

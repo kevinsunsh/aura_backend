@@ -1,8 +1,7 @@
 from loguru import logger
 from typing import Dict, Any, Optional, Type, TypeVar
 from dataclasses import dataclass, field
-from agents.aura_memory.database.database import Database
-from .config_manager import DatabaseConfigManager
+from .config_manager import ConfigManager
 from .config_base import ConfigBase
 from .official_configs import (
     MemoryConfig, ChatConfig, BotConfig, PersonalityConfig, IdentityConfig,
@@ -49,7 +48,7 @@ class Config(ConfigBase):
     tool: ToolConfig = None
     debug: DebugConfig = None
 
-class DatabaseConfigLoader:
+class ConfigLoader:
     """数据库配置加载器"""
     
     def __init__(self, db_conn_string: str = None):
@@ -60,7 +59,7 @@ class DatabaseConfigLoader:
             db_conn_string: 数据库连接字符串
         """
         self.db_conn_string = db_conn_string
-        self.config_manager = DatabaseConfigManager(db_conn_string)
+        self.config_manager = ConfigManager(db_conn_string)
         
         # 配置映射
         self._config_mapping = {
@@ -546,7 +545,7 @@ class DatabaseConfigLoader:
 # 全局配置加载器实例
 _global_config_loader = None
 
-def get_config_loader(db_conn_string: str = None) -> DatabaseConfigLoader:
+def get_config_loader(db_conn_string: str = None) -> ConfigLoader:
     """
     获取全局配置加载器实例
     
@@ -559,7 +558,7 @@ def get_config_loader(db_conn_string: str = None) -> DatabaseConfigLoader:
     global _global_config_loader
     
     if _global_config_loader is None:
-        _global_config_loader = DatabaseConfigLoader(db_conn_string)
+        _global_config_loader = ConfigLoader(db_conn_string)
     
     return _global_config_loader
 

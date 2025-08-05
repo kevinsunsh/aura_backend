@@ -4,7 +4,7 @@ import asyncio
 from loguru import logger
 import datetime
 from typing import Any, Callable, Dict
-from agents.aura_memory.person_info.person_store import PersonInfo  # 新增导入
+from agents.agent_memory.person_info.person_store import PersonInfo  # 新增导入
 from configuration.config import global_config, get_chat_model_by_type
 
 import json  # 新增导入

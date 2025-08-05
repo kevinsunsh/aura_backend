@@ -11,12 +11,11 @@ import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy import text
-from configuration.database_models import ConfigurationModel, ConfigurationHistoryModel, ConfigurationTemplateModel
-
+from agents.agent_memory.database.connection_config import DatabaseConfigManager
 try:
-    from configuration.config_loader import DatabaseConfigLoader, load_config
+    from configuration.config_loader import ConfigLoader, load_config
     from configuration.config import get_db_conn_string
-    from agents.aura_memory.database.database import Database
+    from agents.agent_memory.database.database import Database
 except ImportError as e:
     print(f"导入错误: {e}")
     sys.exit(1)
@@ -37,8 +36,8 @@ def print_config_info(config_data: Dict[str, Any], indent: int = 0):
 def list_configs(args):
     """列出所有配置"""
     try:
-        db_conn_string = get_db_conn_string()
-        config_loader = DatabaseConfigLoader(db_conn_string)
+        db_conn_string = DatabaseConfigManager.get_config_by_environment().get_connection_string()
+        config_loader = ConfigLoader(db_conn_string)
         
         configs = config_loader.get_config_list(environment=args.environment)
         

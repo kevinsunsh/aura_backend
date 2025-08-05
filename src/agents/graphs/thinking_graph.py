@@ -22,7 +22,7 @@ from agents.prompts.thinking_prompt import (
     THINKING_ACTION_PLANNER_PROMPT,
     THINKING_ACTION
 )
-from agents.aura_memory.message_store import Message
+from agents.agent_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
     _build_chat_history_str,
