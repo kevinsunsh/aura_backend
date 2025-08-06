@@ -87,7 +87,7 @@ class MessageProcessorText:
     async def _replying_response_task(self, input_info: str):
         try:            
             # 使用LLM生成立即回复
-            chat_model = get_chat_model_by_type("planner")
+            chat_model = get_chat_model_by_type("pfc_action_planner")
             logger.bind(tag="DELAY").debug(f"get model delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
             prompt = REPLYING_TASK_PROMPT.format(
                 input_info=input_info,
@@ -107,7 +107,7 @@ class MessageProcessorText:
             state = "OUTSIDE"
             param_cache = {}
             response_buffer = ""
-            logger.bind(tag="DELAY").debug(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+            logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
             async for chunk in chat_model.astream([
                 SystemMessage(content=prompt)
             ],

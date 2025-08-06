@@ -6,7 +6,7 @@ vars:
   sid: "aurabkdev"
   region: "cn-beijing"
   functionName: "aura-backend-function-dev"
-  version: "0.0.24"
+  version: "0.0.26"
 
 resources:
   aura_backend_dev:
@@ -33,6 +33,10 @@ resources:
             Value: TOS
           - Key: SERVER_PORT
             Value: '8000'
+          - Key: OPENAI_API_KEY
+            Value: dc7e10e7-1095-40ae-a172-3a7d16fc1e61
+          - Key: OPENAI_BASE_URL
+            Value: https://ark.cn-beijing.volces.com/api/v3
         VpcConfig:
           EnableVpc: true
           EnableSharedInternetAccess: true

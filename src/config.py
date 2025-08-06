@@ -7,15 +7,8 @@ load_dotenv(f"{os.path.dirname(__file__)}/.env")
 class Settings(BaseSettings):
     # OpenAI 配置
     OPENAI_API_KEY: str
-    OPENAI_MODEL: str
-    OPENAI_PROVIDER: str
     OPENAI_BASE_URL: str
 
-    THINKING_MODEL: str
-    GEN_MODEL: str
-    LITE_MODEL: str
-    VISION_MODEL: str
-    
     # 服务器配置
     SERVER_PORT: int = 5876
     
@@ -36,10 +29,8 @@ class Settings(BaseSettings):
     SERPER_API_KEY: str = ""
     
     # 应用配置
-    APP_NAME: str = "Creative Comparison Analysis Agent"
     DEBUG: bool = True
-    RESPONSE_CALLBACK_URL: str = ""
-
+    
     LOG_DIR: str = f"{os.path.dirname(__file__)}/../logs"
     class Config:
         env_file = ".env"
