@@ -54,62 +54,62 @@ def main():
     task_manager = TaskManager.get_instance()
     task_manager.initialize()
     # 重建表（可选，用于清理数据）
-    # print("=== 重建表 ===")
-    # recreate_success = task_manager.recreate_tables()
-    # print(f"重建表: {'成功' if recreate_success else '失败'}")
+    print("=== 重建表 ===")
+    recreate_success = task_manager.recreate_tables()
+    print(f"重建表: {'成功' if recreate_success else '失败'}")
     
-    # try:
-    #     # 添加查询天气任务
-    #     weather_success = task_manager.register_task(
-    #         task_id=str(uuid.uuid4()),
-    #         task_type="search_info",
-    #         task_name="web_search",
-    #         task_type_description="调用搜索引擎搜索信息",
-    #         task_request_url="https://api.coze.cn/v1/workflow/stream_run",
-    #         task_request_method="POST",
-    #         task_request_headers={"Content-Type": "application/json",
-    #                              "Authorization": "Bearer pat_9qFaDWjr3h1BbJfGjte4U7tO2AyBC3okUOZLLgCXMBADLQ0sL5WqBBeQxhZ1LmHm"},
-    #         task_request_params_description="提供搜索内容",
-    #         task_request_params_schema={
-    #             "type": "object",
-    #             "properties": {
-    #                 "workflow_id": {"type": "string", "description": "工作流ID", "default": "7534616931148890122"},
-    #                 "app_id": {"type": "string", "description": "应用ID", "default": "7534611500569346057"},
-    #                 "parameters": {
-    #                     "type": "object",
-    #                     "properties": {
-    #                         "BOT_USER_INPUT": {"type": "string", "description": "用户输入", "default": "上海的天气"},
-    #                         "query": {"type": "string", "description": "查询内容", "default": "上海的天气"}
-    #                     },
-    #                     "required": ["BOT_USER_INPUT", "query"]
-    #                 }
-    #             },
-    #             "required": ["workflow_id", "app_id", "parameters"]
-    #         },
-    #         task_response_description="返回搜索结果",
-    #         task_response_schema={
-    #             "type": "object",
-    #             "properties": {
-    #                 "result": {"type": "string", "description": "搜索结果"}
-    #             }
-    #         },
-    #         task_is_active=True
-    #     )
-        
-    #     print("=== 添加任务结果 ===")
-    #     print(f"搜索信息任务: {'成功' if weather_success else '失败'}")
-        
-    #     # 获取激活的任务
-    #     print("\n=== 激活的任务 ===")
-    #     active_tasks = task_manager.get_all_active_tasks()
-    #     for task in active_tasks:
-    #         print_task_info(task)
     try:
-        print("\n=== 查询特定任务 ===")
-        weather_tasks = task_manager.get_task_instances_by_state("test_user_123444", TaskStateType.STARTED)
-        for weather_task in weather_tasks:
-            print_task_instance_info(weather_task)
-            task_manager.set_task_state_and_result(weather_task.user_id, weather_task.task_instance_id, TaskStateType.DISMISSED, "running")
+        # 添加查询天气任务
+        weather_success = task_manager.register_task(
+            task_id=str(uuid.uuid4()),
+            task_type="search_info",
+            task_name="web_search",
+            task_type_description="调用搜索引擎搜索信息",
+            task_request_url="https://api.coze.cn/v1/workflow/stream_run",
+            task_request_method="POST",
+            task_request_headers={"Content-Type": "application/json",
+                                 "Authorization": "Bearer pat_9qFaDWjr3h1BbJfGjte4U7tO2AyBC3okUOZLLgCXMBADLQ0sL5WqBBeQxhZ1LmHm"},
+            task_request_params_description="提供搜索内容",
+            task_request_params_schema={
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string", "description": "工作流ID", "default": "7534616931148890122"},
+                    "app_id": {"type": "string", "description": "应用ID", "default": "7534611500569346057"},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "BOT_USER_INPUT": {"type": "string", "description": "用户输入", "default": "上海的天气"},
+                            "query": {"type": "string", "description": "查询内容", "default": "上海的天气"}
+                        },
+                        "required": ["BOT_USER_INPUT", "query"]
+                    }
+                },
+                "required": ["workflow_id", "app_id", "parameters"]
+            },
+            task_response_description="返回搜索结果",
+            task_response_schema={
+                "type": "object",
+                "properties": {
+                    "result": {"type": "string", "description": "搜索结果"}
+                }
+            },
+            task_is_active=True
+        )
+        
+        print("=== 添加任务结果 ===")
+        print(f"搜索信息任务: {'成功' if weather_success else '失败'}")
+        
+        # 获取激活的任务
+        print("\n=== 激活的任务 ===")
+        active_tasks = task_manager.get_all_active_tasks()
+        for task in active_tasks:
+            print_task_info(task)
+    # try:
+    #     print("\n=== 查询特定任务 ===")
+    #     weather_tasks = task_manager.get_task_instances_by_state("test_user_123444", TaskStateType.STARTED)
+    #     for weather_task in weather_tasks:
+    #         print_task_instance_info(weather_task)
+    #         task_manager.set_task_state_and_result(weather_task.user_id, weather_task.task_instance_id, TaskStateType.DISMISSED, "running")
         # 查询特定任务
     #     print("\n=== 查询特定任务 ===")
     #     weather_tasks = task_manager.get_tasks_by_type("search_info")

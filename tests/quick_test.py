@@ -46,11 +46,11 @@ def quick_test():
         # 3. 预览一个配置
         # print("\n👀 3. 预览内存配置...")
         # tool.preview_config("memory", environment="production")
-        tool.preview_config("model", environment="test")
+        # tool.preview_config("model", environment="test")
         # return True
         # 4. 从文件重新导入（测试环境）
         # print(f"\n📥 4. 从文件导入配置到测试环境...")
-        success = tool.import_from_file(test_file, environment="test", overwrite=True)
+        success = tool.import_from_file(test_file, environment="production", overwrite=True)
         
         # if success:
         #     print("✓ 导入成功")

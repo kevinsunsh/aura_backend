@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     SERVER_PORT: int = 5876
     
     # PostgreSQL 配置 (用于LangGraph checkpoint)
-    POSTGRES_HOST: str = "sh-postgres-c93lya14.sql.tencentcdb.com"
-    POSTGRES_PORT: int = 25561
+    # POSTGRES_HOST: str = "sh-postgres-c93lya14.sql.tencentcdb.com"
+    POSTGRES_HOST: str = "postgresfb9e27de51dc.rds-pg.ivolces.com"
+    # POSTGRES_PORT: int = 25561
+    POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "aura-PostgreSQL"
     POSTGRES_USER: str = "root"
     POSTGRES_PASSWORD: str = "X1KxZeMkM#nobqKiq"
