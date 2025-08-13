@@ -15,6 +15,11 @@ from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 from configuration import get_chat_model_by_type
 from langchain_core.messages import SystemMessage
 from utils.utils import ActiveClientType
+from agents.prompt_manager.prompt_manager import PromptManager
+from agents.prompt_manager.character.manager import DBManager as CharacterManager
+from agents.prompt_manager.world_info.scanner import WorldInfoScanner
+from agents.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
+from agents.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
 
 class MessagePreAndPostProcessor(ABC):
     """MISC客户端包装器"""
@@ -63,39 +68,47 @@ class MessagePreAndPostProcessor(ABC):
     
     async def preprocess(self) -> str:
         """预处理用户输入"""
-        now_timestamp = int(datetime.now().timestamp() * 1000)
-        history_messages = MessageStore.get_instance().get_messages_by_time_range(
-            self.chat_id, 
-            now_timestamp - self.history_check_interval, 
-            now_timestamp
-        )
-        logger.bind(tag="DELAY").info(f"history_messages delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-
+        # now_timestamp = int(datetime.now().timestamp() * 1000)
+        # history_messages = MessageStore.get_instance().get_messages_by_time_range(
+        #     self.chat_id, 
+        #     now_timestamp - self.history_check_interval, 
+        #     now_timestamp
+        # )
+        # logger.bind(tag="DELAY").info(f"history_messages delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
         # 更新观察信息
-        chat_history_str = _build_chat_history_str(history_messages)
-        chat_history_str += f"{self.user_id}说:"
-        chat_history_str += """ {user_input}\n"""
-        goals_str = ""
-        knowledge_info_str = ""
+        # chat_history_str = _build_chat_history_str(history_messages)
+        # chat_history_str += f"{self.user_id}说:"
+        # chat_history_str += """ {user_input}\n"""
+        # goals_str = ""
+        # knowledge_info_str = ""        
+        # input_template = f"人设：{self.session_prompt}\n"
+        # input_template += f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        # input_template += f"当前地点：上海\n"
+        # if len(goals_str) > 0:
+        #     input_template += f"当前对话目标：{goals_str}\n"
+        # if len(knowledge_info_str) > 0:
+        #     input_template += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
+        # input_template += TaskManager.get_instance().get_all_tasks_status_prompt_for_llm(self.user_id).replace('{', '').replace('}', '').replace('"', '')
+        # logger.bind(tag="DELAY").info(f"Task status delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+        # input_template += TaskManager.get_instance().get_task_prompt_for_llm_by_type("search_info")
+        # logger.bind(tag="DELAY").info(f"search_info task delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+        # input_template += f"最近的聊天记录：{chat_history_str}\n"
         
-        input_template = f"人设：{self.session_prompt}\n"
-        input_template += f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        input_template += f"当前地点：上海\n"
-        if len(goals_str) > 0:
-            input_template += f"当前对话目标：{goals_str}\n"
-        if len(knowledge_info_str) > 0:
-            input_template += f"供参考的相关知识和记忆：{knowledge_info_str}\n"
-        input_template += TaskManager.get_instance().get_all_tasks_status_prompt_for_llm(self.user_id).replace('{', '').replace('}', '').replace('"', '')
-        logger.bind(tag="DELAY").info(f"Task status delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-        input_template += TaskManager.get_instance().get_task_prompt_for_llm_by_type("search_info")
-        logger.bind(tag="DELAY").info(f"search_info task delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-        input_template += f"最近的聊天记录：{chat_history_str}\n"
-        
-        logger.bind(tag="TASK").info(f"input_template: {input_template}")
+        # logger.bind(tag="TASK").info(f"input_template: {input_template}")
+        character = CharacterManager().get_character_by_name("Seraphina")
+        system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
+        generator = PromptManager(
+            chat_id="test_user_123444",
+            user_id="test_user_123444",
+            system_preset=system_preset,
+            character=character,
+            world_info_scanner=WorldInfoScanner()
+        )
+        prompts, token_usage = await generator.generate(GenerationType.NORMAL, GenerationOptions())
         logger.bind(tag="DELAY").info(f"Preprocess delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
         self.llm_input_queues.put({
             "type": "run",
-            "data": input_template
+            "data": prompts
         })
         await asyncio.sleep(0.5)
         
@@ -107,7 +120,9 @@ class MessagePreAndPostProcessor(ABC):
             platform="default",
             m_type="text",
             content=self.asr_result.value.decode("utf-8"),
-            data={},
+            data={
+                "role": "user"
+            },
             created_at=int(datetime.now().timestamp() * 1000)
         )
         # 存储到消息存储
@@ -115,7 +130,6 @@ class MessagePreAndPostProcessor(ABC):
     
     async def postprocess(self, bot_response: dict) -> str:
         """后处理用户输入"""
-                # 创建消息对象
         message = Message(
             msg_id=str(uuid.uuid4()),
             chat_id=self.chat_id,
@@ -123,7 +137,9 @@ class MessagePreAndPostProcessor(ABC):
             platform="default",
             m_type="text",
             content=bot_response.get("content", ""),
-            data={},
+            data={
+                "role": "assistant"
+            },
             created_at=int(datetime.now().timestamp() * 1000)
         )
         # 存储到消息存储

@@ -114,7 +114,7 @@ speaker_config = {
     }
 }
 
-def get_tts_payload_bytes(uid, event, speaker='', text='', mood_code='neutral', mood_level='medium', speech_rate='normal'):
+def get_tts_payload_bytes(uid, event, speaker='', text='', mood_code='neutral', mood_level=3, speech_rate=3):
     return str.encode(json.dumps({
         "user": {"uid": uid},
         "event": event,
@@ -131,8 +131,8 @@ def get_tts_payload_bytes(uid, event, speaker='', text='', mood_code='neutral', 
                 "sample_rate": 24000,
                 "channel": 1,
                 "emotion": mood_code,
-                "emotion_scale": MoodLevel.map_to_scale(mood_level),
-                "speech_rate": SpeechRate.map_to_scale(speech_rate),
+                "emotion_scale": mood_level,
+                "speech_rate": speech_rate,
             }
         }
     }))

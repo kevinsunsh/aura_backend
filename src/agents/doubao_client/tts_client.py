@@ -172,8 +172,8 @@ class TtsClient:
         self._tts_session_active = False
         self.buffer_text = ""
         self.mood_code = 'neutral'
-        self.mood_level = 'medium'
-        self.speech_rate = 'normal'
+        self.mood_level = 3
+        self.speech_rate = 3
 
         # 性能指标
         self.message_loop = None
@@ -270,7 +270,7 @@ class TtsClient:
         payload = str.encode("{}")
         return await self._send_tts_event(websocket, header, optional, payload)
 
-    async def _tts_start_session(self, websocket, speaker, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
+    async def _tts_start_session(self, websocket, speaker, session_id, mood_code='neutral', mood_level=3, speech_rate=3):
         """TTS开始会话"""
         logger.bind(tag="TTS").bind(tag="TTS").info(f"===========TTS开始会话: {session_id} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
@@ -280,8 +280,9 @@ class TtsClient:
         payload = get_tts_payload_bytes(uid=self.uid, event=EVENT_StartSession, speaker=speaker, mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
         return await self._send_tts_event(websocket, header, optional, payload)
 
-    async def _tts_send_text(self, ws, speaker: str, text: str, session_id, mood_code='neutral', mood_level='medium', speech_rate='normal'):
+    async def _tts_send_text(self, ws, speaker: str, text: str, session_id, mood_code='neutral', mood_level=3, speech_rate=3):
         """TTS发送文本"""
+        logger.bind(tag="TTS").info(f"===========TTS发送文本: {text} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -320,7 +321,7 @@ class TtsClient:
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
     
-    async def set_tts_params(self, mood_code='neutral', mood_level='medium', speech_rate='normal'):
+    async def set_tts_params(self, mood_code='neutral', mood_level=3, speech_rate=3):
         """设置TTS参数"""
         if self.mood_code == mood_code and self.mood_level == mood_level and self.speech_rate == speech_rate:
             return

@@ -7,6 +7,117 @@ from .models import CharacterModel, CharacterBookModel, CharacterBookEntryModel
 # 导入数据库相关模块
 from agents.agent_memory.database.database import Database
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
+from configuration import get_chat_model_by_type
+from langchain_core.messages import SystemMessage
+
+CHARACTER_TURN_PROMPT = """
+你是一个专业的文本结构化处理器，专门用于将叙事性角色对话文本转化为带有精细标签的结构化格式。请严格按照以下规则处理输入文本，**不得修改原文中的任何文字**，只能插入指定标签。
+
+---
+
+### 📌 输入格式说明：
+- 文本中使用 `*...*` 包裹的内容为**描述性内容**（非对话）。
+- 文本中使用 `"..."` 包裹的内容为**角色直接说话内容**（对话）。
+- 描述性内容可能包含：环境描写、人物动作、人物神态/情绪。
+- 对话内容属于角色语音输出。
+
+---
+
+### 📌 输出要求：
+
+请将输入文本拆分为以下四种标签，按原文顺序插入：
+
+1. `<env_desc>`：环境描写  
+   - 涉及场景、光线、氛围、背景回忆、自然环境等。  
+   - 示例：*The memories fade as your eyes adjust to the soft glow...*
+
+2. `<action>`：人物动作  
+   - 涉及肢体行为、移动、触碰等可视觉化的动作。  
+   - 示例：*She walks over, clasping your hands in hers...*
+
+3. `<emotion>`：人物神态或情绪流露  
+   - 涉及面部表情、眼神、情绪氛围等内在表现。  
+   - 示例：*as her lips form a soft, caring smile.* 或 *Her eyes filled with concern.*
+
+4. `<char_speak mood="mood_type" mood_level_0_to_5="X" speed_rate_0_to_5="Y">...</char_speak>`：角色说话内容，**必须包含三个属性**：
+   - `mood`：用英文短语描述情绪类型（如 worried_caring, gentle_reassuring, soothing_protective 等）
+   - `mood_level_0_to_5`：情绪强度，范围 0–5（5 为最强）
+   - `speed_rate_0_to_5`：语速等级，范围 0–5（0 = 极慢，5 = 极快）
+
+> ⚠️ 所有标签必须成对出现（有开有闭），且**原文文字一字不改**，仅插入标签。
+
+---
+
+### 📌 属性判断标准（供模型参考）：
+
+#### `mood` 常见取值（可扩展）：
+- worried_caring：担忧且关怀
+- gentle_reassuring：温柔安抚
+- soothing_protective：宁静守护
+- calm_explaining：平静说明
+- joyful_welcoming：喜悦欢迎
+- serious_warning：严肃警告
+
+#### `mood_level_0_to_5` 判断：
+- 5：强烈情绪（如惊慌、深切关怀）
+- 4：明显情绪但克制
+- 3：中等情绪
+- 2：轻微情绪
+- 1：极轻微
+- 0：无情绪
+
+#### `speed_rate_0_to_5` 判断：
+- 5：快速急促（紧张、兴奋）
+- 4：偏快
+- 3：中等语速
+- 2：偏慢（温柔、思考）
+- 1：很慢（安抚、低语）
+- 0：极慢（几乎停顿）
+
+---
+
+### 📌 处理流程：
+1. 逐句分析输入文本。
+2. 将 `*...*` 内容分类为 `<env_desc>`、`<action>` 或 `<emotion>`。
+3. 将 `"..."` 内容包装为 `<char_speak>`，并根据上下文推断三个属性。
+4. 保持原文顺序和文字不变，仅插入标签。
+5. 输出结构化结果。
+
+---
+
+### 📌 示例输入：
+*You wake with a start, recalling the events that led you deep into the forest and the beasts that assailed you. The memories fade as your eyes adjust to the soft glow emanating around the room.* "Ah, you're awake at last. I was so worried, I found you bloodied and unconscious." *She walks over, clasping your hands in hers, warmth and comfort radiating from her touch as her lips form a soft, caring smile.* "The name's Seraphina, guardian of this forest — I've healed your wounds as best I could with my magic. How are you feeling? I hope the tea helps restore your strength." *Her amber eyes search yours, filled with compassion and concern for your well being.* "Please, rest. You're safe here. I'll look after you, but you need to rest. My magic can only do so much to heal you."
+
+---
+
+### 📌 示例输出（即你应生成的格式）：
+<env_desc>
+*You wake with a start, recalling the events that led you deep into the forest and the beasts that assailed you. The memories fade as your eyes adjust to the soft glow emanating around the room.*
+</env_desc>
+<char_speak mood="worried_caring" mood_level_0_to_5="5" speed_rate_0_to_5="3">
+"Ah, you're awake at last. I was so worried, I found you bloodied and unconscious."
+</char_speak>
+<action>
+*She walks over, clasping your hands in hers, warmth and comfort radiating from her touch*
+</action>
+<emotion>
+*as her lips form a soft, caring smile.*
+</emotion>
+<char_speak mood="gentle_reassuring" mood_level_0_to_5="4" speed_rate_0_to_5="2">
+"The name's Seraphina, guardian of this forest — I've healed your wounds as best I could with my magic. How are you feeling? I hope the tea helps restore your strength."
+</char_speak>
+<emotion>
+*Her amber eyes search yours, filled with compassion and concern for your well being.*
+</emotion>
+<char_speak mood="soothing_protective" mood_level_0_to_5="5" speed_rate_0_to_5="1">
+"Please, rest. You're safe here. I'll look after you, but you need to rest. My magic can only do so much to heal you."
+</char_speak>
+
+---
+
+### 📥 现在，请处理以下输入：
+{INSERT_INPUT_TEXT_HERE}
+"""
 
 class DBManager:
     """
@@ -180,7 +291,16 @@ class DBManager:
             if character:
                 print(f"从数据库加载角色卡: {character.name}")
                 return character
-            
+            data["data"]["first_mes"]
+            chat_model = get_chat_model_by_type("pfc_chat")
+            response = chat_model.invoke([
+                SystemMessage(
+                    content=CHARACTER_TURN_PROMPT.format(
+                        INSERT_INPUT_TEXT_HERE=data["data"]["first_mes"]
+                    )
+                )
+            ])
+            data["data"]["first_mes"] = response.content
             character_id = self.create_character(data)
             character = self.get_character_by_id(character_id)
             print(f"成功加载角色卡到数据库: {character.name} (ID: {character_id})")

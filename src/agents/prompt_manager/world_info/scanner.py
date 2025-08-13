@@ -77,7 +77,7 @@ class WorldInfoBuffer:
         
     def get(self, entry: WorldInfoEntry, scan_state: ScanState) -> str:
         """获取要扫描的文本"""
-        text = self.chat[-1000:] if self.chat else ""  # 限制扫描范围
+        text = "".join(self.chat[-1000:]) if self.chat else ""  # 限制扫描范围
         if self.injected_text:
             text += "\n" + self.injected_text
         if self.recursive_text and scan_state == ScanState.RECURSION:

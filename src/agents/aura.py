@@ -135,9 +135,7 @@ class AuraAgent:
             if 'error' not in result:
                 logger.debug(f"协议解析成功: message_type={result.get('message_type')}, "
                            f"event={result.get('event')}, session_id={result.get('session_id')}")
-            
             return result
-                
         except Exception as e:
             logger.error(f"解析二进制协议消息失败: {e}")
             # 降级处理，返回空消息

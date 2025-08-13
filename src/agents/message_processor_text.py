@@ -10,11 +10,154 @@ from agents.prompts.replying_prompt import (
 )
 from api_protocol.constant import *
 from langchain_core.messages import SystemMessage
-from agents.agent_memory.task.task_manager import TaskManager
-from agents.doubao_client.doubao_config import speaker_config, MoodLevel, SpeechRate
+from langchain_core.messages import HumanMessage, AIMessage
+
+class StreamingTagParser:
+    def __init__(self, tag_callback=None):
+        self.buffer = ""
+        self.state = "OUTSIDE"
+        self.current_tag = None
+        self.attributes = {}
+        self.tag_callback = tag_callback
+
+    async def feed(self, chunk: str):
+        """接收新的文本块"""
+        self.buffer += chunk
+        await self._process_state()
+
+    async def _process_state(self):
+        """状态机处理"""
+        if self.state == "OUTSIDE":
+            await self._handle_outside()
+        elif self.state == "CONTENT_STREAMING":
+            await self._handle_content_streaming()
+
+    async def _handle_outside(self):
+        """处理 OUTSIDE 状态"""
+        # 查找开始标签 '<'
+        pos = self.buffer.find('<')
+        if pos == -1:
+            return  # 等待更多内容
+        # 输出标签前的纯文本内容（如果有）
+        if pos > 0:
+            self.buffer = self.buffer[pos:]
+            return
+        # 检查是否是标签开始
+        match = re.match(r'<(\w+)([^>]*?)>', self.buffer)
+        if match:
+            tag_name = match.group(1)
+            attr_str = match.group(2)
+            self.current_tag = tag_name
+            # 简化属性解析，直接去掉外层引号
+            self.attributes = {}
+            if attr_str.strip():
+                # 使用正则表达式匹配，然后去掉外层引号
+                self.attributes = self._parse_attributes_simple(attr_str)
+            # 发送标签开始事件
+            await self._send_tag_start()
+            # 进入内容流式处理状态
+            self.state = "CONTENT_STREAMING"
+            self.buffer = self.buffer[match.end():]
+            await self._process_state()  # 继续处理
+
+    async def _handle_content_streaming(self):
+        """处理 CONTENT_STREAMING 状态"""
+        # 查找结束标签
+        close_tag = f"</{self.current_tag}>"
+        end_pos = self.buffer.find(close_tag)
+        
+        if end_pos != -1:
+            # 找到结束标签，发送剩余内容并结束
+            content = self.buffer[:end_pos]
+            if content:
+                await self._send_content_chunk(content)
+            
+            # 发送标签结束事件
+            await self._send_tag_end()
+            
+            # 重置状态
+            self.state = "OUTSIDE"
+            self.current_tag = None
+            self.attributes = {}
+            self.buffer = self.buffer[end_pos + len(close_tag):]
+            await self._process_state()  # 继续处理
+        else:
+            # 没找到结束标签，检查部分匹配
+            partial_match_len = self._get_partial_match_len(close_tag)
+            safe_len = len(self.buffer) - partial_match_len
+            
+            if safe_len > 0:
+                # 有安全内容可以发送
+                content = self.buffer[:safe_len]
+                await self._send_content_chunk(content)
+                self.buffer = self.buffer[safe_len:]
+            # 如果没有安全内容，等待更多输入
+
+    def _get_partial_match_len(self, close_tag: str) -> int:
+        """计算 buffer 尾部与 close_tag 的最大前缀匹配长度"""
+        max_check = min(len(self.buffer), len(close_tag))
+        matched = 0
+        for i in range(max_check):
+            if self.buffer[-max_check + i] == close_tag[i]:
+                matched += 1
+            else:
+                break
+        return matched
+
+    def _parse_attributes_simple(self, attr_str: str) -> dict:
+        """
+        简化属性解析，直接去掉外层引号
+        
+        Args:
+            attr_str: 属性字符串，如 'name="value" params="上海当前天气 2025年8月12日"'
+            
+        Returns:
+            dict: 解析后的属性字典
+        """
+        attributes = {}
+        
+        # 匹配 name="value" 或 name='value' 或 name=value 格式
+        # 使用正则表达式匹配，然后去掉外层引号
+        # 修复：无引号的值应该匹配到下一个属性或标签结束，而不是到空格
+        pattern = r'(\w+)=([\'"])(.*?)\2'
+        matches = re.findall(pattern, attr_str)
+        
+        for key, quote, value in matches:
+            attributes[key] = value.strip()
+        return attributes
+
+    async def _send_tag_start(self):
+        """发送标签开始事件"""
+        if not self.tag_callback:
+            return
+        await self.tag_callback({
+            "tag": self.current_tag,
+            "status": "start",
+            "attributes": self.attributes
+        })
+
+    async def _send_content_chunk(self, content: str):
+        """发送内容块"""
+        if not self.tag_callback or not content:
+            return
+        await self.tag_callback({
+            "tag": self.current_tag,
+            "status": "streaming",
+            "content": content
+        })
+
+    async def _send_tag_end(self):
+        """发送标签结束事件"""
+        if not self.tag_callback:
+            return
+        await self.tag_callback({
+            "tag": self.current_tag,
+            "status": "end"
+        })
 
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
+
     def __init__(self, 
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
                  process_timer: Any = None):
@@ -22,6 +165,98 @@ class MessageProcessorText:
         self.user_id = None
         self.websocket_send_callback = websocket_send_callback
         self.process_timer = process_timer
+        self.parser = StreamingTagParser(tag_callback=self.tag_callback)
+        self.request_tasks = []
+        self.dismiss_tasks = []
+
+    async def tag_callback(self, payload):
+        if payload["tag"] == "char_speak":
+            if payload["status"] == "start":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatResponseParams,
+                        "payload_msg": {
+                            "params": payload["attributes"]
+                        }
+                    })
+            elif payload["status"] == "streaming":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatResponse,
+                        "payload_msg": {
+                            "content": payload["content"]
+                        }
+                    })
+            elif payload["status"] == "end":
+                pass
+        elif payload["tag"] == "env_desc":
+            if payload["status"] == "start":
+                pass
+            elif payload["status"] == "streaming":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatEnvDesc,
+                        "payload_msg": {
+                            "content": payload["content"]
+                        }
+                    })
+            elif payload["status"] == "end":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatEnvDescEnd,
+                    })
+        elif payload["tag"] == "action":
+            if payload["status"] == "start":
+                pass
+            elif payload["status"] == "streaming":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatAction,
+                        "payload_msg": {
+                            "content": payload["content"]
+                        }
+                    })
+            elif payload["status"] == "end":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatActionEnd,
+                    })
+        elif payload["tag"] == "emotion":
+            if payload["status"] == "start":
+                pass
+            elif payload["status"] == "streaming":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatEmotion,
+                        "payload_msg": {
+                            "content": payload["content"]
+                        }
+                    })
+            elif payload["status"] == "end":
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatEmotionEnd,
+                    })
+        elif payload["tag"] == "request_task":
+            if payload["status"] == "start":
+                task_string = ""
+                for key, value in payload['attributes'].items():
+                    task_string += f"{key}=\"{value}\" "
+                self.request_tasks.append(f"<task {task_string} />")
+            elif payload["status"] == "streaming":
+                pass
+            elif payload["status"] == "end":
+                pass
+        elif payload["tag"] == "dismiss_task":
+            if payload["status"] == "start":
+                task_string = ""
+                for key, value in payload['attributes'].items():
+                    task_string += f"{key}=\"{value}\" "
+                self.dismiss_tasks.append(f"<task {task_string} />")
+            elif payload["status"] == "streaming":
+                pass
+            elif payload["status"] == "end":
+                pass
     
     async def start(self, chat_id: str, user_id: str, session_prompt: str = ""):
         self.chat_id = chat_id
@@ -38,11 +273,11 @@ class MessageProcessorText:
         async with self.interruption_lock:
             self.is_interruption = False
     
-    async def handle_message(self, input_info: str) -> Dict[str, Any]:
+    async def handle_message(self, prompts: list[dict]) -> Dict[str, Any]:
         """处理文本消息"""
         try:
             await self.user_input_resume()
-            await self._replying_response_task(input_info)
+            await self._replying_response_task(prompts)
         except Exception as e:
             logger.error(f"处理文本消息失败: {e}")
     
@@ -84,158 +319,60 @@ class MessageProcessorText:
     #     except Exception as e:
     #         logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
 
-    async def _replying_response_task(self, input_info: str):
+    async def _replying_response_task(self, prompts: list[dict]):
         try:            
             # 使用LLM生成立即回复
-            chat_model = get_chat_model_by_type("pfc_action_planner")
-            logger.bind(tag="DELAY").debug(f"get model delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-            prompt = REPLYING_TASK_PROMPT.format(
-                input_info=input_info,
-                requirement=REPLYING_REQUIREMENT_PROMPT,
-                mood=speaker_config["female_2"]["mood_str"],
-                mood_level=MoodLevel.get_mood_level_str(),
-                speech_rate=SpeechRate.get_speech_rate_str(),
-                action="Tilt_head(for question)|Nod(for agreement)|No_action(for neutral/ignore)",
-                request_tasks_prompt=TaskManager.get_instance().get_request_tasks_prompt(),
-                dismiss_tasks_prompt=TaskManager.get_instance().get_dismiss_tasks_prompt()
-            )
-            
+            # chat_model = get_chat_model_by_type("pfc_action_planner")
+            # logger.bind(tag="DELAY").debug(f"get model delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+            # prompt = REPLYING_TASK_PROMPT.format(
+            #     input_info=input_info,
+            #     requirement=REPLYING_REQUIREMENT_PROMPT,
+            #     mood=speaker_config["female_2"]["mood_str"],
+            #     mood_level=MoodLevel.get_mood_level_str(),
+            #     speech_rate=SpeechRate.get_speech_rate_str(),
+            #     action="Tilt_head(for question)|Nod(for agreement)|No_action(for neutral/ignore)",
+            #     request_tasks_prompt=TaskManager.get_instance().get_request_tasks_prompt(),
+            #     dismiss_tasks_prompt=TaskManager.get_instance().get_dismiss_tasks_prompt()
+            # )
+            # character = CharacterManager().get_character_by_name("Seraphina")
+            # system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
+            # generator = PromptManager(
+            #     chat_id="test_user_123444",
+            #     user_id="test_user_123444",
+            #     system_preset=system_preset,
+            #     character=character,
+            #     world_info_scanner=WorldInfoScanner()
+            # )
+            # prompts = await generator.generate(GenerationType.NORMAL, GenerationOptions())
+            chat_model = get_chat_model_by_type("pfc_chat")
+            messages = []
+            for prompt in prompts:
+                if prompt["role"] == "user":
+                    messages.append(HumanMessage(content=prompt["content"]))
+                elif prompt["role"] == "assistant":
+                    messages.append(AIMessage(content=prompt["content"]))
+                else:
+                    messages.append(SystemMessage(content=prompt["content"]))
             # 生成立即回复
             final_response = ""
-            request_tasks = ""
-            # 状态机解析XML流式内容
-            state = "OUTSIDE"
-            param_cache = {}
-            response_buffer = ""
             logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-            async for chunk in chat_model.astream([
-                SystemMessage(content=prompt)
-            ],
-            extra_body={"thinking": {"type": "disabled"}}):
+            async for chunk in chat_model.astream(messages, extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
                     if self.is_interruption:
                         logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
-                    response_buffer += chunk.content
-                    logger.bind(tag="TASK").debug(f"response_buffer: {response_buffer}")
-                    logger.bind(tag="DELAY").debug(f"llm response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-                    if state == "OUTSIDE":
-                        # 查找开始标签
-                        start_match = re.search(r'<(\w+)>', response_buffer)
-                        if start_match:
-                            tag_name = start_match.group(1)
-                            logger.bind(tag="TASK").debug(f"tag_name: {tag_name}")
-                            if tag_name in ["mood", "mood_level", "speech_rate", "action"]:
-                                state = "PARAMS"
-                                current_tag = tag_name
-                                response_buffer = response_buffer[start_match.end():]
-                            elif tag_name == "content":
-                                state = "CONTENT"
-                                logger.bind(tag="DELAY").debug(f"content tag delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-                                response_buffer = response_buffer[start_match.end():]
-                            elif tag_name == "request_tasks":
-                                state = "REQUEST_TASKS"
-                                response_buffer = response_buffer[start_match.end():]
-                            elif tag_name == "dismiss_tasks":
-                                state = "DISMISS_TASKS"
-                                response_buffer = response_buffer[start_match.end():]
-                            else:
-                                response_buffer = response_buffer[start_match.end():]
-                    elif state == "PARAMS":
-                        logger.bind(tag="TASK").debug(f"response_buffer in PARAMS: {response_buffer}")
-                        # 处理参数标签
-                        end_tag = f"</{current_tag}>"
-                        end_pos = response_buffer.find(end_tag)
-                        if end_pos != -1:
-                            param_value = response_buffer[:end_pos].strip()
-                            param_cache[current_tag] = param_value
-                            response_buffer = response_buffer[end_pos + len(end_tag):]
-                            
-                            # 如果所有参数都收集完了，发送参数
-                            if len(param_cache) >= 4:  # mood, mood_level, speech_rate, action
-                                if self.websocket_send_callback:
-                                    await self.websocket_send_callback({
-                                        "event": ServerEvent.ChatResponseParams,
-                                        "payload_msg": {
-                                            "params": param_cache
-                                        }
-                                    })
-                            logger.bind(tag="TASK").debug(f"param_cache: {param_cache}")
-                            state = "OUTSIDE"
-                    
-                    elif state == "CONTENT":
-                        logger.bind(tag="TASK").debug(f"response_buffer in CONTENT: {response_buffer}")
-                        # 处理内容标签
-                        end_tag = "</content>"
-                        end_pos = response_buffer.find(end_tag)
-                        if end_pos != -1:
-                            content_piece = response_buffer[:end_pos]
-                            if content_piece:
-                                logger.debug(f"生成回复内容: {content_piece}")
-                                final_response += content_piece
-                                if self.websocket_send_callback:
-                                    await self.websocket_send_callback({
-                                        "event": ServerEvent.ChatResponse,
-                                        "payload_msg": {
-                                            "content": str(content_piece)
-                                        }
-                                    })
-                            response_buffer = response_buffer[end_pos + len(end_tag):]
-                            state = "OUTSIDE"
-                        else:
-                            logger.bind(tag="DELAY").debug(f"content output delay 1: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-                            # 高效end_tag前缀判断逻辑：逐位比较，只要有一位不等立即break
-                            max_check = min(len(response_buffer), len(end_tag))
-                            matched = 0
-                            for i in range(max_check):
-                                if response_buffer[-max_check + i] == end_tag[i]:
-                                    matched += 1
-                                else:
-                                    break
-                            logger.bind(tag="DELAY").debug(f"content output delay 2: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
-                            send_len = len(response_buffer) - matched
-                            if send_len > 0:
-                                content_piece = response_buffer[:send_len]
-                                logger.debug(f"生成回复内容: {content_piece}")
-                                final_response += content_piece
-                                if self.websocket_send_callback:
-                                    await self.websocket_send_callback({
-                                        "event": ServerEvent.ChatResponse,
-                                        "payload_msg": {
-                                            "content": str(content_piece)
-                                        }
-                                    })
-                                response_buffer = response_buffer[send_len:]
-                            # 如果全部是前缀，先不发，等下次token
-                    
-                    elif state == "REQUEST_TASKS":
-                        logger.bind(tag="TASK").debug(f"response_buffer in REQUEST_TASKS: {response_buffer}")
-                        # 处理任务标签
-                        end_pos = response_buffer.find("</request_tasks>")
-                        if end_pos != -1:
-                            request_tasks = response_buffer[:end_pos].strip()
-                            logger.bind(tag="TASK").debug(f"request_tasks: {request_tasks}")
-                            response_buffer = response_buffer[end_pos + len("</request_tasks>"):]
-                            state = "OUTSIDE"
-                    elif state == "DISMISS_TASKS":
-                        logger.bind(tag="TASK").debug(f"response_buffer in DISMISS_TASKS: {response_buffer}")
-                        # 处理任务标签
-                        end_pos = response_buffer.find("</dismiss_tasks>")
-                        if end_pos != -1:
-                            dismiss_tasks = response_buffer[:end_pos].strip()
-                            logger.bind(tag="TASK").debug(f"dismiss_tasks: {dismiss_tasks}")
-                            response_buffer = response_buffer[end_pos + len("</dismiss_tasks>"):]
-                            state = "OUTSIDE"
+                    final_response += chunk.content
+                    await self.parser.feed(chunk.content)
             if self.websocket_send_callback:
                 await self.websocket_send_callback({
                     "event": ServerEvent.ChatEnded,
                     "payload_msg": {
                         "content": final_response,
-                        "request_tasks": request_tasks,
-                        "dismiss_tasks": dismiss_tasks
+                        "request_tasks": "".join(self.request_tasks),
+                        "dismiss_tasks": "".join(self.dismiss_tasks)
                     }
                 })
-            logger.bind(tag="TASK").info(f"final_response: {final_response}, request_tasks: {request_tasks}, dismiss_tasks: {dismiss_tasks}")
+            logger.bind(tag="TASK").info(f"final_response: {final_response}, request_tasks: {self.request_tasks}, dismiss_tasks: {self.dismiss_tasks}")
         except asyncio.CancelledError:
             logger.info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:

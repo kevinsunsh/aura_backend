@@ -18,6 +18,7 @@ from .aura_tool.vad_split_client import VADSplitLocal
 # from .doubao_client.asr_client import AsrClient
 # from .doubao_client.asr_client import AsrClient
 from .doubao_client.tts_client import TtsClient
+from .doubao_client.doubao_config import speaker_config
 from .message_processor_text import MessageProcessorText
 from .msg_preandpost_processor import MessagePreAndPostProcessor
 from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set, ActiveClientType
@@ -288,9 +289,10 @@ class LLM_TTSClient(ABC):
                     await client.tts_client.user_input_interruption()
             elif isinstance(msg, dict) and msg.get("type") == "run":
                 if client.is_process_running.value:
-                    input_template = msg["data"]
+                    prompts = msg["data"]
                     logger.bind(tag="DELAY").info(f"LLM TTSClient run delay: {int((time.time() - client.process_timer.value) * 1000)}ms")
-                    await client.text_processor.handle_message({"message": input_template.format(user_input=client.asr_result.value.decode("utf-8"))})
+                    prompts.append({"role": "user", "content": client.asr_result.value.decode("utf-8")})
+                    await client.text_processor.handle_message(prompts)
     
     # TTS类事件回调方法
     async def _llm_on_tts_sentence_start(self, payload: Dict[str, Any], session_id: str) -> None:
@@ -328,7 +330,20 @@ class LLM_TTSClient(ABC):
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应"""
         if message.get("event") == ServerEvent.ChatResponseParams:
-            await self.tts_client.set_tts_params(mood_code=message.get("payload_msg", {}).get("params", {}).get("mood", "neutral"), mood_level=message.get("payload_msg", {}).get("params", {}).get("mood_level", "medium"), speech_rate=message.get("payload_msg", {}).get("params", {}).get("speech_rate", "normal"))
+            params = message.get("payload_msg", {}).get("params", {})
+            mood_code = params.get("mood", "neutral")
+            # 获取心情等级，如果无法转换成数字则默认为3
+            try:
+                mood_level = int(params.get("mood_level_0_to_5", "3"))
+            except (ValueError, TypeError):
+                mood_level = 3
+            # 获取语速，如果无法转换成数字则默认为3
+            try:
+                speech_rate = int(params.get("speed_rate_0_to_5", "3"))
+            except (ValueError, TypeError):
+                speech_rate = 3
+            mood_code = mood_code if mood_code in speaker_config["female_1"]["mood_code"] else "neutral"
+            await self.tts_client.set_tts_params(mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
         elif message.get("event") == ServerEvent.ChatResponse:
             if self.llm_is_chat_started:
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
