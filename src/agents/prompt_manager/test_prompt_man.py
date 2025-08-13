@@ -207,7 +207,9 @@ async def main():
     print(f"start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     parser = StreamingTagParser(tag_callback=tag_callback)
     character = CharacterManager().get_character_by_name("Seraphina")
+    print(f"fetch character time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
+    print(f"fetch system preset time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     generator = PromptManager(
         chat_id="test_user_123444",
         user_id="test_user_123444",

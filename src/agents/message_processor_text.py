@@ -23,10 +23,6 @@ class StreamingTagParser:
     async def feed(self, chunk: str):
         """接收新的文本块"""
         self.buffer += chunk
-        await self._process_state()
-
-    async def _process_state(self):
-        """状态机处理"""
         if self.state == "OUTSIDE":
             await self._handle_outside()
         elif self.state == "CONTENT_STREAMING":
@@ -58,7 +54,6 @@ class StreamingTagParser:
             # 进入内容流式处理状态
             self.state = "CONTENT_STREAMING"
             self.buffer = self.buffer[match.end():]
-            await self._process_state()  # 继续处理
 
     async def _handle_content_streaming(self):
         """处理 CONTENT_STREAMING 状态"""
@@ -80,7 +75,6 @@ class StreamingTagParser:
             self.current_tag = None
             self.attributes = {}
             self.buffer = self.buffer[end_pos + len(close_tag):]
-            await self._process_state()  # 继续处理
         else:
             # 没找到结束标签，检查部分匹配
             partial_match_len = self._get_partial_match_len(close_tag)

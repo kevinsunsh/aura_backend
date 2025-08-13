@@ -195,7 +195,7 @@ class PromptManager:
     """生成管理器 - 复刻SillyTavern的Generate函数逻辑"""
 
     def __init__(self, chat_id: str, user_id: str, system_preset: SystemPresetModel, character: CharacterCard,
-                world_info_scanner: Optional[WorldInfoScanner] = None):
+                world_info_scanner: Optional[WorldInfoScanner] = None, process_timer: Any = None):
         self.system_preset = system_preset
         self.character = character
         self.character_id = 100001
@@ -245,6 +245,7 @@ class PromptManager:
         self.extension_prompts = {}
         self.depth_prompt_depth_default = 4
         self.depth_prompt_role_default = "system"
+        self.process_timer = process_timer
     
     def remove_depth_prompts(self):
         """移除所有深度提示 - 复刻removeDepthPrompts函数"""
@@ -1654,7 +1655,6 @@ class PromptManager:
         depthPromptDepth = self.character.depth_prompt.depth if self.character.depth_prompt else self.depth_prompt_depth_default
         depthPromptRole = self.get_extension_prompt_role_by_name(self.character.depth_prompt.role if self.character.depth_prompt else self.depth_prompt_role_default)
         self.set_extension_prompt('DEPTH_PROMPT', depthPromptText, ExtensionPromptTypes.IN_CHAT, depthPromptDepth, True, depthPromptRole)
-
         # 1v1 聊天，第一条消息反应用户/角色设置变化
         coreChat = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=10)
         if coreChat[0].data.get("role") == "user":
