@@ -33,6 +33,16 @@ class MessagePreAndPostProcessor(ABC):
         self.chat_id = None
         self.user_id = None
         self.session_prompt = ""
+        self.character = CharacterManager().get_character_by_name("Seraphina")
+        # self.system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
+        self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
+        self.generator = PromptManager(
+            chat_id="test_user_123444",
+            user_id="test_user_123444",
+            system_preset=self.system_preset,
+            character=self.character,
+            world_info_scanner=WorldInfoScanner()
+        )
     
     @staticmethod
     def process_entry(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
@@ -95,16 +105,7 @@ class MessagePreAndPostProcessor(ABC):
         # input_template += f"最近的聊天记录：{chat_history_str}\n"
         
         # logger.bind(tag="TASK").info(f"input_template: {input_template}")
-        character = CharacterManager().get_character_by_name("Seraphina")
-        system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
-        generator = PromptManager(
-            chat_id="test_user_123444",
-            user_id="test_user_123444",
-            system_preset=system_preset,
-            character=character,
-            world_info_scanner=WorldInfoScanner()
-        )
-        prompts, token_usage = await generator.generate(GenerationType.NORMAL, GenerationOptions())
+        prompts, token_usage = await self.generator.generate(GenerationType.NORMAL, GenerationOptions())
         logger.bind(tag="DELAY").info(f"Preprocess delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
         self.llm_input_queues.put({
             "type": "run",

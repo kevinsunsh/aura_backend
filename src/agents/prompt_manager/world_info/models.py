@@ -18,7 +18,7 @@ class WorldInfoEntry(Base):
     constant = Column(Boolean, default=False)  # 是否常驻
     selective = Column(Boolean, default=True)  # 是否选择性触发
     order = Column(Integer, default=100)  # 插入顺序
-    position = Column(String, default="before_char")  # 位置
+    position = Column(Integer, default=0)  # 位置
     disable = Column(Boolean, default=False)  # 是否启用
     display_index = Column(Integer, default=0)  # 显示索引
     addMemo = Column(Boolean, default=True)  # 是否添加注释

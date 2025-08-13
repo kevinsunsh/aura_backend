@@ -96,7 +96,7 @@ def show_world_info_books():
         print(f"❌ 显示角色卡时发生错误: {e}")
         return False
 
-recreate_tables = False
+recreate_tables = True
 if __name__ == "__main__":
     if recreate_tables:
         success = drop_world_info_tables()

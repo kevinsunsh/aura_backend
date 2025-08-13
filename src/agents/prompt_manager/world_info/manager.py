@@ -8,6 +8,7 @@ from .models import WorldInfoEntry, WorldInfoBook
 # 导入数据库相关模块
 from agents.agent_memory.database.database import Database
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
+from agents.prompt_manager.utils import content_char_turn_process
 
 class DBManager:
     """
@@ -50,17 +51,20 @@ class DBManager:
     
     def _create_world_info_entry(self, world_info_book_id: str, entry_data: dict):
         """创建世界书条目"""
+        entry_data.get('constant', False)
+        book_entry_content = entry_data.get('content', '')
+        book_entry_content = content_char_turn_process(book_entry_content)
         world_info_entry = WorldInfoEntry(
             world_info_book_id=world_info_book_id,
             uid=entry_data.get('uid', ''),
             keys=entry_data.get('key', []),
             keysecondary=entry_data.get('keysecondary', []),
             comment=entry_data.get('comment', ''),
-            content=entry_data.get('content', ''),
+            content=book_entry_content,
             constant=entry_data.get('constant', False),
             selective=entry_data.get('selective', True),
             order=entry_data.get('order', 100),
-            position=entry_data.get('position', 'before_char'),
+            position=entry_data.get('position', 0),
             disable=entry_data.get('disable', False),
             display_index=entry_data.get('display_index', 0),
             addMemo=entry_data.get('addMemo', True),

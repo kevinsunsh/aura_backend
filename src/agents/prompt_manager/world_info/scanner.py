@@ -23,13 +23,13 @@ class WorldInfoLogic(Enum):
 
 class WorldInfoPosition(Enum):
     """世界信息位置枚举"""
-    BEFORE = "before"
-    AFTER = "after"
-    EM_TOP = "em_top"
-    EM_BOTTOM = "em_bottom"
-    AN_TOP = "an_top"
-    AN_BOTTOM = "an_bottom"
-    AT_DEPTH = "at_depth"
+    BEFORE = 0
+    AFTER = 1
+    EM_TOP = 2
+    EM_BOTTOM = 3
+    AN_TOP = 4
+    AN_BOTTOM = 5
+    AT_DEPTH = 6
 
 @dataclass
 class WIGlobalScanData:
