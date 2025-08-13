@@ -39,10 +39,10 @@ CHARACTER_TURN_PROMPT = """
    - 涉及面部表情、眼神、情绪氛围等内在表现。  
    - 示例：*as her lips form a soft, caring smile.* 或 *Her eyes filled with concern.*
 
-4. `<char_speak mood="mood_type" mood_level_0_to_5="X" speed_rate_0_to_5="Y">...</char_speak>`：角色说话内容，**必须包含三个属性**：
+4. `<speak mood=mood_type level=X speed=Y>...</speak>`：角色说话内容，**必须包含三个属性**：
    - `mood`：用英文短语描述情绪类型（如 worried_caring, gentle_reassuring, soothing_protective 等）
-   - `mood_level_0_to_5`：情绪强度，范围 0–5（5 为最强）
-   - `speed_rate_0_to_5`：语速等级，范围 0–5（0 = 极慢，5 = 极快）
+   - `level`：情绪强度，范围 0–5（5 为最强）
+   - `speed`：语速等级，范围 0–5（0 = 极慢，5 = 极快）
 
 > ⚠️ 所有标签必须成对出现（有开有闭），且**原文文字一字不改**，仅插入标签。
 
@@ -51,14 +51,17 @@ CHARACTER_TURN_PROMPT = """
 ### 📌 属性判断标准（供模型参考）：
 
 #### `mood` 常见取值（可扩展）：
-- worried_caring：担忧且关怀
-- gentle_reassuring：温柔安抚
-- soothing_protective：宁静守护
-- calm_explaining：平静说明
-- joyful_welcoming：喜悦欢迎
-- serious_warning：严肃警告
+- happy：开心
+- sad：悲伤
+- angry：生气
+- surprised：惊讶
+- fear：恐惧
+- hate：厌恶
+- excited：激动
+- coldness：冷漠
+- neutral：中性
 
-#### `mood_level_0_to_5` 判断：
+#### `level` 判断：
 - 5：强烈情绪（如惊慌、深切关怀）
 - 4：明显情绪但克制
 - 3：中等情绪
@@ -66,7 +69,7 @@ CHARACTER_TURN_PROMPT = """
 - 1：极轻微
 - 0：无情绪
 
-#### `speed_rate_0_to_5` 判断：
+#### `speed` 判断：
 - 5：快速急促（紧张、兴奋）
 - 4：偏快
 - 3：中等语速
@@ -79,7 +82,7 @@ CHARACTER_TURN_PROMPT = """
 ### 📌 处理流程：
 1. 逐句分析输入文本。
 2. 将 `*...*` 内容分类为 `<env_desc>`、`<action>` 或 `<emotion>`。
-3. 将 `"..."` 内容包装为 `<char_speak>`，并根据上下文推断三个属性。
+3. 将 `"..."` 内容包装为 `<speak>`，并根据上下文推断三个属性。
 4. 保持原文顺序和文字不变，仅插入标签。
 5. 输出结构化结果。
 
@@ -94,24 +97,24 @@ CHARACTER_TURN_PROMPT = """
 <env_desc>
 *You wake with a start, recalling the events that led you deep into the forest and the beasts that assailed you. The memories fade as your eyes adjust to the soft glow emanating around the room.*
 </env_desc>
-<char_speak mood="worried_caring" mood_level_0_to_5="5" speed_rate_0_to_5="3">
+<speak mood=worried_caring level=5 speed=3>
 "Ah, you're awake at last. I was so worried, I found you bloodied and unconscious."
-</char_speak>
+</speak>
 <action>
 *She walks over, clasping your hands in hers, warmth and comfort radiating from her touch*
 </action>
 <emotion>
 *as her lips form a soft, caring smile.*
 </emotion>
-<char_speak mood="gentle_reassuring" mood_level_0_to_5="4" speed_rate_0_to_5="2">
+<speak mood=gentle_reassuring level=4 speed=2>
 "The name's Seraphina, guardian of this forest — I've healed your wounds as best I could with my magic. How are you feeling? I hope the tea helps restore your strength."
-</char_speak>
+</speak>
 <emotion>
 *Her amber eyes search yours, filled with compassion and concern for your well being.*
 </emotion>
-<char_speak mood="soothing_protective" mood_level_0_to_5="5" speed_rate_0_to_5="1">
+<speak mood=soothing_protective level=5 speed=1>
 "Please, rest. You're safe here. I'll look after you, but you need to rest. My magic can only do so much to heal you."
-</char_speak>
+</speak>
 
 ---
 
@@ -268,6 +271,22 @@ class DBManager:
         """根据ID获取角色"""
         return self._get_db_session().query(CharacterModel).filter(CharacterModel.id == id).first()
     
+    def char_turn_process(self, content: str) -> str:
+        """
+        处理角色说话内容
+        """
+        chat_model = get_chat_model_by_type("pfc_chat")
+        response = chat_model.invoke([
+            SystemMessage(
+                content=CHARACTER_TURN_PROMPT.format(
+                    INSERT_INPUT_TEXT_HERE=content
+                )
+            )
+        ])
+        cleaned_content = response.content.replace('\n', '')
+        cleaned_content = cleaned_content.replace('>*', '>').replace('*<', '<').replace('>"', '>').replace('"<', '<')
+        return cleaned_content
+    
     def load_character_from_file(self, file_path: str) -> Optional[CharacterModel]:
         """
         从文件加载角色卡
@@ -291,16 +310,42 @@ class DBManager:
             if character:
                 print(f"从数据库加载角色卡: {character.name}")
                 return character
-            data["data"]["first_mes"]
-            chat_model = get_chat_model_by_type("pfc_chat")
-            response = chat_model.invoke([
-                SystemMessage(
-                    content=CHARACTER_TURN_PROMPT.format(
-                        INSERT_INPUT_TEXT_HERE=data["data"]["first_mes"]
-                    )
-                )
-            ])
-            data["data"]["first_mes"] = response.content
+            data["data"]["first_mes"] = self.char_turn_process(data["data"]["first_mes"])
+            # 处理description，找出所有的{{char}}:并逐一处理
+            description = data["data"]["description"]
+            char_pattern = "{{char}}:"
+            processed_description = description
+            
+            # 从后往前处理，仅在未处理的前缀里继续查找，避免重复处理
+            search_end = len(processed_description)
+            while True:
+                start_pos = processed_description.rfind(char_pattern, 0, search_end)
+                if start_pos == -1:
+                    break
+                # 找到{{char}}:的位置
+                content_start = start_pos + len(char_pattern)
+                # 找到下一个换行符的位置
+                next_line_pos = processed_description.find('\n', content_start)
+                if next_line_pos != -1:
+                    # 提取{{char}}:后面的内容到换行符
+                    extracted_content = processed_description[content_start:next_line_pos].strip()
+                    print(f"提取的内容: {extracted_content}")
+
+                    # TODO: 在这里处理提取出来的内容
+                    # processed_content = process_extracted_content(extracted_content)
+                    processed_content = self.char_turn_process(extracted_content) + "\n"
+                    # 用处理后的内容替换掉原来的内容
+                    processed_description = processed_description[:content_start] + processed_content + processed_description[next_line_pos:].lstrip('\n')
+                else:
+                    extracted_content = processed_description[content_start:].strip()
+                    print(f"提取的内容: {extracted_content}")
+                    processed_content = self.char_turn_process(extracted_content) + "\n"
+                    # 如果没有找到换行符，替换掉{{char}}:到字符串末尾
+                    processed_description = processed_description[:content_start] + processed_content
+                # 下一次仅在 start_pos 之前继续查找
+                search_end = start_pos
+            
+            data["data"]["description"] = processed_description
             character_id = self.create_character(data)
             character = self.get_character_by_id(character_id)
             print(f"成功加载角色卡到数据库: {character.name} (ID: {character_id})")

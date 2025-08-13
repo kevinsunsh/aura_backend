@@ -432,7 +432,7 @@ class PromptManager:
 
     def build_chat_history(self) -> List[Dict]:
         """构建聊天历史 - 复刻SillyTavern的chat2构建逻辑"""
-        history = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=100)
+        history = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=10)
         chat2 = []
 
         # 按照SillyTavern的逻辑，按时间顺序构建（从最早到最新）
@@ -1544,22 +1544,17 @@ class PromptManager:
         })
         # 从消息存储获取历史消息
         if not messages:
-            history = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=50)
-            for message in history.messages:
-                formatted_message = {
-                    "role": "user" if message.role == "user" else "assistant",
-                    "content": message.content
-                }
-                chat_completion.chat_messages.append(formatted_message)
-        else:
-            # 使用提供的消息
-            for message in messages:
-                message_collection["collection"].append({
-                    "content": message.content,
-                    "role": message.data.get("role")
-                })
+            messages = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=10)
+        
+        # 使用提供的消息
+        for message in messages:
+            cleaned_text = re.sub(r'<env_desc>.*?</env_desc>\s*', '', message.content, flags=re.DOTALL)
+            message_collection["collection"].append({
+                "content": cleaned_text,
+                "role": message.data.get("role")
+            })
         message_collection["collection"].append({
-            "content": f"[From now on, char_speak mood is limited to: {"|".join(speaker_config["female_1"]["mood_code"])}]",
+            "content": f"[From now on, the mood attribute of speak tag is limited to: {"|".join(speaker_config["female_1"]["mood_code"])}]",
             "role": "system"
         })
         chat_completion.chat_messages[index] = message_collection
@@ -1661,7 +1656,7 @@ class PromptManager:
         self.set_extension_prompt('DEPTH_PROMPT', depthPromptText, ExtensionPromptTypes.IN_CHAT, depthPromptDepth, True, depthPromptRole)
 
         # 1v1 聊天，第一条消息反应用户/角色设置变化
-        coreChat = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=100)
+        coreChat = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=10)
         if coreChat[0].data.get("role") == "user":
             coreChat.insert(0, Message(
                 msg_id=str(uuid.uuid4()),
@@ -1765,7 +1760,7 @@ class PromptManager:
                 "content": self.character.first_mes
             })
         # 5. 聊天历史
-        history = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=100)
+        history = MessageStore.get_instance().get_recent_messages(chat_id=self.chat_id, limit=10)
         for message in history.messages:
             if message.role == 'user':
                 messages.append({

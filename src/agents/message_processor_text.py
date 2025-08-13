@@ -170,7 +170,7 @@ class MessageProcessorText:
         self.dismiss_tasks = []
 
     async def tag_callback(self, payload):
-        if payload["tag"] == "char_speak":
+        if payload["tag"] == "speak":
             if payload["status"] == "start":
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
@@ -347,6 +347,7 @@ class MessageProcessorText:
             chat_model = get_chat_model_by_type("pfc_chat")
             messages = []
             for prompt in prompts:
+                logger.bind(tag="TASK").info(f"prompt: {prompt}")
                 if prompt["role"] == "user":
                     messages.append(HumanMessage(content=prompt["content"]))
                 elif prompt["role"] == "assistant":
@@ -355,6 +356,7 @@ class MessageProcessorText:
                     messages.append(SystemMessage(content=prompt["content"]))
             # 生成立即回复
             final_response = ""
+            first_chunk = True
             logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
             async for chunk in chat_model.astream(messages, extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
@@ -362,6 +364,9 @@ class MessageProcessorText:
                         logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
                     final_response += chunk.content
+                    if first_chunk:
+                        first_chunk = False
+                        logger.bind(tag="TTS").info(f"start streaming response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
                     await self.parser.feed(chunk.content)
             if self.websocket_send_callback:
                 await self.websocket_send_callback({

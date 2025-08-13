@@ -502,7 +502,11 @@ class TtsClient:
             text: 文本片段
         """
         try:
+            # 过滤掉换行符、空格、单双引号
+            text = text.replace('\n', '').replace('\r', '').replace(' ', '').replace('"', '').replace("'", '')
             self.buffer_text += text
+            if len(self.buffer_text) == 0:
+                return
             if self.is_connected() == False:
                 return
             if self._tts_session_active == False:
@@ -511,7 +515,7 @@ class TtsClient:
                 await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 while self._tts_session_active == False:
                     await asyncio.sleep(0.1)
-            await self._tts_send_text(self.ws, self.speaker, text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
+            await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
             self.buffer_text = ""
             if end:
                 await self._tts_finish_session(self.ws, self.session_id_str)

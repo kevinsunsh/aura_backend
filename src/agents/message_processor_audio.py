@@ -334,12 +334,12 @@ class LLM_TTSClient(ABC):
             mood_code = params.get("mood", "neutral")
             # 获取心情等级，如果无法转换成数字则默认为3
             try:
-                mood_level = int(params.get("mood_level_0_to_5", "3"))
+                mood_level = int(params.get("level", 3))
             except (ValueError, TypeError):
                 mood_level = 3
             # 获取语速，如果无法转换成数字则默认为3
             try:
-                speech_rate = int(params.get("speed_rate_0_to_5", "3"))
+                speech_rate = int(params.get("speed", 3))
             except (ValueError, TypeError):
                 speech_rate = 3
             mood_code = mood_code if mood_code in speaker_config["female_1"]["mood_code"] else "neutral"
