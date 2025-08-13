@@ -32,7 +32,7 @@ class StreamingTagParser:
     async def feed(self, chunk: str):
         """接收新的文本块"""
         self.buffer += chunk
-        print(f"feed delay {self.buffer}: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+        # print(f"feed delay {self.buffer}: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
         if self.state == "OUTSIDE":
             await self._handle_outside()
         elif self.state == "CONTENT_STREAMING":
@@ -113,20 +113,23 @@ class StreamingTagParser:
         简化属性解析，直接去掉外层引号
         
         Args:
-            attr_str: 属性字符串，如 'name="value" params="上海当前天气 2025年8月12日"'
+            attr_str: 属性字符串，如 'name=value params="上海当前天气 2025年8月12日"'
             
         Returns:
             dict: 解析后的属性字典
         """
         attributes = {}
         
-        # 匹配 name="value" 或 name='value' 或 name=value 格式
-        # 使用正则表达式匹配，然后去掉外层引号
-        # 修复：无引号的值应该匹配到下一个属性或标签结束，而不是到空格
-        pattern = r'(\w+)=([\'"])(.*?)\2'
+        # 匹配两种格式：
+        # 1. name=value（值以空格结束，如：mood=happy level=3）
+        # 2. name="value" 或 name='value'（值可以包含空格，如：params="上海当前天气 2025年8月12日"）
+        pattern = r'(\w+)=(?:([^\s]+)|([\'"])(.*?)\3)'
         matches = re.findall(pattern, attr_str)
         
-        for key, quote, value in matches:
+        for match in matches:
+            key = match[0]
+            # 如果第二个组有值（无引号），使用它；否则使用第四个组（有引号）
+            value = match[1] if match[1] else match[3]
             attributes[key] = value.strip()
         return attributes
 
