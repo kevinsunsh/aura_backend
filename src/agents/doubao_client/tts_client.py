@@ -328,9 +328,9 @@ class TtsClient:
         self.mood_code = mood_code
         self.mood_level = mood_level
         self.speech_rate = speech_rate
+        logger.bind(tag="TTS").info(f"设置TTS参数: mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         if self._tts_session_active:
             await self._tts_finish_session(self.ws, self.session_id_str)
-        logger.bind(tag="TTS").info(f"设置TTS参数: mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
     
     async def start(self, chat_id: str, user_id: str):
         """启动TTS连接并建立会话"""
@@ -436,6 +436,9 @@ class TtsClient:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionFinished:
                         logger.bind(tag="TTS").info(f"TTS会话结束: {res.optional.event}")
+                        self.session_id_str = str(uuid.uuid4()).replace('-', '')
+                        self.session_id.value = self.session_id_str.encode('utf-8')
+                        await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_ConnectionFailed:
@@ -510,11 +513,8 @@ class TtsClient:
             if self.is_connected() == False:
                 return
             if self._tts_session_active == False:
-                self.session_id_str = str(uuid.uuid4()).replace('-', '')
-                self.session_id.value = self.session_id_str.encode('utf-8')
-                await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
-                while self._tts_session_active == False:
-                    await asyncio.sleep(0.1)
+                logger.bind(tag="TTS").info(f"TTS会话未激活，跳过发送: {text[:50]}...")
+                return
             await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
             self.buffer_text = ""
             if end:
