@@ -43,7 +43,7 @@ class PromptModel(Base):
         """初始化提示模型，使用与数据库字段相同的默认值"""
         # 设置默认值，与数据库字段的默认值保持一致
         defaults = {
-            'system_prompt': False,
+            'system_prompt': True,
             'enabled': True,
             'position': 0,
             'marker': False,
@@ -52,7 +52,8 @@ class PromptModel(Base):
             'injection_trigger': [],
             'injection_position': InjectionPosition.RELATIVE,
             'extension': False,
-            'forbid_overrides': False
+            'forbid_overrides': False,
+            'role': 'system'
         }
         
         # 应用默认值
