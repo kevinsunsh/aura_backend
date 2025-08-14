@@ -84,15 +84,31 @@ class StreamingTagParser:
             # 如果没有安全内容，等待更多输入
 
     def _get_partial_match_len(self, close_tag: str) -> int:
-        """计算 buffer 尾部与 close_tag 的最大前缀匹配长度"""
-        max_check = min(len(self.buffer), len(close_tag))
-        matched = 0
-        for i in range(max_check):
-            if self.buffer[-max_check + i] == close_tag[i]:
-                matched += 1
-            else:
-                break
-        return matched
+        """计算 buffer 末尾与 close_tag 开头的最大匹配长度"""
+        import re
+        
+        buffer_len = len(self.buffer)
+        tag_len = len(close_tag)
+        
+        # 最多检查 min(buffer_len, tag_len) 个字符
+        max_check = min(buffer_len, tag_len)
+        
+        # 构建正则表达式：检查buffer末尾是否与close_tag开头匹配
+        # 使用正向前瞻断言 (?=...) 来匹配buffer末尾
+        pattern = f"({re.escape(close_tag[:max_check])})$"
+        match = re.search(pattern, self.buffer)
+        
+        if match:
+            # 找到匹配，返回匹配长度
+            return len(match.group(1))
+        
+        # 如果没有完全匹配，尝试部分匹配
+        for i in range(max_check, 0, -1):
+            pattern = f"({re.escape(close_tag[:i])})$"
+            if re.search(pattern, self.buffer):
+                return i
+        
+        return 0
 
     def _parse_attributes_simple(self, attr_str: str) -> dict:
         """
