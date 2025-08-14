@@ -323,13 +323,21 @@ class TtsClient:
     
     async def set_tts_params(self, mood_code='neutral', mood_level=3, speech_rate=3):
         """设置TTS参数"""
-        if self.mood_code == mood_code and self.mood_level == mood_level and self.speech_rate == speech_rate:
-            return
-        self.mood_code = mood_code
-        self.mood_level = mood_level
-        self.speech_rate = speech_rate
         logger.bind(tag="TTS").info(f"设置TTS参数: mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
-        if self._tts_session_active:
+        if self._tts_session_active == False:
+            # 开始会话
+            self.mood_code = mood_code
+            self.mood_level = mood_level
+            self.speech_rate = speech_rate
+            self.session_id_str = str(uuid.uuid4()).replace('-', '')
+            self.session_id.value = self.session_id_str.encode('utf-8')
+            await self._tts_start_session(self.ws, self.speaker, self.session_id_str, mood_code, mood_level, speech_rate)
+        else:
+            if self.mood_code == mood_code and self.mood_level == mood_level and self.speech_rate == speech_rate:
+                return
+            self.mood_code = mood_code
+            self.mood_level = mood_level
+            self.speech_rate = speech_rate
             await self._tts_finish_session(self.ws, self.session_id_str)
     
     async def start(self, chat_id: str, user_id: str):
@@ -383,16 +391,16 @@ class TtsClient:
         self.connection_id = res.optional.connectionId
         
         # 开始会话
-        self.session_id_str = str(uuid.uuid4()).replace('-', '')
-        self.session_id.value = self.session_id_str.encode('utf-8')
-        await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
-        res = self._parse_tts_response(await self.ws.recv())
-        logger.bind(tag="TTS").info(f"TTS会话响应: event={res.optional.event}")
-        if res.optional.event != EVENT_SessionStarted:
-            raise RuntimeError('连接TTS会话启动失败')
+        # self.session_id_str = str(uuid.uuid4()).replace('-', '')
+        # self.session_id.value = self.session_id_str.encode('utf-8')
+        # await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
+        # res = self._parse_tts_response(await self.ws.recv())
+        # logger.bind(tag="TTS").info(f"TTS会话响应: event={res.optional.event}")
+        # if res.optional.event != EVENT_SessionStarted:
+        #     raise RuntimeError('连接TTS会话启动失败')
         
         self.is_running = True
-        self._tts_session_active = True
+        # self._tts_session_active = True
         logger.info("TTS连接和会话建立成功")
     
     async def message_receive_loop(self):
