@@ -15,6 +15,7 @@ class WorldInfoEntry(Base):
     keysecondary = Column(JSONB, nullable=False, default=[])  # 次级关键词列表
     comment = Column(String, default="")  # 注释
     content = Column(Text, nullable=False)  # 条目内容
+    tokens = Column(Integer, default=0)  # 令牌
     constant = Column(Boolean, default=False)  # 是否常驻
     selective = Column(Boolean, default=True)  # 是否选择性触发
     order = Column(Integer, default=100)  # 插入顺序

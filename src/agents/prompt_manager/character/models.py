@@ -14,16 +14,22 @@ class CharacterModel(Base):
     # 基本信息
     name = Column(String, nullable=False)  # 角色名称
     description = Column(Text, nullable=True)  # 角色描述
+    description_tokens = Column(Integer, nullable=True)  # 角色描述的令牌数
     personality = Column(Text, nullable=True)  # 性格
+    personality_tokens = Column(Integer, nullable=True)  # 性格的令牌数
     first_mes = Column(Text, nullable=True)  # 第一条消息
+    first_mes_tokens = Column(Integer, nullable=True)  # 第一条消息的令牌数
     avatar = Column(String, nullable=True, default="none")  # 头像
     mes_example = Column(Text, nullable=True)  # 消息示例
+    mes_example_tokens = Column(Integer, nullable=True)  # 消息示例的令牌数
     scenario = Column(Text, nullable=True)  # 场景
+    scenario_tokens = Column(Integer, nullable=True)  # 场景的令牌数
     create_date = Column(String, nullable=True)  # 创建日期
     talkativeness = Column(String, nullable=True, default="0.5")  # 话痨程度
     fav = Column(Boolean, nullable=False, default=False)  # 是否收藏
     creator_notes = Column(Text, nullable=True)  # 创建者评论
     system_prompt = Column(Text, nullable=True)  # 系统提示词
+    system_prompt_tokens = Column(Integer, nullable=True)  # 系统提示词的令牌数
     post_history_instructions = Column(Text, nullable=True)  # 历史后指令
     tags = Column(JSONB, nullable=True)  # 标签
     creator = Column(String, nullable=True)  # 创建者
@@ -76,6 +82,7 @@ class CharacterBookEntryModel(Base):
     secondary_keys = Column(JSONB, nullable=False, default=[])  # 次级关键词列表
     comment = Column(String, default="")  # 注释
     content = Column(Text, nullable=False)  # 条目内容
+    content_tokens = Column(Integer, nullable=True)  # 条目内容的令牌数
     constant = Column(Boolean, default=False)  # 是否常驻
     selective = Column(Boolean, default=True)  # 是否选择性触发
     insertion_order = Column(Integer, default=100)  # 插入顺序

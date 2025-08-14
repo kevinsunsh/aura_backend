@@ -7,7 +7,7 @@ from .models import CharacterModel, CharacterBookModel, CharacterBookEntryModel
 # 导入数据库相关模块
 from agents.agent_memory.database.database import Database
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
-from agents.prompt_manager.utils import char_turn_process, content_char_turn_process
+from agents.prompt_manager.utils import char_turn_process, content_char_turn_process, count_tokens_openai
 
 class DBManager:
     """
@@ -38,16 +38,22 @@ class DBManager:
             id=character_id,
             name=character_data.get('name', ''),
             description=character_data.get('description', ''),
+            description_tokens=count_tokens_openai(character_data.get('description', '')),
             personality=character_data.get('personality', ''),
+            personality_tokens=count_tokens_openai(character_data.get('personality', '')),
             scenario=character_data.get('scenario', ''),
+            scenario_tokens=count_tokens_openai(character_data.get('scenario', '')),
             first_mes=character_data.get('first_mes', ''),
+            first_mes_tokens=count_tokens_openai(character_data.get('first_mes', '')),
             mes_example=character_data.get('mes_example', ''),
+            mes_example_tokens=count_tokens_openai(character_data.get('mes_example', '')),
             avatar=character_data.get('avatar', 'none'),
             create_date=character_data.get('create_date', ''),
             talkativeness=character_data.get('talkativeness', '0.5'),
             fav=character_data.get('fav', False),
             creator_notes=character_data.get('creator_notes', ''),
             system_prompt=character_data.get('system_prompt', ''),
+            system_prompt_tokens=count_tokens_openai(character_data.get('system_prompt', '')),
             post_history_instructions=character_data.get('post_history_instructions', ''),
             tags=character_data.get('tags', []),
             creator=character_data.get('creator', ''),
@@ -113,6 +119,7 @@ class DBManager:
             secondary_keys=entry_data.get('secondary_keys', []),
             comment=entry_data.get('comment', ''),
             content=book_entry_content,
+            content_tokens=count_tokens_openai(book_entry_content),
             constant=entry_data.get('constant', False),
             selective=entry_data.get('selective', True),
             insertion_order=entry_data.get('insertion_order', 100),

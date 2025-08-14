@@ -1,15 +1,15 @@
 import os
+import asyncio
+import aiohttp
+import json
 from enum import Enum
 from dataclasses import dataclass, fields
-from typing import Any, Optional, Dict, Literal
+from typing import Any, Optional, Dict, Literal, AsyncGenerator, List
 from langchain.chat_models import init_chat_model
 from langchain_core.runnables import RunnableConfig
 from langchain_core.language_models.chat_models import BaseChatModel
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
 from .config_loader import load_config, load_specific_config, get_config_loader, Config
-
-# 模型缓存
-_model_cache: Dict[str, BaseChatModel] = {}
 
 @dataclass(kw_only=True)
 class GraphConfiguration:
@@ -46,11 +46,104 @@ LLMType = Literal["utils",
                   "pfc_chat", 
                   "pfc_reply_checker"]
 
+class ChatModel():
+    def __init__(self, model_name: str, model_provider: str, api_key: str, api_base: str):
+        self.model_name = model_name
+        self.model_provider = model_provider
+        self.api_key = api_key
+        self.api_base = api_base
+    
+    async def astream(self, messages: List[Any], extra_body: Dict[str, Any] = None) -> AsyncGenerator[Any, None]:
+        """
+        基于ARK API的异步流式聊天方法，替代原有的chat_model.astream
+        
+        Args:
+            messages: 消息列表
+            extra_body: 额外参数（可选）
+            
+        Yields:
+            包含内容的聊天块对象
+        """
+        # 构建请求数据
+        payload = {
+            "messages": [],
+            "model": self.model_name,
+            "stream": True
+        }
+        
+        # 转换消息格式
+        for message in messages:
+            if message.get('role', None) and message.get('content', None):
+                payload["messages"].append({
+                    "role": message.get('role'),
+                    "content": message.get('content')
+                })
+            elif isinstance(message, dict):
+                payload["messages"].append(message)
+        
+        # 添加额外参数
+        if extra_body:
+            payload.update(extra_body)
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_base}/chat/completions",
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        raise Exception(f"ARK API请求失败: {response.status} - {error_text}")
+                    
+                    # 处理流式响应
+                    async for line in response.content:
+                        line = line.decode('utf-8').strip()
+                        if not line:
+                            continue
+                        
+                        # 移除 "data: " 前缀
+                        if line.startswith("data: "):
+                            line = line[6:]
+                        
+                        # 检查是否是结束标记
+                        if line == "[DONE]":
+                            break
+                        
+                        try:
+                            # 解析JSON数据
+                            data = json.loads(line)
+                            if "choices" in data and len(data["choices"]) > 0:
+                                choice = data["choices"][0]
+                                if "delta" in choice and "content" in choice["delta"]:
+                                    content = choice["delta"]["content"]
+                                    if content:
+                                        # 创建一个简单的对象来模拟原有的chunk结构
+                                        chunk = type('MockChunk', (), {'content': content})()
+                                        yield chunk
+                        except json.JSONDecodeError:
+                            # 忽略无效的JSON行
+                            continue
+                            
+        except Exception as e:
+            print(f"ARK API流式请求出错: {str(e)}")
+            # 返回一个错误消息块
+            error_chunk = type('MockChunk', (), {'content': f"错误: {str(e)}"})()
+            yield error_chunk
+
+# 模型缓存
+_model_cache: Dict[str, ChatModel] = {}
+
 def get_chat_model_by_type(
     llm_type: LLMType,
     environment: str = "test",
     use_cache: bool = True
-) -> BaseChatModel:
+) -> ChatModel:
     """
     Get LLM instance by type. Returns cached instance if available.
     
@@ -60,7 +153,7 @@ def get_chat_model_by_type(
         use_cache: 是否使用缓存
         
     Returns:
-        BaseChatModel实例
+        ChatModel实例
     """
     
     # 检查缓存
@@ -87,14 +180,12 @@ def get_chat_model_by_type(
                 "api_base": "https://ark.cn-beijing.volces.com/api/v3"
             }
         
-        # 创建模型实例
-        model_instance = init_chat_model(
-            model=configurable["model_name"], 
-            model_provider=configurable["model_provider"], 
-            configurable_fields={
-                "api_key": configurable["api_key"],
-                "api_base": configurable["api_base"]
-            }
+        # 创建ChatModel实例
+        model_instance = ChatModel(
+            model_name=configurable["model_name"],
+            api_key=configurable["api_key"],
+            api_base=configurable["api_base"],
+            model_provider=configurable["model_provider"]
         )
         
         # 缓存模型实例
@@ -106,13 +197,11 @@ def get_chat_model_by_type(
     except Exception as e:
         print(f"Warning: Failed to load ModelConfig from database, using fallback: {e}")
         # 回退到硬编码配置
-        return init_chat_model(
-            model="doubao-seed-1-6-flash-250615",
-            model_provider="openai", 
-            configurable_fields={
-                "api_key": "dc7e10e7-1095-40ae-a172-3a7d16fc1e61", 
-                "api_base": "https://ark.cn-beijing.volces.com/api/v3"
-            }
+        return ChatModel(
+            model_name="doubao-seed-1-6-flash-250615",
+            api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+            api_base="https://ark.cn-beijing.volces.com/api/v3",
+            model_provider="openai"
         )
 
 def load_config_from_database(environment: str = "production") -> Any:

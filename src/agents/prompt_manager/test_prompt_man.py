@@ -165,46 +165,64 @@ class StreamingTagParser:
 async def tag_callback(payload):
     if payload["tag"] == "speak":
         if payload["status"] == "start":
-            print(f"speak start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"speak start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "streaming":
-            print(f"speak streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"speak streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "end":
-            print(f"speak end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"speak end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
     elif payload["tag"] == "env_desc":
         if payload["status"] == "start":
-            print(f"env_desc start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"env_desc start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "streaming":
-            print(f"env_desc streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"env_desc streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "end":
-            print(f"env_desc end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"env_desc end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
     elif payload["tag"] == "action":
         if payload["status"] == "start":
-            print(f"action start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"action start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "streaming":
-            print(f"action streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"action streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "end":
-            print(f"action end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"action end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
     elif payload["tag"] == "emotion":
         if payload["status"] == "start":
-            print(f"emotion start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"emotion start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "streaming":
-            print(f"emotion streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"emotion streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "end":
-            print(f"emotion end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"emotion end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
     elif payload["tag"] == "request_task":
         if payload["status"] == "start":
-            print(f"request_task start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"request_task start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "streaming":
-            print(f"request_task streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"request_task streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "end":
-            print(f"request_task end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"request_task end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
     elif payload["tag"] == "dismiss_task":
         if payload["status"] == "start":
-            print(f"dismiss_task start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"dismiss_task start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "streaming":
-            print(f"dismiss_task streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"dismiss_task streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
         elif payload["status"] == "end":
-            print(f"dismiss_task end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # print(f"dismiss_task end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            pass
 
 async def main():
     print(f"start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
@@ -223,23 +241,36 @@ async def main():
     )
     print(f"prompt manager init time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     prompts = await generator.generate(GenerationType.NORMAL, GenerationOptions())
-    print(f"prompt generate time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+    print(f"prompt generate tokens =======: {prompts[1]}")
     chat_model = get_chat_model_by_type("pfc_chat")
-    messages = []
-    for prompt in prompts[0]:
-        print(prompt)
-        if prompt["role"] == "user":
-            messages.append(HumanMessage(content=prompt["content"]))
-        elif prompt["role"] == "assistant":
-            messages.append(AIMessage(content=prompt["content"]))
-        else:
-            messages.append(SystemMessage(content=prompt["content"]))
+    # messages = []
+    # for prompt in prompts[0]:
+    #     print(prompt)
+    #     if prompt["role"] == "user":
+    #         messages.append(HumanMessage(content=prompt["content"]))
+    #     elif prompt["role"] == "assistant":
+    #         messages.append(AIMessage(content=prompt["content"]))
+    #     else:
+    #         messages.append(SystemMessage(content=prompt["content"]))
     first_chunk = True
-    async for chunk in chat_model.astream(messages, extra_body={"thinking": {"type": "disabled"}}):
+    first_chunk_time = datetime.now().timestamp()
+    print(f"start generate time =======: {first_chunk_time}ms")
+    async for chunk in chat_model.astream(prompts[0], extra_body={"thinking": {"type": "disabled"}}):
         if hasattr(chunk, 'content'):
-            if first_chunk:
-                first_chunk = False
-                print(f"first chunk time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            # if first_chunk:
+            #     first_chunk = False
+            print(f"first chunk time =======: {int((datetime.now().timestamp() - first_chunk_time) * 1000)}ms, {chunk.content}")
+            first_chunk_time = datetime.now().timestamp()
+            await parser.feed(chunk.content)
+    first_chunk = True
+    second_chunk_time = datetime.now().timestamp()
+    print(f"start generate time =======: {second_chunk_time}ms")
+    async for chunk in chat_model.astream(prompts[0], extra_body={"thinking": {"type": "disabled"}}):
+        if hasattr(chunk, 'content'):
+            # if first_chunk:
+            #     first_chunk = False
+            print(f"second chunk time =======: {int((datetime.now().timestamp() - second_chunk_time) * 1000)}ms, {chunk.content}")
+            second_chunk_time = datetime.now().timestamp()
             await parser.feed(chunk.content)
 
 if __name__ == "__main__":

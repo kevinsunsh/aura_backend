@@ -7,7 +7,7 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
 from agents.agent_memory.chat_stream import ChatStreamManager
-from agents.agent_memory.message_store import MessageStore, Message
+from agents.agent_memory.message_store import MessageStore, MessageModel
 from utils.todo_mock_func import (
     _build_chat_history_str
 )
@@ -20,6 +20,7 @@ from agents.prompt_manager.character.manager import DBManager as CharacterManage
 from agents.prompt_manager.world_info.scanner import WorldInfoScanner
 from agents.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
 from agents.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
+from agents.prompt_manager.utils import count_tokens_openai
 
 class MessagePreAndPostProcessor(ABC):
     """MISC客户端包装器"""
@@ -33,7 +34,8 @@ class MessagePreAndPostProcessor(ABC):
         self.chat_id = None
         self.user_id = None
         self.session_prompt = ""
-        self.character = CharacterManager().get_character_by_name("Seraphina")
+        self.bot_name = "Seraphina"
+        self.character = CharacterManager().get_character_by_name(self.bot_name)
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
         self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
         self.generator = PromptManager(
@@ -114,16 +116,17 @@ class MessagePreAndPostProcessor(ABC):
         await asyncio.sleep(0.5)
         
         # 创建消息对象
-        message = Message(
+        tokens = count_tokens_openai(self.asr_result.value.decode("utf-8"))
+        message = MessageModel(
             msg_id=str(uuid.uuid4()),
             chat_id=self.chat_id,
             user_id=self.user_id,
             platform="default",
+            role="user",
             m_type="text",
             content=self.asr_result.value.decode("utf-8"),
-            data={
-                "role": "user"
-            },
+            tokens=tokens,
+            data={},
             created_at=int(datetime.now().timestamp() * 1000)
         )
         # 存储到消息存储
@@ -131,16 +134,17 @@ class MessagePreAndPostProcessor(ABC):
     
     async def postprocess(self, bot_response: dict) -> str:
         """后处理用户输入"""
-        message = Message(
+        tokens = count_tokens_openai(bot_response.get("content", ""))
+        message = MessageModel(
             msg_id=str(uuid.uuid4()),
             chat_id=self.chat_id,
-            user_id="aura",
+            user_id=self.bot_name,
             platform="default",
+            role="assistant",
             m_type="text",
             content=bot_response.get("content", ""),
-            data={
-                "role": "assistant"
-            },
+            tokens=tokens,
+            data={},
             created_at=int(datetime.now().timestamp() * 1000)
         )
         # 存储到消息存储

@@ -7,6 +7,7 @@ from .models import PromptModel, PromptOrderModel, SystemPresetModel
 # 导入数据库相关模块
 from agents.agent_memory.database.database import Database
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
+from agents.prompt_manager.utils import count_tokens_openai
 
 class DBManager:
     """
@@ -51,6 +52,7 @@ class DBManager:
     
     def _create_prompt(self, system_preset_id: str, prompt_data: dict):
         """创建提示"""
+        tokens = count_tokens_openai(prompt_data.get('content', ''))
         prompt = PromptModel(
             system_preset_id=system_preset_id,
             identifier=prompt_data.get('identifier', ''),
@@ -60,6 +62,7 @@ class DBManager:
             enabled=prompt_data.get('enabled', True),
             marker=prompt_data.get('marker', False),
             content=prompt_data.get('content', ''),
+            tokens=tokens,
             injection_position=prompt_data.get('injection_position', 0),
             injection_depth=prompt_data.get('injection_depth', 4),
             forbid_overrides=prompt_data.get('forbid_overrides', False),

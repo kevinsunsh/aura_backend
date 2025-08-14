@@ -21,6 +21,7 @@ class PromptModel(Base):
     position = Column(Integer, default=0)  # 位置
     marker = Column(Boolean, default=False)  # 标记
     content = Column(Text, nullable=False)  # 内容
+    tokens = Column(Integer, default=0)  # 令牌
     injection_depth = Column(Integer, default=4)  # 注入深度
     injection_order = Column(Integer, default=100)  # 注入顺序
     injection_trigger = Column(JSON, default=[])  # 注入触发
@@ -53,7 +54,8 @@ class PromptModel(Base):
             'injection_position': InjectionPosition.RELATIVE,
             'extension': False,
             'forbid_overrides': False,
-            'role': 'system'
+            'role': 'system',
+            'tokens': 0
         }
         
         # 应用默认值

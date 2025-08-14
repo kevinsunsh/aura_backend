@@ -110,7 +110,9 @@ CHARACTER_TURN_PROMPT = """
 ### 📥 现在，请处理以下输入：
 {INSERT_INPUT_TEXT_HERE}
 """
-from configuration import get_chat_model_by_type
+import requests
+import hashlib
+from configuration import get_chat_model_by_type, global_config
 from langchain_core.messages import SystemMessage
 
 def char_turn_process(content: str) -> str:
@@ -163,3 +165,56 @@ def content_char_turn_process(processed_description: str) -> str:
         # 下一次仅在 start_pos 之前继续查找
         search_end = start_pos
     return processed_description
+
+def get_token_cache_object():
+    # 简单实现为全局缓存字典
+    if not hasattr(get_token_cache_object, "_cache"):
+        get_token_cache_object._cache = {}
+    return get_token_cache_object._cache
+
+def get_string_hash(s: str) -> str:
+    return hashlib.md5(s.encode('utf-8')).hexdigest()
+
+def count_tokens_openai(messages):
+    """
+    使用OpenAI分词器统计消息的token数
+    :param messages: 消息对象或消息对象列表
+    :param full: 是否完整统计
+    :return: token计数
+    """
+    configurable = getattr(global_config.model, "pfc_chat", {})
+    cache_object = get_token_cache_object()
+
+    if not isinstance(messages, list):
+        messages = [messages]
+
+    token_count = -1
+
+    for message in messages:
+        model = configurable["model_name"]
+
+        hash_val = get_string_hash(message)
+        cache_key = f"{model}-{hash_val}"
+        cached_count = cache_object.get(cache_key)
+
+        if isinstance(cached_count, int):
+            token_count += cached_count
+        else:
+            url = f"{configurable["api_base"]}/tokenization"
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {configurable["api_key"]}"}
+            body = {
+                "model": model,
+                "text": [message]
+            }
+            try:
+                # 使用POST方法，与curl命令保持一致
+                resp = requests.post(url, json=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                count = int(data["data"][0]["total_tokens"])
+            except Exception as e:
+                print(f"调用分词API失败: {e}")
+                count = 0
+            token_count += count
+            cache_object[cache_key] = count
+    return token_count

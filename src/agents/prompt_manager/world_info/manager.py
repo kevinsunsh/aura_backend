@@ -8,7 +8,7 @@ from .models import WorldInfoEntry, WorldInfoBook
 # 导入数据库相关模块
 from agents.agent_memory.database.database import Database
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
-from agents.prompt_manager.utils import content_char_turn_process
+from agents.prompt_manager.utils import content_char_turn_process, count_tokens_openai
 
 class DBManager:
     """
@@ -54,6 +54,7 @@ class DBManager:
         entry_data.get('constant', False)
         book_entry_content = entry_data.get('content', '')
         book_entry_content = content_char_turn_process(book_entry_content)
+        tokens = count_tokens_openai(book_entry_content)
         world_info_entry = WorldInfoEntry(
             world_info_book_id=world_info_book_id,
             uid=entry_data.get('uid', ''),
@@ -61,6 +62,7 @@ class DBManager:
             keysecondary=entry_data.get('keysecondary', []),
             comment=entry_data.get('comment', ''),
             content=book_entry_content,
+            tokens=tokens,
             constant=entry_data.get('constant', False),
             selective=entry_data.get('selective', True),
             order=entry_data.get('order', 100),

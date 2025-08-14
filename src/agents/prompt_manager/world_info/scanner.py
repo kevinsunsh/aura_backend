@@ -46,7 +46,9 @@ class WIGlobalScanData:
 class WIActivated:
     """激活的世界信息结果"""
     world_info_before: str = ""
+    world_info_before_tokens: int = 0
     world_info_after: str = ""
+    world_info_after_tokens: int = 0
     wi_depth_entries: List[Dict] = None
     em_entries: List[Dict] = None
     an_before_entries: List[str] = None
@@ -488,7 +490,9 @@ class WorldInfoScanner:
         
         # 构建结果
         world_info_before_entries = []
+        world_info_before_tokens = 0
         world_info_after_entries = []
+        world_info_after_tokens = 0
         em_entries = []
         an_top_entries = []
         an_bottom_entries = []
@@ -505,8 +509,10 @@ class WorldInfoScanner:
             position = entry.position
             if position == WorldInfoPosition.BEFORE.value:
                 world_info_before_entries.insert(0, content)
+                world_info_before_tokens += entry.tokens
             elif position == WorldInfoPosition.AFTER.value:
                 world_info_after_entries.insert(0, content)
+                world_info_after_tokens += entry.tokens
             elif position == WorldInfoPosition.EM_TOP.value:
                 em_entries.insert(0, {"position": "before", "content": content})
             elif position == WorldInfoPosition.EM_BOTTOM.value:
@@ -543,7 +549,9 @@ class WorldInfoScanner:
         
         return WIActivated(
             world_info_before=world_info_before,
+            world_info_before_tokens=world_info_before_tokens,
             world_info_after=world_info_after,
+            world_info_after_tokens=world_info_after_tokens,
             wi_depth_entries=wi_depth_entries,
             em_entries=em_entries,
             an_before_entries=an_top_entries,
@@ -571,13 +579,19 @@ class WorldInfoScanner:
         )
         activated_world_info = await self.check_world_info(chat, max_context, is_dry_run, scan_data)
         world_info_before = getattr(activated_world_info, 'world_info_before', '')
+        world_info_before = re.sub(r'<env_desc>.*?</env_desc>\s*', '', world_info_before, flags=re.DOTALL)
+        world_info_before_tokens = getattr(activated_world_info, 'world_info_before_tokens', 0)
         world_info_after = getattr(activated_world_info, 'world_info_after', '')
+        world_info_after = re.sub(r'<env_desc>.*?</env_desc>\s*', '', world_info_after, flags=re.DOTALL)
+        world_info_after_tokens = getattr(activated_world_info, 'world_info_after_tokens', 0)
         world_info_string = world_info_before + world_info_after
 
         return {
             "worldInfoString": world_info_string,
             "worldInfoBefore": world_info_before,
+            "worldInfoBeforeTokens": world_info_before_tokens,
             "worldInfoAfter": world_info_after,
+            "worldInfoAfterTokens": world_info_after_tokens,
             "worldInfoExamples": getattr(activated_world_info, 'em_entries', []) or [],
             "worldInfoDepth": getattr(activated_world_info, 'wi_depth_entries', []) or [],
             "anBefore": getattr(activated_world_info, 'an_before_entries', []) or [],
