@@ -1149,6 +1149,12 @@ class WebSocketTestSession:
         self.tts_sentence_start_time = None
         self.chat_response_start_time = None
         self.chat_ended_start_time = None
+        self.chat_action_start_time = None
+        self.chat_emotion_start_time = None
+        self.chat_env_desc_start_time = None
+        self.chat_action_end_time = None
+        self.chat_emotion_end_time = None
+        self.chat_env_desc_end_time = None
         self.asr_to_tts_delays = []  # 存储所有ASREnded到TTSSentenceStart的延迟
         # 信号处理
         signal.signal(signal.SIGINT, self._keyboard_signal)
@@ -1533,6 +1539,48 @@ class WebSocketTestSession:
                     delay = self.chat_ended_start_time - self.asr_ended_time
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个ChatEnded延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatAction:  # ChatAction
+                logger.info(f"🎵 收到ChatAction事件:{payload_msg.get('content', '')}")
+                if self.asr_ended_time is not None and self.chat_action_start_time is None:
+                    self.chat_action_start_time = time.time()
+                    delay = self.chat_action_start_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatAction延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatEmotion:  # ChatEmotion
+                logger.info(f"🎵 收到ChatEmotion事件:{payload_msg.get('content', '')}")
+                if self.asr_ended_time is not None and self.chat_emotion_start_time is None:
+                    self.chat_emotion_start_time = time.time()
+                    delay = self.chat_emotion_start_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatEmotion延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatEnvDesc:  # ChatEnvDesc
+                logger.info(f"🎵 收到ChatEnvDesc事件:{payload_msg.get('content', '')}")
+                if self.asr_ended_time is not None and self.chat_env_desc_start_time is None:
+                    self.chat_env_desc_start_time = time.time()
+                    delay = self.chat_env_desc_start_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatEnvDesc延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatActionEnd:  # ChatActionEnd
+                logger.info(f"🎵 收到ChatActionEnd事件:{payload_msg.get('content', '')}")
+                if self.asr_ended_time is not None and self.chat_action_end_time is None:
+                    self.chat_action_end_time = time.time()
+                    delay = self.chat_action_end_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatActionEnd延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatEmotionEnd:  # ChatEmotionEnd
+                logger.info(f"🎵 收到ChatEmotionEnd事件:{payload_msg.get('content', '')}")
+                if self.asr_ended_time is not None and self.chat_emotion_end_time is None:
+                    self.chat_emotion_end_time = time.time()
+                    delay = self.chat_emotion_end_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatEmotionEnd延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatEnvDescEnd:  # ChatEnvDescEnd
+                logger.info(f"🎵 收到ChatEnvDescEnd事件:{payload_msg.get('content', '')}")
+                if self.asr_ended_time is not None and self.chat_env_desc_end_time is None:
+                    self.chat_env_desc_end_time = time.time()
+                    delay = self.chat_env_desc_end_time - self.asr_ended_time
+                    self.asr_to_tts_delays.append(delay)
+                    logger.info(f"⏱️ ASREnded到第一个ChatEnvDescEnd延迟: {delay:.3f}秒")
             elif event_id == 999:  # Error
                 logger.error(f"发生错误: {data.get('message', '未知错误')}")
                 # 发生错误时也设置响应完成标志
