@@ -126,10 +126,9 @@ class WorldInfoBuffer:
 
 class WorldInfoTimedEffects:
     """世界信息时间效果"""
-    def __init__(self, chat: List[str], entries: List[WorldInfoEntry], is_dry_run: bool):
+    def __init__(self, chat: List[str], entries: List[WorldInfoEntry]):
         self.chat = chat
         self.entries = entries
-        self.is_dry_run = is_dry_run
         self.active_effects = {}
         
     def is_effect_active(self, effect_type: str, entry: WorldInfoEntry) -> bool:
@@ -182,7 +181,6 @@ class WorldInfoScanner:
         self.activate_keys = activate_keys
     
     async def check_world_info(self, chat: List[str], max_context: int, 
-                             is_dry_run: bool = False, 
                              global_scan_data: Optional[WIGlobalScanData] = None) -> WIActivated:
         """
         执行世界信息扫描并返回激活的世界信息
@@ -190,9 +188,8 @@ class WorldInfoScanner:
         Args:
             chat: 要扫描的聊天消息列表（倒序）
             max_context: 生成的最大上下文大小
-            is_dry_run: 是否为试运行
             global_scan_data: 聊天无关的上下文扫描数据
-            
+        
         Returns:
             WIActivated: 激活的世界信息
         """
@@ -201,7 +198,7 @@ class WorldInfoScanner:
         
         buffer = WorldInfoBuffer(chat, global_scan_data)
         
-        print(f"[WI] --- START WI SCAN (on {len(chat)} messages, trigger = {global_scan_data.trigger}){' (DRY RUN)' if is_dry_run else ''} ---")
+        print(f"[WI] --- START WI SCAN (on {len(chat)} messages, trigger = {global_scan_data.trigger}) ---")
         
         # 初始化变量
         scan_state = ScanState.INITIAL
@@ -224,7 +221,7 @@ class WorldInfoScanner:
         
         # 获取排序的条目
         sorted_entries = sorted(self.entries, key=lambda x: (x.order, x.id))
-        timed_effects = WorldInfoTimedEffects(chat, sorted_entries, is_dry_run)
+        timed_effects = WorldInfoTimedEffects(chat, sorted_entries)
         
         timed_effects.check_timed_effects()
         
@@ -549,8 +546,8 @@ class WorldInfoScanner:
         buffer.reset_external_effects()
         timed_effects.clean_up()
         
-        print(f"[WI] {'Hypothetically adding' if is_dry_run else 'Adding'} {len(all_activated_entries)} entries to prompt")
-        print(f"[WI] --- DONE{' (DRY RUN)' if is_dry_run else ''} ---")
+        print(f"[WI] Adding {len(all_activated_entries)} entries to prompt")
+        print(f"[WI] --- DONE ---")
         
         return WIActivated(
             world_info_before=world_info_before,
@@ -564,12 +561,11 @@ class WorldInfoScanner:
             all_activated_entries=set(all_activated_entries.values())
         )
 
-    async def get_world_info_prompt(self, chat, max_context, is_dry_run, global_scan_data):
+    async def get_world_info_prompt(self, chat, max_context, global_scan_data):
         """
         Python 版本的 getWorldInfoPrompt
         :param chat: 聊天内容
         :param max_context: 最大上下文
-        :param is_dry_run: 是否为 dry run
         :param global_scan_data: 全局扫描数据
         :return: dict
         """
@@ -585,7 +581,7 @@ class WorldInfoScanner:
             character_name=global_scan_data.get('character_name', ''),
             character_tags=global_scan_data.get('character_tags', [])
         )
-        activated_world_info = await self.check_world_info(chat, max_context, is_dry_run, scan_data)
+        activated_world_info = await self.check_world_info(chat, max_context, scan_data)
         world_info_before = getattr(activated_world_info, 'world_info_before', '')
         world_info_before = re.sub(r'<env_desc>.*?</env_desc>\s*', '', world_info_before, flags=re.DOTALL)
         world_info_before_tokens = getattr(activated_world_info, 'world_info_before_tokens', 0)

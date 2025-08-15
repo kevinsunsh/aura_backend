@@ -39,18 +39,13 @@ class ExtensionPromptRoles:
 
 @dataclass
 class GenerationOptions:
-    automatic_trigger: bool = False
-    force_name2: bool = False
-    quiet_prompt: str = ""
     quiet_to_loud: bool = False
     skip_wian: bool = False
     force_chid: Optional[int] = None
     signal: Optional[object] = None
-    quiet_image: Optional[str] = None
     quiet_name: Optional[str] = None
     json_schema: Optional[Dict] = None
     depth: int = 0
-    dry_run: bool = False
 
 @dataclass
 class CharacterCardFields:
@@ -201,6 +196,7 @@ class PromptManager:
                 world_info_scanner: Optional[WorldInfoScanner] = None, process_timer: Any = None):
         self.system_preset = system_preset
         self.character = character
+        self.character_fields = None
         self.character_id = 100001
         self.world_info_scanner = world_info_scanner
         self.activated_prompts = []
@@ -215,16 +211,7 @@ class PromptManager:
         self.name2 = character.name
         self.language = "ZH-CN"
         self.main_api = "openai"
-        self.is_instruct = False
-        self.power_user_settings = {
-            "prefer_character_prompt": True,
-            "prefer_character_jailbreak": True,
-            "instruct": {"enabled": False},
-            "sysprompt": {"enabled": True, "content": "Write {{char}}\'s next reply in a fictional chat between {{char}} and {{user}}."},
-            "context": {"names_as_stop_strings": True},
-            "collapse_newlines": False,
-            "force_name2": False
-        }
+        self.default_sysprompt_content = "Write {{char}}\'s next reply in a fictional chat between {{char}} and {{user}}."
         # 状态变量
         self.generation_started = None
         self.is_send_press = False
@@ -236,8 +223,6 @@ class PromptManager:
         self.story_string = ""
         self.mes_examples_string = ""
         self.prompt_bias = ""
-        self.quiet_prompt = ""
-
         # 世界书相关变量
         self.world_info_string = ""
         self.world_info_before = ""
@@ -297,7 +282,7 @@ class PromptManager:
         chat_messages.reverse()
         return injected_indices
     
-    def parse_mes_examples(self, examples_str: str, is_instruct: bool) -> List[str]:
+    def parse_mes_examples(self, examples_str: str) -> List[str]:
         """解析消息示例"""
         if not examples_str or len(examples_str) == 0 or examples_str == '<START>':
             return []
@@ -331,9 +316,8 @@ class PromptManager:
         """
         if not content:
             return ""
-
+        
         environment = {}
-
         # 处理original宏，确保只替换一次
         if isinstance(_original, str):
             original_substituted = {"used": False}
@@ -343,16 +327,16 @@ class PromptManager:
                 original_substituted["used"] = True
                 return _original
             environment["original"] = original_func
-
+        
         def get_group_value(include_muted: bool):
             # 这里只实现字符串和self.name2的简单逻辑，复杂群组逻辑需根据实际项目补充
             if isinstance(_group, str):
                 return _group
             # 假设没有复杂群组，直接返回_name2或self.name2
             return _name2 if _name2 is not None else getattr(self, "name2", "")
-
+        
         if _replace_character_card:
-            fields = self.get_character_card_fields()
+            fields = self.character_fields
             environment["charPrompt"] = getattr(fields, "system", "") or ""
             environment["charInstruction"] = getattr(fields, "jailbreak", "") or ""
             environment["charJailbreak"] = getattr(fields, "jailbreak", "") or ""
@@ -362,11 +346,7 @@ class PromptManager:
             environment["persona"] = getattr(fields, "persona", "") or ""
             def mes_examples_func(*args):
                 # 这里假设power_user和main_api等全局变量已在self中定义
-                is_instruct = getattr(self, "power_user", {}).get("instruct", {}).get("enabled", False) and getattr(self, "main_api", None) != "openai"
-                mes_examples_array = self.parse_mes_examples(getattr(fields, "mes_examples", ""), is_instruct)
-                if is_instruct:
-                    instruct_examples = self.format_instruct_mode_examples(mes_examples_array, getattr(self, "name1", ""), getattr(self, "name2", ""))
-                    return "".join(instruct_examples)
+                mes_examples_array = self.parse_mes_examples(getattr(fields, "mes_examples", ""))
                 return "".join(mes_examples_array)
             environment["mesExamples"] = mes_examples_func
             environment["mesExamplesRaw"] = getattr(fields, "mes_examples", "") or ""
@@ -374,7 +354,6 @@ class PromptManager:
             environment["char_version"] = getattr(fields, "version", "") or ""
             environment["charDepthPrompt"] = getattr(fields, "char_depth_prompt", "") or ""
             environment["creatorNotes"] = getattr(fields, "creator_notes", "") or ""
-
         # 必须最后替换，以便在{{description}}等内部也能被替换
         environment["user"] = _name1 if _name1 is not None else getattr(self, "name1", "")
         environment["char"] = _name2 if _name2 is not None else getattr(self, "name2", "")
@@ -388,13 +367,12 @@ class PromptManager:
 
         if additional_macro and isinstance(additional_macro, dict):
             environment.update(additional_macro)
-
         # evaluate_macros需实现宏替换逻辑
         if post_process_fn is None or not callable(post_process_fn):
             post_process_fn = lambda x: x
-
+        
         return evaluate_macros(content, environment, post_process_fn)
-
+    
     def get_character_card_fields(self) -> CharacterCardFields:
         """获取角色卡片字段"""
         result = CharacterCardFields()
@@ -417,7 +395,7 @@ class PromptManager:
         result.char_depth_prompt = self.base_chat_replace(depth_prompt_text)
         result.creator_notes = self.base_chat_replace(getattr(self.character, 'creator_notes', '').strip())
         return result
-
+    
     def base_chat_replace(self, value: str) -> str:
         """基础聊天替换"""
         if not value or len(value) == 0:
@@ -425,8 +403,7 @@ class PromptManager:
         # 参数替换
         value = self.substitute_params(value, _name1=self.name1, _name2=self.name2, _original=None, _group=None, _replace_character_card=False)
         # 换行符处理
-        if self.power_user_settings["collapse_newlines"]:
-            value = self.collapse_newlines(value)
+        value = self.collapse_newlines(value)
         value = value.replace('\r', '')
         return value
     
@@ -441,52 +418,24 @@ class PromptManager:
         # 按照SillyTavern的逻辑，按时间顺序构建（从最早到最新）
         for i in range(len(messages)):
             message = messages[i]
-            formatted_message = self.format_message_history_item(message, self.is_instruct)
+            formatted_message = self.format_message_history_item(message)
             chat2.append({
                 "message": formatted_message,
                 "extensionPrompts": []
             })
         return chat2
     
-    def format_message_history_item(self, message, is_instruct: bool) -> str:
+    def format_message_history_item(self, message) -> str:
         """格式化消息历史项"""
-        if is_instruct:
-            if message.role == 'user':
-                return f"{self.name1}: {message.content}\n"
-            else:
-                return f"{self.name2}: {message.content}\n"
-        else:
-            return f"{message.content}\n"
-
-    def modify_last_prompt_line(self, last_mes_string: str, generation_type: GenerationType,
-                               quiet_prompt: str = "", prompt_bias: str = "") -> str:
+        return f"{message.content}\n"
+    
+    def modify_last_prompt_line(self, last_mes_string: str, generation_type: GenerationType) -> str:
         """修改最后提示行 - 复刻modifyLastPromptLine逻辑"""
-        # 添加静默提示
-        if quiet_prompt and len(quiet_prompt) > 0:
-            if self.is_instruct:
-                last_mes_string += f"\n{quiet_prompt}"
-            else:
-                last_mes_string += f"\n{quiet_prompt}"
-
         # 指令模式处理
-        if self.is_instruct and generation_type != GenerationType.CONTINUE:
-            name = self.name1 if generation_type == GenerationType.IMPERSONATE else self.name2
-            last_mes_string += f"\n{name}:"
-
-        # 非指令模式处理
-        if not self.is_instruct and generation_type == GenerationType.IMPERSONATE:
-            if not last_mes_string.endswith('\n'):
-                last_mes_string += '\n'
-            last_mes_string += f"{self.name1}:"
-
-        # 强制添加角色名称
-        if not self.is_instruct and self.power_user_settings["force_name2"]:
-            if not last_mes_string.endswith('\n'):
-                last_mes_string += '\n'
-            last_mes_string += f"{self.name2}:"
-
+        if generation_type == GenerationType.IMPERSONATE:
+            last_mes_string += f"\n{self.name1}:"
         return last_mes_string
-
+    
     def get_combined_prompt(self, mes_send: List[Dict], generation_type: GenerationType,
                            story_string: str = "", mes_examples_string: str = "") -> str:
         """获取组合提示 - 复刻getCombinedPrompt逻辑"""
@@ -494,22 +443,18 @@ class PromptManager:
         if mes_send:
             last_message = mes_send[-1]["message"]
             modified_message = self.modify_last_prompt_line(
-                last_message, generation_type, self.quiet_prompt, self.prompt_bias
+                last_message, generation_type
             )
             mes_send[-1]["message"] = modified_message
-
         # 构建消息字符串
         mes_send_string = ""
         for item in mes_send:
             extension_prompts = "".join(item.get("extensionPrompts", []))
             mes_send_string += f"{extension_prompts}{item['message']}"
-
         # 添加聊天分隔符
         mes_send_string = self.add_chats_separator(mes_send_string)
-
         # 添加聊天前导
         mes_send_string = self.add_chats_preamble(mes_send_string)
-
         # 组合最终提示 - 包含世界书内容
         combined_prompt = (
             self.world_info_before +  # 世界书Before内容
@@ -519,25 +464,21 @@ class PromptManager:
             mes_send_string +
             self.generated_prompt_cache
         )
-
         # 清理换行符
         combined_prompt = combined_prompt.replace('\r', '')
-
-        if self.power_user_settings["collapse_newlines"]:
-            combined_prompt = self.collapse_newlines(combined_prompt)
-
+        combined_prompt = self.collapse_newlines(combined_prompt)
         return combined_prompt
-
+    
     def add_chats_separator(self, mes_send_string: str) -> str:
         """添加聊天分隔符"""
         # 这里可以添加自定义分隔符逻辑
         return mes_send_string
-
+    
     def add_chats_preamble(self, mes_send_string: str) -> str:
         """添加聊天前导"""
         # 这里可以添加自定义前导逻辑
         return mes_send_string
-
+    
     @dataclass
     class PrepareMessagesParams:
         """准备消息的参数类 - 复刻SillyTavern的prepareOpenAIMessages参数"""
@@ -554,8 +495,6 @@ class PromptManager:
         world_info_after_tokens: int = 0
         bias: str = ""
         type: str = ""
-        quiet_prompt: str = ""
-        quiet_image: Optional[str] = None
         cycle_prompt: str = ""
         system_prompt_override: Optional[str] = None
         jailbreak_prompt_override: Optional[str] = None
@@ -572,25 +511,20 @@ class PromptManager:
         """角色名称无效异常"""
         pass
 
-    async def prepare_openai_messages(self, params: PrepareMessagesParams, dry_run: bool = False) -> tuple[List[Dict], Any]:
+    async def prepare_openai_messages(self, params: PrepareMessagesParams) -> tuple[List[Dict], Any]:
         """
         准备OpenAI消息的主函数 - 复刻SillyTavern的prepareOpenAIMessages逻辑
-        
         处理提示词、准备聊天历史、管理token预算和处理各种用户设置
-        
         Args:
             params: 包含所有消息准备参数的数据类
-            dry_run: 是否为测试运行
-            
         Returns:
             包含准备好的聊天消息和token计数的元组
-            
         Raises:
             TokenBudgetExceededError: 当强制提示超出上下文大小时
             InvalidCharacterNameError: 当角色名称包含非法字符时
         """
         # 如果没有选择角色且为测试运行，无法准确计算token
-        if not self.character and dry_run:
+        if not self.character:
             return [None, False]
 
         chat_completion = ChatCompletion()
@@ -602,7 +536,6 @@ class PromptManager:
             user_settings.get("openai_max_context", 4096),
             user_settings.get("openai_max_tokens", 512)
         )
-
         try:
             # 合并标记和有序用户提示与系统提示
             prompts = await self.prepare_prompts_for_chat_completion({
@@ -617,7 +550,6 @@ class PromptManager:
                 "world_info_after_tokens": params.world_info_after_tokens,
                 "char_description": params.char_description,
                 "char_description_tokens": params.char_description_tokens,
-                "quiet_prompt": params.quiet_prompt,
                 "bias": params.bias,
                 "extension_prompts": params.extension_prompts,
                 "system_prompt_override": params.system_prompt_override,
@@ -627,75 +559,51 @@ class PromptManager:
             # 在预算允许的范围内填充聊天完成内容
             await self.populate_chat_completion(prompts, chat_completion, {
                 "bias": params.bias,
-                "quiet_prompt": params.quiet_prompt,
-                "quiet_image": params.quiet_image,
                 "type": params.type,
                 "cycle_prompt": params.cycle_prompt,
                 "messages": params.messages,
                 "message_examples": params.message_examples
             })
-            
         except self.TokenBudgetExceededError as error:
             print("强制提示超出上下文大小")
             chat_completion.log("Mandatory prompts exceed the context size.")
             self.error = "强制提示的token不足。请提高token限制或禁用自定义提示。"
-            
         except self.InvalidCharacterNameError as error:
             print("计算token时出错：角色名称无效")
             chat_completion.log("Invalid character name")
             self.error = "至少一个角色的名称包含空格或特殊字符。请检查您的用户名和角色名。"
-            
         except Exception as error:
             print("计算token时发生未知错误。更多信息可能在控制台中可用。")
             chat_completion.log("----- 准备提示时发生意外错误 -----")
             chat_completion.log(str(error))
             chat_completion.log("----------------------------------------------------")
-            
         finally:
             # 将聊天完成传递给提示管理器进行检查
             self.set_chat_completion(chat_completion)
-
-            if self.get_squash_system_messages() and not dry_run:
+            if self.get_squash_system_messages():
                 await chat_completion.squash_system_messages()
-
-            # 所有信息都是最新的，进行渲染
-            if not dry_run:
-                self.render(False)
-
+        
         chat, total_tokens = chat_completion.get_chat()
         return [chat, total_tokens]
-
+    
     def get_user_settings(self) -> Dict[str, Any]:
         """获取用户设置"""
         return {
             "openai_max_context": 4096,
             "openai_max_tokens": 512,
         }
-
+    
     def set_chat_completion(self, chat_completion):
         """设置聊天完成对象"""
         self.chat_completion = chat_completion
-
+    
     def get_squash_system_messages(self) -> bool:
         """获取是否压缩系统消息的设置"""
         return False
-
-    def render(self, force: bool = False):
-        """渲染提示管理器"""
-        pass
-
-    async def emit_event(self, event_type: str, data: Dict):
-        """触发事件"""
-        pass
-
-    def get_token_counts(self) -> Dict[str, int]:
-        """获取token计数"""
-        return {"total": 0, "prompt": 0, "completion": 0}
-
+    
     async def prepare_prompts_for_chat_completion(self, options: Dict) -> Dict:
         """
         合并系统提示与提示管理器提示 - 复刻SillyTavern的preparePromptsForChatCompletion详细实现
-        
         Args:
             options: 包含可选设置的字典，包括：
                 - scenario: 场景或对话上下文
@@ -704,13 +612,11 @@ class PromptManager:
                 - world_info_before: 主对话前添加的世界信息
                 - world_info_after: 主对话后添加的世界信息
                 - char_description: 角色描述
-                - quiet_prompt: 对话中使用的静默提示
                 - bias: 对话中添加的偏置
                 - extension_prompts: 包含额外提示的对象
                 - system_prompt_override: 角色卡片覆盖的主提示
                 - jailbreak_prompt_override: 角色卡片覆盖的PHI
                 - type: 触发提示的生成类型
-                
         Returns:
             包含准备好并合并的系统和用户定义提示的字典
         """
@@ -725,19 +631,16 @@ class PromptManager:
         world_info_after_tokens = options.get("world_info_after_tokens", "")
         char_description = options.get("char_description", "")
         char_description_tokens = options.get("char_description_tokens", "")
-        quiet_prompt = options.get("quiet_prompt", "")
         bias = options.get("bias", "")
         extension_prompts = options.get("extension_prompts", {})
         system_prompt_override = options.get("system_prompt_override", "")
         jailbreak_prompt_override = options.get("jailbreak_prompt_override", "")
         generation_type = options.get("type", "")
-        
         # 处理场景和性格文本格式化
         scenario_text = self._format_scenario_text(scenario)
         char_personality_text = self._format_personality_text(char_personality)
         group_nudge = self.substitute_params(self.power_user_settings.get("group_nudge_prompt", ""))
         impersonation_prompt = self.substitute_params(self.power_user_settings.get("impersonation_prompt", ""))
-        
         # 创建系统提示条目
         system_prompts = [
             # 有序提示，应该存在标记
@@ -748,11 +651,9 @@ class PromptManager:
             {"role": "system", "content": scenario_text, "tokens": scenario_tokens, "identifier": "scenario", "system_prompt": True},
             # 无序提示，无标记
             {"role": "system", "content": impersonation_prompt, "identifier": "impersonate", "system_prompt": True},
-            {"role": "system", "content": quiet_prompt, "identifier": "quietPrompt", "system_prompt": True},
             {"role": "system", "content": group_nudge, "identifier": "groupNudge", "system_prompt": True},
             {"role": "assistant", "content": bias, "identifier": "bias", "system_prompt": True},
         ]
-        
         # 处理扩展提示 - Tavern Extras Summary
         summary = extension_prompts.get("1_memory")
         if summary and summary.get("value"):
@@ -763,7 +664,6 @@ class PromptManager:
                 "position": self._get_prompt_position(summary.get("position")),
                 "system_prompt": True
             })
-        
         # 作者注释
         authors_note = extension_prompts.get("2_floating_prompt")
         if authors_note and authors_note.get("value"):
@@ -774,7 +674,6 @@ class PromptManager:
                 "position": self._get_prompt_position(authors_note.get("position")),
                 "system_prompt": True
             })
-        
         # 向量记忆
         vectors_memory = extension_prompts.get("3_vectors")
         if vectors_memory and vectors_memory.get("value"):
@@ -854,10 +753,8 @@ class PromptManager:
             "4_vectors_data_bank",
             "chromadb",
             "PERSONA_DESCRIPTION",
-            "QUIET_PROMPT",
             "DEPTH_PROMPT",
         ]
-        
         # 处理未知扩展提示
         for key, prompt in extension_prompts.items():
             if key in known_extension_prompts:
@@ -866,13 +763,11 @@ class PromptManager:
                 continue
             if prompt.get("position") not in [ExtensionPromptTypes.BEFORE_PROMPT, ExtensionPromptTypes.IN_PROMPT]:
                 continue
-            
             # 检查过滤器
             has_filter = prompt.get("filter") is not None
             if has_filter and callable(prompt["filter"]):
                 if not await prompt["filter"]():
                     continue
-            
             system_prompts.append({
                 "identifier": re.sub(r'\W', '_', key),
                 "position": self._get_prompt_position(prompt.get("position")),
@@ -881,7 +776,6 @@ class PromptManager:
                 "extension": True,
                 "system_prompt": True
             })
-        
         # 获取用户定义的提示顺序
         prompts = self.get_prompt_collection(generation_type)
         # 合并系统提示与提示管理器提示
@@ -900,11 +794,9 @@ class PromptManager:
             prepared_prompt = PromptModel(**prompt)
             prepared_prompt.content = self.substitute_params(prepared_prompt.content, self.name1, self.name2)
             prompts["collection"][prepared_prompt.identifier] = prepared_prompt
-        
         # 应用角色特定的主提示
         system_prompt = prompts["collection"].get("main")
         is_system_prompt_disabled = self._is_prompt_disabled_for_active_character("main")
-        
         # 处理系统提示覆盖
         if system_prompt_override and not is_system_prompt_disabled:
             if system_prompt:
@@ -917,11 +809,9 @@ class PromptManager:
                     position=0,
                     system_prompt=True
                 )
-        
         # 应用角色特定的越狱提示
         jailbreak_prompt = prompts["collection"].get("jailbreak")
         is_jailbreak_disabled = self._is_prompt_disabled_for_active_character("jailbreak")
-        
         if jailbreak_prompt_override and not is_jailbreak_disabled:
             if jailbreak_prompt:
                 jailbreak_prompt.content = jailbreak_prompt_override
@@ -933,19 +823,17 @@ class PromptManager:
                     position=999,
                     system_prompt=True
                 )
-        
         return prompts
-
+    
     def _format_scenario_text(self, scenario: str) -> str:
         """格式化场景文本"""
         if not scenario:
             return ""
-        
         scenario_format = self.power_user_settings.get("scenario_format", "{scenario}")
         if scenario_format:
             return self.substitute_params(scenario_format.replace("{scenario}", scenario))
         return scenario
-
+    
     def _format_personality_text(self, personality: str) -> str:
         """格式化性格文本"""
         if not personality:
@@ -955,13 +843,13 @@ class PromptManager:
         if personality_format:
             return self.substitute_params(personality_format.replace("{personality}", personality))
         return personality
-
+    
     def _format_world_info(self, world_info: str) -> str:
         """格式化世界信息"""
         if not world_info:
             return ""
         return self.substitute_params(world_info.strip(), self.name1, self.name2)
-
+    
     def _get_prompt_role(self, role) -> str:
         """获取提示角色"""
         if role == ExtensionPromptRoles.USER:
@@ -970,13 +858,13 @@ class PromptManager:
             return "assistant"
         else:
             return "system"
-
+    
     def _get_prompt_position(self, position) -> int:
         """获取提示位置"""
         if position is None:
             return 0
         return int(position)
-
+    
     def get_prompt_collection(self, generation_type: str = "normal") -> Dict:
         """
         返回一个完整的提示列表，其中内容标记已被替换
@@ -1015,7 +903,7 @@ class PromptManager:
         }
         prompt_collection["collection"] = {**front_items, **prompt_collection["collection"]}
         return prompt_collection
-
+    
     def _get_prompt_order_for_character(self) -> List[Dict]:
         """获取角色的提示顺序"""
         prompt_orders = self.system_preset.prompt_orders
@@ -1339,16 +1227,12 @@ class PromptManager:
             chat_completion: 聊天完成对象
             options: 包含以下选项的字典：
                 - bias: 偏置提示
-                - quiet_prompt: 静默提示
-                - quiet_image: 静默图像
                 - type: 生成类型
                 - cycle_prompt: 循环提示
                 - messages: 聊天消息
                 - message_examples: 消息示例
         """
         bias = options.get("bias", "")
-        quiet_prompt = options.get("quiet_prompt", "")
-        quiet_image = options.get("quiet_image")
         generation_type = options.get("type", "")
         cycle_prompt = options.get("cycle_prompt", "")
         messages = options.get("messages", [])
@@ -1440,14 +1324,6 @@ class PromptManager:
         #         if impersonate_message:
         #             control_prompts["messages"].append(impersonate_message)
 
-        # # 添加静默提示到控制提示
-        # quiet_prompt_obj = prompts.get("collection", {}).get('quietPrompt')
-        # if quiet_prompt_obj:
-        #     quiet_prompt_message = await self._message_from_prompt_async(quiet_prompt_obj)
-        #     if quiet_prompt_message and quiet_prompt_message.get("content"):
-        #         if self._is_image_inlining_supported() and quiet_image:
-        #             await self._add_image_to_message(quiet_prompt_message, quiet_image)
-        #         control_prompts["messages"].append(quiet_prompt_message)
 
 
 
@@ -1583,45 +1459,7 @@ class PromptManager:
             "tokens": end_system_prompt_tokens
         })
         chat_completion.chat_messages[index] = message_collection
-
-    def render_story_string(self, params: Dict[str, str]) -> str:
-        """渲染故事字符串 - 基于角色卡片字段构建完整的故事提示"""
-        story_parts = []
-        
-        # 添加角色描述
-        if params.get("description"):
-            story_parts.append(f"Character Description:\n{params['description']}")
-        
-        # 添加角色性格
-        if params.get("personality"):
-            story_parts.append(f"Character Personality:\n{params['personality']}")
-        
-        # 添加用户信息
-        if params.get("persona"):
-            story_parts.append(f"User Persona:\n{params['persona']}")
-        
-        # 添加场景设定
-        if params.get("scenario"):
-            story_parts.append(f"Scenario:\n{params['scenario']}")
-        
-        # 添加创作者注释
-        if params.get("creatorNotes"):
-            story_parts.append(f"Creator Notes:\n{params['creatorNotes']}")
-        
-        # 添加系统提示
-        if params.get("system"):
-            story_parts.append(f"System:\n{params['system']}")
-        
-        # 添加深度提示
-        if params.get("charDepthPrompt"):
-            story_parts.append(f"Depth Prompt:\n{params['charDepthPrompt']}")
-        
-        # 添加越狱提示
-        if params.get("jailbreak"):
-            story_parts.append(f"Jailbreak:\n{params['jailbreak']}")
-        
-        return "\n\n".join(story_parts)
-
+    
     def get_extension_prompt_max_depth(self) -> int:
         """获取扩展提示的最大深度"""
         if not self.extension_prompts:
@@ -1634,7 +1472,7 @@ class PromptManager:
                 max_depth = depth
         
         return max_depth
-
+    
     def set_extension_prompt(self, key, value, position, depth, scan = False, role = ExtensionPromptRoles.SYSTEM, filter = None):
         self.extension_prompts[key] = {
             "value": str(value),
@@ -1661,21 +1499,15 @@ class PromptManager:
         """主要生成函数 - 复刻Generate函数逻辑"""
         if options is None:
             options = GenerationOptions()
-
         print(f"Generate entered: {generation_type.value}")
         self.generation_started = datetime.now()
-
-        # 处理静默提示
-        self.quiet_prompt = options.quiet_prompt
-        if self.quiet_prompt:
-            self.quiet_prompt = self.substitute_params(self.quiet_prompt)
         # 获取角色卡片字段
-        character_fields = self.get_character_card_fields()
-        if self.power_user_settings['sysprompt']['enabled']:
-            character_fields.system = self.base_chat_replace(self.power_user_settings['sysprompt']['content'])
+        self.character_fields = self.get_character_card_fields()
+        if len(self.character_fields.system) == 0:
+            self.character_fields.system = self.base_chat_replace(self.default_sysprompt_content)
         self.remove_depth_prompts()
         # 1v1 聊天
-        depthPromptText = character_fields.char_depth_prompt or ''
+        depthPromptText = self.character_fields.char_depth_prompt or ''
         depthPromptDepth = self.character.depth_prompt.depth if self.character.depth_prompt else self.depth_prompt_depth_default
         depthPromptRole = self.get_extension_prompt_role_by_name(self.character.depth_prompt.role if self.character.depth_prompt else self.depth_prompt_role_default)
         self.set_extension_prompt('DEPTH_PROMPT', depthPromptText, ExtensionPromptTypes.IN_CHAT, depthPromptDepth, True, depthPromptRole)
@@ -1709,19 +1541,18 @@ class PromptManager:
         # setFloatingPrompt();
         # // Add persona description to prompt
         # addPersonaDescriptionExtensionPrompt();
-        self.set_extension_prompt('QUIET_PROMPT', self.quiet_prompt, ExtensionPromptTypes.IN_PROMPT, 0, True)
         chatForWI = [f"{x.user_id}: {x.content}" if x.user_id else x.content for x in coreChat]
         chatForWI.reverse()
         globalScanData = {
-            "personaDescription": character_fields.persona,
-            "characterDescription": character_fields.description,
-            "characterPersonality": character_fields.personality,
+            "personaDescription": self.character_fields.persona,
+            "characterDescription": self.character_fields.description,
+            "characterPersonality": self.character_fields.personality,
             "characterDepthPrompt": depthPromptText,
-            "scenario": character_fields.scenario,
-            "creatorNotes": character_fields.creator_notes,
+            "scenario": self.character_fields.scenario,
+            "creatorNotes": self.character_fields.creator_notes,
             "trigger": 'normal',
         }
-        activatedWorldInfo = await self.world_info_scanner.get_world_info_prompt(chatForWI, 4000, options.dry_run, globalScanData)
+        activatedWorldInfo = await self.world_info_scanner.get_world_info_prompt(chatForWI, 4000, globalScanData)
         self.world_info_before = activatedWorldInfo.get('worldInfoBefore', '')
         self.world_info_before_tokens = activatedWorldInfo.get('worldInfoBeforeTokens', 0)
         self.world_info_after = activatedWorldInfo.get('worldInfoAfter', '')
@@ -1731,15 +1562,13 @@ class PromptManager:
         self.world_info_depth = activatedWorldInfo.get('worldInfoDepth', [])
         self.an_before = activatedWorldInfo.get('anBefore', [])
         self.an_after = activatedWorldInfo.get('anAfter', [])
-        self.set_extension_prompt('QUIET_PROMPT', '', ExtensionPromptTypes.IN_PROMPT, 0, True)
-        # self.story_string = self.render_story_string(story_string_params)
         params = self.PrepareMessagesParams()
         params.name2 = self.character.name
-        params.char_description = character_fields.description
+        params.char_description = self.character_fields.description
         params.char_description_tokens = self.character.description_tokens
-        params.char_personality = character_fields.personality
+        params.char_personality = self.character_fields.personality
         params.char_personality_tokens = self.character.personality_tokens
-        params.scenario = character_fields.scenario
+        params.scenario = self.character_fields.scenario
         params.scenario_tokens = self.character.scenario_tokens
         params.world_info_before = self.world_info_before
         params.world_info_before_tokens = self.world_info_before_tokens
@@ -1748,11 +1577,9 @@ class PromptManager:
         params.extension_prompts = self.extension_prompts
         params.bias = ''
         params.type = 'normal'
-        params.quiet_prompt = self.quiet_prompt
-        params.quiet_image = None
         params.cycle_prompt = ''
-        params.system_prompt_override = character_fields.system
-        params.jailbreak_prompt_override = character_fields.jailbreak
+        params.system_prompt_override = self.character_fields.system
+        params.jailbreak_prompt_override = self.character_fields.jailbreak
         params.messages = coreChat
         params.message_examples = self.world_info_examples
         result = await self.prepare_openai_messages(params)

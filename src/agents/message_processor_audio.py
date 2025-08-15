@@ -21,7 +21,7 @@ from .doubao_client.tts_client import TtsClient
 from .doubao_client.doubao_config import speaker_config
 from .message_processor_text import MessageProcessorText
 from .msg_preandpost_processor import MessagePreAndPostProcessor
-from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set, ActiveClientType
+from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set
 from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 from api_protocol.constant import *
 

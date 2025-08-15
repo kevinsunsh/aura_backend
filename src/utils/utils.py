@@ -6,16 +6,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from collections import defaultdict
 import json
-from loguru import logger
 import atexit
-import sys
 import random
 import asyncio
-
-class ActiveClientType():
-    TBD_CLIENT = 0
-    E2E_CLIENT = 1
-    ALT_CLIENT = 2
 
 def atomic_compare_and_set(value_obj: Any, lock: Any, expected: bool, new_value: bool) -> bool:
     """
