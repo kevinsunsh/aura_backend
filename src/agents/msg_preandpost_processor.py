@@ -29,11 +29,11 @@ class MessagePreAndPostProcessor(ABC):
         self.history_check_interval = 20000 #ms
         self.chat_id = None
         self.user_id = None
-        self.bot_name = "Seraphina"
+        self.bot_name = "Nova"
         self.character = CharacterManager().get_character_by_name(self.bot_name)
         self.world_info_scanner = WorldInfoScanner()
-        # self.system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
-        self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
+        self.system_preset = SystemPresetManager().get_system_preset_by_name("（全能2.3）王のdeepseek-R1预设")
+        # self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
     
     @staticmethod
     def process_entry(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):

@@ -59,6 +59,14 @@ app.add_middleware(
     allow_headers=["*"],  # 允许所有请求头
 )
 
+@app.get("/v1/ping")
+async def ping():
+    return {"message": "pong"}
+
+@app.get("/")
+async def check_status():
+    return {"status": "ok"}
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
