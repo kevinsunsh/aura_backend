@@ -21,7 +21,7 @@ from agents.agent_memory.chat_stream import ChatStream, ChatStreamManager
 from agents.agent_memory.message_store import MessageStore, Message
 
 from utils.utils import start_performance_point, end_performance_point
-from utils.todo_mock_func import _build_chat_history_str
+from utils.todo_mock_func import _build_readable_messages
 from agents.task.task_manager import TaskManager, TaskType, TaskStateType
 
 

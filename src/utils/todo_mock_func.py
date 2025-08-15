@@ -1,7 +1,6 @@
 import re
 from loguru import logger
 from typing import List, Dict, Any, Tuple
-from agents.agent_memory.message_store import Message
 from configuration.config import Config, global_config
 
 # 工具函数
@@ -50,16 +49,6 @@ def _build_action_history_summary(action_history: List[str]) -> str:
     for i, action in enumerate(recent_actions):
         summary += f"{i + 1}. {action}\n"
     return summary
-
-def _build_chat_history_str(messages: List[Message]) -> str:
-    """构建聊天历史字符串"""
-    chat_history_str = ""
-    for msg in messages:
-        if msg.user_id == "aura":
-            chat_history_str += f"你说: {msg.content}\n"
-        else:
-            chat_history_str += f"{msg.user_id}说: {msg.content}\n"
-    return chat_history_str
 
 def _build_readable_messages_internal(
     messages: List[Dict[str, Any]],

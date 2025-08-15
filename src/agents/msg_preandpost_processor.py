@@ -8,9 +8,6 @@ import xml.etree.ElementTree as ET
 from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
 from agents.agent_memory.chat_stream import ChatStreamManager
 from agents.agent_memory.message_store import MessageStore, MessageModel
-from utils.todo_mock_func import (
-    _build_chat_history_str
-)
 from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 from configuration import get_chat_model_by_type
 from langchain_core.messages import SystemMessage

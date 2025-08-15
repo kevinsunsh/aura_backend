@@ -131,6 +131,7 @@ class AuraAgent:
             # 使用统一的协议解析函数
             # result = server_parse_request(data, skip_audio_decompression=True)
             result = server_parse_request(data)
+            # logger.bind(tag="BASE").info(f"解析二进制协议消息: {len(result['payload_msg'])}")
             # 如果解析成功，添加额外的调试信息
             if 'error' not in result:
                 logger.debug(f"协议解析成功: message_type={result.get('message_type')}, "
