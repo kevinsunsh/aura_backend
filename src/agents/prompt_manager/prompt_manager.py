@@ -528,9 +528,6 @@ class PromptManager:
             return [None, False]
 
         chat_completion = ChatCompletion()
-        if self.power_user_settings.get("console_log_prompts", False):
-            chat_completion.enable_logging()
-
         user_settings = self.get_user_settings()
         chat_completion.set_token_budget(
             user_settings.get("openai_max_context", 4096),
@@ -639,8 +636,6 @@ class PromptManager:
         # 处理场景和性格文本格式化
         scenario_text = self._format_scenario_text(scenario)
         char_personality_text = self._format_personality_text(char_personality)
-        group_nudge = self.substitute_params(self.power_user_settings.get("group_nudge_prompt", ""))
-        impersonation_prompt = self.substitute_params(self.power_user_settings.get("impersonation_prompt", ""))
         # 创建系统提示条目
         system_prompts = [
             # 有序提示，应该存在标记
@@ -650,8 +645,6 @@ class PromptManager:
             {"role": "system", "content": char_personality_text, "tokens": char_personality_tokens, "identifier": "charPersonality", "system_prompt": True},
             {"role": "system", "content": scenario_text, "tokens": scenario_tokens, "identifier": "scenario", "system_prompt": True},
             # 无序提示，无标记
-            {"role": "system", "content": impersonation_prompt, "identifier": "impersonate", "system_prompt": True},
-            {"role": "system", "content": group_nudge, "identifier": "groupNudge", "system_prompt": True},
             {"role": "assistant", "content": bias, "identifier": "bias", "system_prompt": True},
         ]
         # 处理扩展提示 - Tavern Extras Summary
@@ -703,16 +696,13 @@ class PromptManager:
                 "position": self._get_prompt_position(smart_context.get("position")),
                 "system_prompt": True
             })
-        # 角色描述
-        persona_description = self.power_user_settings.get("persona_description", "")
-        persona_position = self.power_user_settings.get("persona_description_position", "IN_PROMPT")
-        if persona_position == "IN_PROMPT":
-            system_prompts.append({
-                "role": "system",
-                "content": f"User is {self.name1}, in ShangHai, China, time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                "identifier": "personaDescription",
-                "system_prompt": True
-            })
+        # 用户描述
+        system_prompts.append({
+            "role": "system",
+            "content": f"User is {self.name1}, in ShangHai, China, time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "identifier": "personaDescription",
+            "system_prompt": True
+        })
         # 工具调用
         tool_results = TaskManager.get_instance().get_all_tasks_status_prompt_for_llm(self.name1).replace('{', '').replace('}', '').replace('"', '')
         system_prompts.append({
@@ -829,20 +819,13 @@ class PromptManager:
         """格式化场景文本"""
         if not scenario:
             return ""
-        scenario_format = self.power_user_settings.get("scenario_format", "{scenario}")
-        if scenario_format:
-            return self.substitute_params(scenario_format.replace("{scenario}", scenario))
-        return scenario
+        return self.substitute_params(scenario)
     
     def _format_personality_text(self, personality: str) -> str:
         """格式化性格文本"""
         if not personality:
             return ""
-        
-        personality_format = self.power_user_settings.get("personality_format", "{personality}")
-        if personality_format:
-            return self.substitute_params(personality_format.replace("{personality}", personality))
-        return personality
+        return self.substitute_params(personality)
     
     def _format_world_info(self, world_info: str) -> str:
         """格式化世界信息"""
@@ -914,267 +897,6 @@ class PromptManager:
     
     def _get_valid_tool_types(self) -> List[str]:
         return ["search_info"]
-    
-    # def _get_sys_prompt_map(self) -> Dict:
-    #     prompts_map = {
-    #         "main": {
-    #             "content": self.power_user_settings.get("sysprompt", {}).get("content", ""),
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "main",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Main Prompt",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "worldInfoBefore": {
-    #             "content": getattr(self, 'world_info_before', ''),
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "worldInfoBefore",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "World Info Before",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "personaDescription": {
-    #             "content": self.power_user_settings.get("persona_description", ""),
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "personaDescription",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Persona Description",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "charDescription": {
-    #             "content": getattr(self.character, 'description', '') if self.character else '',
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "charDescription",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Character Description",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "charPersonality": {
-    #             "content": getattr(self.character, 'personality', '') if self.character else '',
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "charPersonality",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "scenario": {
-    #             "content": getattr(self.character, 'scenario', '') if self.character else '',
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "scenario",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Scenario",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "enhanceDefinitions": {
-    #             "content": "",
-    #             "enabled": False,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "enhanceDefinitions",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Enhance Definitions",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "nsfw": {
-    #             "content": "",
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "nsfw",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "NSFW",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "worldInfoAfter": {
-    #             "content": getattr(self, 'world_info_after', ''),
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "worldInfoAfter",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "World Info After",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "toolResults": {
-    #             "content": "",
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "toolResults",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Tool Results",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "validTool": {
-    #             "content": "",
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "validTool",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Valid Tool",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "toolCalls": {
-    #             "content": "",
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "toolCalls",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Tool Calls",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "toolDismiss": {
-    #             "content": "",
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "toolDismiss",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Tool Dismiss",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "dialogueExamples": {
-    #             "content": getattr(self.character, 'mes_example', '') if self.character else '',
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "dialogueExamples",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Dialogue Examples",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "chatHistory": {
-    #             "content": "",
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "chatHistory",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Chat History",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         },
-    #         "jailbreak": {
-    #             "content": getattr(self.character, 'post_history_instructions', '') if self.character else '',
-    #             "enabled": True,
-    #             "extension": False,
-    #             "forbid_overrides": False,
-    #             "identifier": "jailbreak",
-    #             "injection_depth": None,
-    #             "injection_order": 100,
-    #             "injection_position": InjectionPosition.RELATIVE,
-    #             "injection_trigger": [],
-    #             "marker": None,
-    #             "name": "Jailbreak",
-    #             "position": 0,
-    #             "role": "system",
-    #             "system_prompt": True,
-    #         }
-    #     }
-    #     return prompts_map
     
     def _get_prompt_by_id(self, identifier: str) -> Optional[PromptModel]:
         """根据ID获取提示"""
@@ -1358,13 +1080,8 @@ class PromptManager:
         # input_template += TaskManager.get_instance().get_task_prompt_for_llm_by_type("search_info")
         # 添加聊天内注入
         messages = await self._populate_injection_prompts(absolute_prompts, messages)
-        # 决定是否总是添加对话示例
-        if self.power_user_settings.get("pin_examples", False):
-            await self._populate_dialogue_examples(prompts, chat_completion, message_examples)
-            await self._populate_chat_history(messages, prompts, chat_completion, generation_type, cycle_prompt)
-        else:
-            await self._populate_chat_history(messages, prompts, chat_completion, generation_type, cycle_prompt)
-            await self._populate_dialogue_examples(prompts, chat_completion, message_examples)
+        await self._populate_chat_history(messages, prompts, chat_completion, generation_type, cycle_prompt)
+        await self._populate_dialogue_examples(prompts, chat_completion, message_examples)
     
     def _create_message_collection(self, source: str) -> Dict:
         """创建消息集合"""
