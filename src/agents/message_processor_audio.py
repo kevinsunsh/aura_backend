@@ -614,6 +614,12 @@ class MessageProcessorAudio:
                 logger.bind(tag="DELAY").info(f"SpeakEnded")
             else:
                 logger.bind(tag="DELAY").info("SpeakEnded，但ASR未开始")
+        elif message_data.get("event") == ClientEvent.WorldInfoActivateKeys:
+            self.prepost_input_queues.put({"type": "change_world_info_activate_keys", "data": message_data.get("payload_msg", {}).get("activate_keys", [])})
+        elif message_data.get("event") == ClientEvent.ChangeBotID:
+            self.prepost_input_queues.put({"type": "change_bot_name", "data": message_data.get("payload_msg", {}).get("bot_name", "")})
+        elif message_data.get("event") == ClientEvent.ChangeSystemPreset:
+            self.prepost_input_queues.put({"type": "change_system_preset", "data": message_data.get("payload_msg", {}).get("system_preset", "")})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     # async def send_asr_message(self):
@@ -1046,7 +1052,7 @@ class MessageProcessorAudio:
             logger.error(f"消息处理任务异常: {e}")
             raise  # 重新抛出异常
     
-    async def start(self, chat_id: str, user_id: str, session_prompt: str = "", websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
+    async def start(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
         self.chat_id = chat_id
         self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
@@ -1054,7 +1060,7 @@ class MessageProcessorAudio:
         # self.asr_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.vad_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.e2e_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
-        self.prepost_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id, "session_prompt": session_prompt}})
+        self.prepost_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.llm_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         # self.tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})
         self.llm_tts_input_queues.put({"type": "start", "data": {"chat_id": chat_id, "user_id": user_id}})

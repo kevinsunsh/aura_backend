@@ -30,9 +30,9 @@ class MessagePreAndPostProcessor(ABC):
         self.history_check_interval = 20000 #ms
         self.chat_id = None
         self.user_id = None
-        self.session_prompt = ""
         self.bot_name = "Seraphina"
         self.character = CharacterManager().get_character_by_name(self.bot_name)
+        self.world_info_scanner = WorldInfoScanner()
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
         self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
         self.generator = PromptManager(
@@ -40,7 +40,7 @@ class MessagePreAndPostProcessor(ABC):
             user_id="test_user_123444",
             system_preset=self.system_preset,
             character=self.character,
-            world_info_scanner=WorldInfoScanner()
+            world_info_scanner=self.world_info_scanner
         )
     
     @staticmethod
@@ -63,10 +63,16 @@ class MessagePreAndPostProcessor(ABC):
             if isinstance(msg, dict) and msg.get("type") == "start":
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
-                client.session_prompt = msg["data"]["session_prompt"]
                 client.is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
+            elif isinstance(msg, dict) and msg.get("type") == "change_bot_name":
+                client.bot_name = msg["data"]
+                client.character = CharacterManager().get_character_by_name(client.bot_name)
+            elif isinstance(msg, dict) and msg.get("type") == "change_system_preset":
+                client.system_preset = SystemPresetManager().get_system_preset_by_name(msg["data"])
+            elif isinstance(msg, dict) and msg.get("type") == "change_world_info_activate_keys":
+                client.world_info_scanner.set_activate_keys(msg["data"])
             elif isinstance(msg, dict) and msg.get("type") == "preprocess":
                 if client.is_process_running.value:
                     logger.bind(tag="BASE").info("预处理用户输入")

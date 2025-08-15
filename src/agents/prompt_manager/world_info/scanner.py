@@ -155,8 +155,9 @@ class WorldInfoScanner:
     """
     Scans text to find and activate World Info entries based on keywords.
     """
-    def __init__(self):
+    def __init__(self, activate_keys: List[str] = None):
         self.entries = []
+        self.activate_keys = activate_keys
     
     def substitute_params(self, text: str) -> str:
         """替换参数"""
@@ -175,6 +176,10 @@ class WorldInfoScanner:
         """按包含组过滤条目"""
         # 这里可以添加组过滤逻辑
         pass
+
+    def set_activate_keys(self, activate_keys: List[str]):
+        """设置激活的关键词"""
+        self.activate_keys = activate_keys
     
     async def check_world_info(self, chat: List[str], max_context: int, 
                              is_dry_run: bool = False, 
@@ -571,7 +576,10 @@ class WorldInfoScanner:
         world_info_string = ''
         world_info_before = ''
         world_info_after = ''
-        self.entries = DBManager().list_all_activated_entries()
+        if self.activate_keys is not None:
+            self.entries = DBManager().list_all_activated_entries_by_keys(self.activate_keys)
+        else:
+            self.entries = DBManager().list_all_activated_entries()
         scan_data = WIGlobalScanData(
             trigger=global_scan_data.get('trigger', 'chat'),
             character_name=global_scan_data.get('character_name', ''),

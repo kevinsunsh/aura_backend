@@ -4,6 +4,7 @@ import uuid
 import time
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import cast, ARRAY, String
 from .models import WorldInfoEntry, WorldInfoBook
 # 导入数据库相关模块
 from agents.agent_memory.database.database import Database
@@ -146,3 +147,36 @@ class DBManager:
 
     def list_all_activated_entries(self) -> List[WorldInfoEntry]:
         return self._get_db_session().query(WorldInfoEntry).filter(WorldInfoEntry.disable == False).all()
+    
+    def list_all_activated_entries_by_keys(self, keys: List[str]) -> List[WorldInfoEntry]:
+        """
+        根据关键词列表获取所有激活的条目
+        使用PostgreSQL JSONB操作符来检查数组重叠
+        """
+        if not keys:
+            return []
+        
+        query = self._get_db_session().query(WorldInfoEntry).filter(
+            WorldInfoEntry.disable == False,
+            WorldInfoEntry.keys.op("?|")(cast(keys, ARRAY(String)))
+        )
+        return query.all()
+        
+        # 方法2: 使用SQLAlchemy的JSONB操作符（如果支持的话）
+        # 注意：这种方法可能在某些SQLAlchemy版本中不支持
+        # try:
+        #     from sqlalchemy.dialects.postgresql import JSONB
+        #     from sqlalchemy import func
+        #     
+        #     # 使用 ?| 操作符检查数组重叠
+        #     query = self._get_db_session().query(WorldInfoEntry).filter(
+        #         WorldInfoEntry.disable == False
+        #     ).filter(
+        #         WorldInfoEntry.keys.op('?|')(keys)
+        #     )
+        #     
+        #     return query.all()
+        # except Exception as e:
+        #     print(f"SQLAlchemy JSONB操作符不支持，回退到原生SQL: {e}")
+        #     # 回退到方法1
+        #     pass

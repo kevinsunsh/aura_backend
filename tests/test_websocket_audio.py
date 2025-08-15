@@ -1099,7 +1099,7 @@ class WebSocketTestSession:
     def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com"):
         self.base_uri = uri
         # self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
-        self.base_uri = "ws://sd2e523vq6e0b2bl90om0.apigateway-cn-beijing.volceapi.com"
+        # self.base_uri = "ws://sd2e523vq6e0b2bl90om0.apigateway-cn-beijing.volceapi.com"
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(
@@ -1561,21 +1561,18 @@ class WebSocketTestSession:
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个ChatEnvDesc延迟: {delay:.3f}秒")
             elif event_id == ServerEvent.ChatActionEnd:  # ChatActionEnd
-                logger.info(f"🎵 收到ChatActionEnd事件:{payload_msg.get('content', '')}")
                 if self.asr_ended_time is not None and self.chat_action_end_time is None:
                     self.chat_action_end_time = time.time()
                     delay = self.chat_action_end_time - self.asr_ended_time
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个ChatActionEnd延迟: {delay:.3f}秒")
             elif event_id == ServerEvent.ChatEmotionEnd:  # ChatEmotionEnd
-                logger.info(f"🎵 收到ChatEmotionEnd事件:{payload_msg.get('content', '')}")
                 if self.asr_ended_time is not None and self.chat_emotion_end_time is None:
                     self.chat_emotion_end_time = time.time()
                     delay = self.chat_emotion_end_time - self.asr_ended_time
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个ChatEmotionEnd延迟: {delay:.3f}秒")
             elif event_id == ServerEvent.ChatEnvDescEnd:  # ChatEnvDescEnd
-                logger.info(f"🎵 收到ChatEnvDescEnd事件:{payload_msg.get('content', '')}")
                 if self.asr_ended_time is not None and self.chat_env_desc_end_time is None:
                     self.chat_env_desc_end_time = time.time()
                     delay = self.chat_env_desc_end_time - self.asr_ended_time
@@ -1786,6 +1783,24 @@ class WebSocketTestSession:
             elif action == "end_session":
                 session_id = "test_user_123444"
                 event_id = 102
+            elif action == "world_info_activate_keys":
+                event_id = 400
+                session_id = "test_user_123444"
+                payload_data = {
+                    "activate_keys": ["shadowfang"]
+                }
+            elif action == "change_bot_name":
+                event_id = 401
+                session_id = "test_user_123444"
+                payload_data = {
+                    "bot_name": "Seraphina"
+                }
+            elif action == "change_system_preset":
+                event_id = 402
+                session_id = "test_user_123444"
+                payload_data = {
+                    "system_preset": "deepseek-R1 北棱预设v1.2 test(角色扮演特化)"
+                }
             else:
                 event_id = 1001  # 默认事件ID
             
@@ -1838,7 +1853,12 @@ class WebSocketTestSession:
         if data.get("event") != ServerEvent.SessionStarted:
             logger.error(f"❌ session确认失败，期望事件: {ServerEvent.SessionStarted}, 实际: {data.get('event')}")
             return False
-            
+        
+        # 第三步：发送WorldInfoActivateKeys消息
+        await self.send_control_message("world_info_activate_keys")
+        await self.send_control_message("change_bot_name")
+        await self.send_control_message("change_system_preset")
+        
         logger.info("🎉 连接和Session握手完成！")
         return True
 

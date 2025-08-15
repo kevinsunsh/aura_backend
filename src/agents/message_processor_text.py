@@ -267,10 +267,9 @@ class MessageProcessorText:
             elif payload["status"] == "end":
                 pass
     
-    async def start(self, chat_id: str, user_id: str, session_prompt: str = ""):
+    async def start(self, chat_id: str, user_id: str):
         self.chat_id = chat_id
         self.user_id = user_id
-        self.session_prompt = session_prompt
         self.is_interruption = False
         self.interruption_lock = asyncio.Lock()
     
