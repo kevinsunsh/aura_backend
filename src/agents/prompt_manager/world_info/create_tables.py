@@ -99,11 +99,14 @@ def show_world_info_books():
 recreate_tables = True
 if __name__ == "__main__":
     if recreate_tables:
-        success = drop_world_info_tables()
+        # success = drop_world_info_tables()
+        success = True
         if success:
-            success = create_world_info_tables()
+            # success = create_world_info_tables()
+            success = True
             if success:
                 success = load_all_world_info_books()
+                # success = True
                 if success:
                     print("✅ 成功加载world_info_book到数据库")
                 else:

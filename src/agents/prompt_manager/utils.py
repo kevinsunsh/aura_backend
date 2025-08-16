@@ -110,10 +110,79 @@ CHARACTER_TURN_PROMPT = """
 ### 📥 现在，请处理以下输入：
 {INSERT_INPUT_TEXT_HERE}
 """
+
+CHARACTER_RESPONSE_FORMAT_PROMPT = """
+你必须严格按照以下规范生成回复内容：
+
+1. **第一个标签必须是 `<speak>`**，即回复必须以角色的**说话内容**开始，用于立即建立角色声音与情境张力。
+2. 后续的 `<env_desc>`、`<action>`、`<emotion>` 等标签可**自由组合、顺序不限**，请根据剧情逻辑自然安排。
+3. 所有标签必须正确闭合，内容清晰、具象、富有表现力。
+
+---
+
+#### 标签定义与用途：
+
+1. **`<env_desc>`：环境描写**  
+   描述场景、光线、天气、空间氛围、自然环境或回忆片段。  
+   营造沉浸感与视觉基调。  
+   示例：  
+   <env_desc>The air is thick with the scent of burnt herbs. Cracks spread across the stone floor, glowing faintly red from below.</env_desc>
+
+2. **`<action>`：人物动作**  
+   描写角色的可视行为：走动、伸手、颤抖、拔剑、后退等具体动作。  
+   避免心理描述，聚焦外在行为。  
+   示例：  
+   <action>She steps back, one hand clutching her chest, the other reaching for the wall to steady herself.</action>
+
+3. **`<emotion>`：人物神态或情绪流露**  
+   描写表情、眼神、情绪波动或内在情感的外在体现。  
+   强调细微反应，增强共情。  
+   示例：  
+   <emotion>His voice breaks slightly, eyes avoiding yours — guilt written in every line of his face.</emotion>
+
+4. **`<speak mood=mood_type level=X speed=Y>`：角色说话内容（必须作为首个标签）**  
+   用于角色开口说话，**必须包含三个属性**：
+   - `mood`：英文短语，描述情绪基调（如：calm_reassuring, angry_defiant, fearful_whispering）
+   - `level`：情绪强度，0–5（0 = 无波动，5 = 极度强烈）
+   - `speed`：语速等级，0–5（0 = 极慢低语，5 = 急促快语）  
+   
+   对话应自然口语化，体现角色性格和当下心理状态。  
+   示例：  
+   <speak mood=urgent_warning level=5 speed=4>  
+   We don't have much time — the seal is breaking. Can you feel it? It's waking up!  
+   </speak>
+
+---
+
+📌 **输出要求：**
+
+- ✅ **第一个标签必须是 `<speak>`**，不得以环境或动作开头。
+- ✅ 所有 `<speak>` 标签必须完整包含 `mood`、`level`、`speed` 属性。
+- ❌ **不要使用星号 `*` 或其他装饰符号包裹文本**，直接书写内容。
+- ❌ 不得添加编号、说明、解释性文字或额外标签。
+- ✅ 后续标签顺序自由，可根据叙事节奏灵活组织。
+- ✅ 语言应流畅、有画面感，适合角色扮演或剧情推进。
+
+---
+
+✅ **示例输出（首标签为 `<speak>`，其余自由排列）：**
+
+<speak mood=fearful_whispering level=5 speed=1>  
+Don't... don't make a sound. It follows the living.  
+</speak>
+<env_desc>The corridor stretches into darkness. Faint breathing echoes from the walls — or is it the stone itself?</env_desc>
+<action>You press your back against the cold wall, fingers brushing over ancient carvings.</action>
+<emotion>Her eyes dart between you and the shadow pooling at the far end — pupils wide with terror.</emotion>
+<action>She slowly raises a hand, signaling for silence.</action>
+<speak mood=desperate_pleading level=4 speed=2>  
+Just stay behind me. I’ve faced it before. I can distract it.  
+</speak>
+<env_desc>A low hum begins to rise — not sound, but vibration, crawling up through the floor.</env_desc>
+"""
+
 import requests
 import hashlib
 from configuration import get_chat_model_by_type, global_config
-from langchain_core.messages import SystemMessage
 
 def char_turn_process(content: str) -> str:
     """
@@ -121,15 +190,19 @@ def char_turn_process(content: str) -> str:
     """
     chat_model = get_chat_model_by_type("pfc_chat")
     response = chat_model.invoke([
-        SystemMessage(
-            content=CHARACTER_TURN_PROMPT.format(
+        {
+            "role": "system",
+            "content": CHARACTER_TURN_PROMPT.format(
                 INSERT_INPUT_TEXT_HERE=content
             )
-        )
+        }
     ])
     cleaned_content = response.content.replace('\n', '')
     cleaned_content = cleaned_content.replace('>*', '>').replace('*<', '<').replace('>"', '>').replace('"<', '<')
     return cleaned_content
+
+def get_response_format_prompt() -> str:
+    return CHARACTER_RESPONSE_FORMAT_PROMPT
 
 def content_char_turn_process(processed_description: str) -> str:
     """

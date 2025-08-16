@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
-from agents.prompt_manager.utils import count_tokens_openai
+from agents.prompt_manager.utils import count_tokens_openai, get_response_format_prompt
 from agents.prompt_manager.character.models import CharacterModel as CharacterCard
 from agents.prompt_manager.world_info.scanner import WorldInfoScanner
 from agents.prompt_manager.system_preset.models import SystemPresetModel, PromptModel, InjectionPosition
@@ -697,12 +697,12 @@ class PromptManager:
                 "system_prompt": True
             })
         # 用户描述
-        system_prompts.append({
-            "role": "system",
-            "content": f"User is {self.name1}, in ShangHai, China, time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "identifier": "personaDescription",
-            "system_prompt": True
-        })
+        # system_prompts.append({
+        #     "role": "system",
+        #     "content": f"User is {self.name1}, in ShangHai, China, time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        #     "identifier": "personaDescription",
+        #     "system_prompt": True
+        # })
         # 工具调用
         tool_results = TaskManager.get_instance().get_all_tasks_status_prompt_for_llm(self.name1).replace('{', '').replace('}', '').replace('"', '')
         system_prompts.append({
@@ -733,6 +733,12 @@ class PromptManager:
             "role": "system",
             "content": tool_dismiss,
             "identifier": "toolDismiss",
+            "system_prompt": True
+        })
+        system_prompts.append({
+            "role": "system",
+            "content": get_response_format_prompt(),
+            "identifier": "responseFormat",
             "system_prompt": True
         })
         # 已知扩展提示列表
@@ -884,7 +890,10 @@ class PromptManager:
             "toolCalls": PromptModel(identifier="toolCalls", enabled=True, role="system", system_prompt=True),
             "toolDismiss": PromptModel(identifier="toolDismiss", enabled=True, role="system", system_prompt=True)
         }
-        prompt_collection["collection"] = {**front_items, **prompt_collection["collection"]}
+        end_items = {
+            "responseFormat": PromptModel(identifier="responseFormat", enabled=True, role="system", system_prompt=True)
+        }
+        prompt_collection["collection"] = {**front_items, **prompt_collection["collection"], **end_items}
         return prompt_collection
     
     def _get_prompt_order_for_character(self) -> List[Dict]:
@@ -959,28 +968,23 @@ class PromptManager:
         cycle_prompt = options.get("cycle_prompt", "")
         messages = options.get("messages", [])
         message_examples = options.get("message_examples", [])
-
         # 辅助函数：向聊天完成中添加提示
         async def add_to_chat_completion(source: str, target: str = None):
             """向聊天完成中添加提示 - 复刻addToChatCompletion逻辑"""
             # 检查提示是否存在于提示集合中
             if not prompts["collection"].get(source):
                 return
-
             # 检查提示是否为当前角色禁用
-            if self._is_prompt_disabled_for_active_character(source) and source not in ['main', 'toolResults', 'validTool', 'toolCalls', 'toolDismiss']:
+            if self._is_prompt_disabled_for_active_character(source) and source not in ['main', 'toolResults', 'validTool', 'toolCalls', 'toolDismiss', 'responseFormat']:
                 chat_completion.log(f"跳过提示 {source}，因为它已被禁用")
                 return
-
             prompt = prompts["collection"].get(source)
             if not prompt:
                 return
-
             # 检查是否为绝对位置提示
             if getattr(prompt, 'injection_position', None) == InjectionPosition.ABSOLUTE:
                 chat_completion.log(f"跳过提示 {source}，因为它是绝对位置提示")
                 return
-
             # 获取索引并添加到聊天完成
             index = self._get_prompt_index(prompts, source)
             message_collection = self._create_message_collection(source)
@@ -1003,6 +1007,7 @@ class PromptManager:
         await add_to_chat_completion('validTool')
         await add_to_chat_completion('toolCalls')
         await add_to_chat_completion('toolDismiss')
+        await add_to_chat_completion('responseFormat')
         # 添加有序的系统和用户提示
         system_prompts = ['nsfw', 'jailbreak']
         user_relative_prompts = []
@@ -1015,7 +1020,6 @@ class PromptManager:
                 user_relative_prompts.append(prompt.identifier)
             elif prompt.injection_position == InjectionPosition.ABSOLUTE:
                 absolute_prompts.append(prompt.identifier)
-
         # # 添加系统和用户相关提示
         for identifier in system_prompts + user_relative_prompts:
             await add_to_chat_completion(identifier)
@@ -1029,28 +1033,12 @@ class PromptManager:
         # await add_to_chat_completion('impersonate')
         # await add_to_chat_completion('quietPrompt')
         # await add_to_chat_completion('groupNudge')
-
         # 检查是否有对话示例
         has_dialogue_examples = bool(prompts.get("collection", {}).get('dialogueExamples'))
         if has_dialogue_examples:
             await add_to_chat_completion('dialogueExamples')
-
         # 控制提示集合（始终位于最后）
         # control_prompts = self._create_message_collection('controlPrompts')
-
-        # 处理模拟消息
-        # if generation_type == 'impersonate':
-        #     impersonate_prompt = prompts.get("collection", {}).get('impersonate')
-        #     if impersonate_prompt:
-        #         impersonate_message = await self._message_from_prompt_async(impersonate_prompt)
-        #         if impersonate_message:
-        #             control_prompts["messages"].append(impersonate_message)
-
-
-
-
-
-
         # 添加增强定义指令
         if collection.get('enhanceDefinitions'):
             await add_to_chat_completion('enhanceDefinitions')
@@ -1149,7 +1137,7 @@ class PromptManager:
         """填充聊天历史"""
         index = self._get_prompt_index(prompts, 'chatHistory')
         message_collection = self._create_message_collection('chatHistory')
-        start_system_prompt = f"[Start a new Chat, please reply in {self.language}, and follow the format as assistant]"
+        start_system_prompt = f"[Start a new Chat, please reply in {self.language}]"
         start_system_prompt_tokens = count_tokens_openai(start_system_prompt)
         message_collection["collection"].append({
             "content": start_system_prompt,
@@ -1162,19 +1150,19 @@ class PromptManager:
         
         # 使用提供的消息
         for message in messages:
-            cleaned_text = re.sub(r'<env_desc>.*?</env_desc>\s*', '', message.content, flags=re.DOTALL)
+            # cleaned_text = re.sub(r'<env_desc>.*?</env_desc>\s*', '', message.content, flags=re.DOTALL)
             message_collection["collection"].append({
-                "content": cleaned_text,
+                "content": message.content,
                 "role": message.role,
                 "tokens": message.tokens
             })
-        end_system_prompt = f"[From now on, the mood attribute of speak tag is limited to: {"|".join(speaker_config["female_1"]["mood_code"])}]"
-        end_system_prompt_tokens = count_tokens_openai(end_system_prompt)
-        message_collection["collection"].append({
-            "content": end_system_prompt,
-            "role": "system",
-            "tokens": end_system_prompt_tokens
-        })
+        # end_system_prompt = f"[From now on, the mood attribute of speak tag is limited to: {"|".join(speaker_config["female_1"]["mood_code"])}]"
+        # end_system_prompt_tokens = count_tokens_openai(end_system_prompt)
+        # message_collection["collection"].append({
+        #     "content": end_system_prompt,
+        #     "role": "system",
+        #     "tokens": end_system_prompt_tokens
+        # })
         chat_completion.chat_messages[index] = message_collection
     
     def get_extension_prompt_max_depth(self) -> int:

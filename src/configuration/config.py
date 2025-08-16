@@ -53,6 +53,72 @@ class ChatModel():
         self.api_key = api_key
         self.api_base = api_base
     
+    def invoke(self, messages: List[Any], extra_body: Dict[str, Any] = None) -> Any:
+        """
+        基于ARK API的同步聊天方法，替代原有的chat_model.invoke
+
+        Args:
+            messages: 消息列表
+            extra_body: 额外参数（可选）
+
+        Returns:
+            聊天接口返回的内容
+        """
+        import requests
+
+        # 构建请求数据
+        payload = {
+            "messages": [],
+            "model": self.model_name,
+            "stream": False
+        }
+
+        # 转换消息格式
+        for message in messages:
+            if isinstance(message, dict):
+                # 直接是字典
+                if message.get('role', None) and message.get('content', None):
+                    payload["messages"].append({
+                        "role": message.get('role'),
+                        "content": message.get('content')
+                    })
+                else:
+                    payload["messages"].append(message)
+            else:
+                # 兼容langchain的消息对象
+                if hasattr(message, "type") and hasattr(message, "content"):
+                    payload["messages"].append({
+                        "role": getattr(message, "type"),
+                        "content": getattr(message, "content")
+                    })
+
+        # 添加额外参数
+        if extra_body:
+            payload.update(extra_body)
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        try:
+            response = requests.post(
+                f"{self.api_base}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            if response.status_code != 200:
+                raise Exception(f"ARK API请求失败: {response.status_code} - {response.text}")
+            result = response.json()
+            # 兼容ARK返回格式
+            if "choices" in result and len(result["choices"]) > 0:
+                # 返回第一个choice的message内容
+                return type("ChatResponse", (), {"content": result["choices"][0]["message"]["content"]})()
+            return result
+        except Exception as e:
+            raise Exception(f"invoke请求异常: {e}")
+    
     async def astream(self, messages: List[Any], extra_body: Dict[str, Any] = None) -> AsyncGenerator[Any, None]:
         """
         基于ARK API的异步流式聊天方法，替代原有的chat_model.astream

@@ -1125,6 +1125,9 @@ class WebSocketTestSession:
         # )
         
         # 状态控制
+        self.session_id = None
+        self.chat_id = "test_user_001"
+        self.user_id = "test_user_001"
         self.is_running = True
         self.is_playing = True
         self.pause_playing = False
@@ -1171,7 +1174,6 @@ class WebSocketTestSession:
         # 初始化Opus解码器（24kHz, 单声道）- 匹配服务器音频格式
         # self.opus_decoder = opuslib.Decoder(fs=24000, channels=1)
         self.asr_is_started = False
-        self.session_id = None
         self.audio_format = "int16"
 
         # TTS音频录制相关
@@ -1772,32 +1774,32 @@ class WebSocketTestSession:
             elif action == "end_connection":
                 event_id = 2
             elif action == "start_session":
-                session_id = "test_user_123444"
+                session_id = self.user_id
                 payload_data = {
                     "chat_info": {
-                        "chat_id": "test_user_123444",
-                        "user_id": "test_user_123444"
+                        "chat_id": self.chat_id,
+                        "user_id": self.user_id
                     }
                 }
                 event_id = 100
             elif action == "end_session":
-                session_id = "test_user_123444"
+                session_id = self.user_id
                 event_id = 102
             elif action == "world_info_activate_keys":
                 event_id = 400
-                session_id = "test_user_123444"
+                session_id = self.user_id
                 payload_data = {
                     "activate_keys": ["shadowfang"]
                 }
             elif action == "change_bot_name":
                 event_id = 401
-                session_id = "test_user_123444"
+                session_id = self.user_id
                 payload_data = {
                     "bot_name": "Seraphina"
                 }
             elif action == "change_system_preset":
                 event_id = 402
-                session_id = "test_user_123444"
+                session_id = self.user_id
                 payload_data = {
                     "system_preset": "deepseek-R1 北棱预设v1.2 test(角色扮演特化)"
                 }
@@ -1855,9 +1857,9 @@ class WebSocketTestSession:
             return False
         
         # 第三步：发送WorldInfoActivateKeys消息
-        await self.send_control_message("world_info_activate_keys")
-        await self.send_control_message("change_bot_name")
-        await self.send_control_message("change_system_preset")
+        # await self.send_control_message("world_info_activate_keys")
+        # await self.send_control_message("change_bot_name")
+        # await self.send_control_message("change_system_preset")
         
         logger.info("🎉 连接和Session握手完成！")
         return True

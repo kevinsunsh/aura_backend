@@ -145,22 +145,33 @@ class DBManager:
         """列出所有世界书"""
         return self._get_db_session().query(WorldInfoBook).all()
 
-    def list_all_activated_entries(self) -> List[WorldInfoEntry]:
-        return self._get_db_session().query(WorldInfoEntry).filter(WorldInfoEntry.disable == False).all()
+    def list_all_activated_entries(self, activate_world_books: List[str]) -> List[WorldInfoEntry]:
+        entries = []
+        for activate_world_book in activate_world_books:
+            world_info_book = self.get_world_info_book_by_name(activate_world_book)
+            if world_info_book:
+                for entry in world_info_book.entries:
+                    if entry.disable == False:
+                        entries.append(entry)
+        return entries
     
-    def list_all_activated_entries_by_keys(self, keys: List[str]) -> List[WorldInfoEntry]:
+    def list_all_activated_entries_by_keys(self, activate_world_books: List[str], activate_keys: List[str]) -> List[WorldInfoEntry]:
         """
         根据关键词列表获取所有激活的条目
         使用PostgreSQL JSONB操作符来检查数组重叠
         """
-        if not keys:
+        if not activate_keys:
             return []
-        
-        query = self._get_db_session().query(WorldInfoEntry).filter(
-            WorldInfoEntry.disable == False,
-            WorldInfoEntry.keys.op("?|")(cast(keys, ARRAY(String)))
-        )
-        return query.all()
+        entries = []
+        for activate_world_book in activate_world_books:
+            world_info_book = self.get_world_info_book_by_name(activate_world_book)
+            if world_info_book:
+                for entry in world_info_book.entries:
+                    if entry.disable == False:
+                        if entry.keys.op("?|")(cast(activate_keys, ARRAY(String))):
+                            entries.append(entry)
+
+        return entries
         
         # 方法2: 使用SQLAlchemy的JSONB操作符（如果支持的话）
         # 注意：这种方法可能在某些SQLAlchemy版本中不支持

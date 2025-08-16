@@ -154,9 +154,10 @@ class WorldInfoScanner:
     """
     Scans text to find and activate World Info entries based on keywords.
     """
-    def __init__(self, activate_keys: List[str] = None):
+    def __init__(self, activate_world_books: List[str] = None, activate_keys: List[str] = None):
         self.entries = []
         self.activate_keys = activate_keys
+        self.activate_world_books = activate_world_books
     
     def substitute_params(self, text: str) -> str:
         """替换参数"""
@@ -573,9 +574,9 @@ class WorldInfoScanner:
         world_info_before = ''
         world_info_after = ''
         if self.activate_keys is not None:
-            self.entries = DBManager().list_all_activated_entries_by_keys(self.activate_keys)
+            self.entries = DBManager().list_all_activated_entries_by_keys(self.activate_world_books, self.activate_keys)
         else:
-            self.entries = DBManager().list_all_activated_entries()
+            self.entries = DBManager().list_all_activated_entries(self.activate_world_books)
         scan_data = WIGlobalScanData(
             trigger=global_scan_data.get('trigger', 'chat'),
             character_name=global_scan_data.get('character_name', ''),

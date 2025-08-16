@@ -104,11 +104,14 @@ def show_character_cards():
 recreate_tables = True
 if __name__ == "__main__":
     if recreate_tables:
-        success = drop_character_tables()
+        # success = drop_character_tables()
+        success = True
         if success:
-            success = create_character_tables()
+            # success = create_character_tables()
+            success = True
             if success:
                 success = load_all_character_cards()
+                # success = True
                 if success:
                     print("✅ 成功加载default_Seraphina角色卡到数据库")
                 else:

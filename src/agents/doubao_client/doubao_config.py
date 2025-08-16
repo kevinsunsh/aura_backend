@@ -58,7 +58,7 @@ tts_config = {
     "ws_url": "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
     "app_id": "4522921771",  # 需要配置实际的app_id
     "token": "a-dexJIefJUDznZAtt3Qj_yAivD0BU9H",   # 需要配置实际的token
-    "speaker": "zh_female_roumeinvyou_emo_v2_mars_bigtts"  # 默认说话人
+    "speaker": "zh_female_wanwanxiaohe_moon_bigtts"  # 默认说话人
 }
 
 class MoodLevel:

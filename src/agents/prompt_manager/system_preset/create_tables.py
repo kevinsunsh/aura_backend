@@ -100,9 +100,11 @@ def show_system_presets():
 recreate_tables = True
 if __name__ == "__main__":
     if recreate_tables:
-        success = drop_system_preset_tables()
+        # success = drop_system_preset_tables()
+        success = True
         if success:
-            success = create_system_preset_tables()
+            # success = create_system_preset_tables()
+            success = True
             if success:
                 success = load_all_system_presets()
                 if success:
