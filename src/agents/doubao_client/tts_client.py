@@ -515,10 +515,8 @@ class TtsClient:
         """
         try:
             # 过滤掉换行符、空格、单双引号
-            text = re.sub(r'[\n\r\s"\'\.\.\.（）]', '', text)
+            text = re.sub(r'[\n\r\s"\'（）]', '', text)
             self.buffer_text += text
-            if len(self.buffer_text) == 0:
-                return
             if self.is_connected() == False:
                 return
             if self._tts_session_active == False:
@@ -527,8 +525,9 @@ class TtsClient:
                 # self.session_id.value = self.session_id_str.encode('utf-8')
                 # await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 return
-            await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
-            self.buffer_text = ""
+            if len(self.buffer_text) > 0:
+                await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
+                self.buffer_text = ""
             if end:
                 await self._tts_finish_session(self.ws, self.session_id_str)
             logger.bind(tag="TTS").debug(f"文本已加入发送队列: {text[:50]}...")
