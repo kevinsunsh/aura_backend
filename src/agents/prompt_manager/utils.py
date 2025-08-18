@@ -137,7 +137,7 @@ Just stay behind me. I’ve faced it before. I can distract it.
 
 import requests
 import hashlib
-from configuration import get_chat_model_by_type, global_config
+from agents.agent_memory.configuration import get_chat_model_by_type, global_config
 
 def char_turn_process(content: str) -> str:
     """

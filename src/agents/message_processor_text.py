@@ -3,7 +3,7 @@ import asyncio
 from loguru import logger
 from datetime import datetime
 from typing import Dict, Any, Callable
-from configuration import get_chat_model_by_type
+from agents.agent_memory.configuration import get_chat_model_by_type
 from api_protocol.constant import *
 from langchain_core.messages import SystemMessage
 from langchain_core.messages import HumanMessage, AIMessage
