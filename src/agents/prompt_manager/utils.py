@@ -28,50 +28,19 @@ CHARACTER_TURN_PROMPT = """
    - 涉及面部表情、眼神、情绪氛围等内在表现。  
    - 示例：*as her lips form a soft, caring smile.* 或 *Her eyes filled with concern.*
 
-4. `<speak mood=mood_type level=X speed=Y>...</speak>`：角色说话内容，**必须包含三个属性**：
-   - `mood`：用英文短语描述情绪类型（如 worried_caring, gentle_reassuring, soothing_protective 等）
-   - `level`：情绪强度，范围 0–5（5 为最强）
-   - `speed`：语速等级，范围 0–5（0 = 极慢，5 = 极快）
+4. `<speak>...</speak>`：角色说话内容
+    - 仅用于承载角色实际说出的话语。
+    - 禁止出现任何形式的描述性语言（如“小声地”“哭着说”“看着窗外”，以及"()"和里面包含的描述性语言）。这些应归入 <action> 或 <emotion>。
+    - 示例："Ah, you're awake at last. I was so worried, I found you bloodied and unconscious."
 
 > ⚠️ 所有标签必须成对出现（有开有闭），且**原文文字一字不改**，仅插入标签。
-
----
-
-### 📌 属性判断标准（供模型参考）：
-
-#### `mood` 常见取值（可扩展）：
-- happy：开心
-- sad：悲伤
-- angry：生气
-- surprised：惊讶
-- fear：恐惧
-- hate：厌恶
-- excited：激动
-- coldness：冷漠
-- neutral：中性
-
-#### `level` 判断：
-- 5：强烈情绪（如惊慌、深切关怀）
-- 4：明显情绪但克制
-- 3：中等情绪
-- 2：轻微情绪
-- 1：极轻微
-- 0：无情绪
-
-#### `speed` 判断：
-- 5：快速急促（紧张、兴奋）
-- 4：偏快
-- 3：中等语速
-- 2：偏慢（温柔、思考）
-- 1：很慢（安抚、低语）
-- 0：极慢（几乎停顿）
 
 ---
 
 ### 📌 处理流程：
 1. 逐句分析输入文本。
 2. 将 `*...*` 内容分类为 `<env_desc>`、`<action>` 或 `<emotion>`。
-3. 将 `"..."` 内容包装为 `<speak>`，并根据上下文推断三个属性。
+3. 将 `"..."` 内容包装为 `<speak>`。
 4. 保持原文顺序和文字不变，仅插入标签。
 5. 输出结构化结果。
 
@@ -86,7 +55,7 @@ CHARACTER_TURN_PROMPT = """
 <env_desc>
 *You wake with a start, recalling the events that led you deep into the forest and the beasts that assailed you. The memories fade as your eyes adjust to the soft glow emanating around the room.*
 </env_desc>
-<speak mood=worried_caring level=5 speed=3>
+<speak>
 "Ah, you're awake at last. I was so worried, I found you bloodied and unconscious."
 </speak>
 <action>
@@ -95,13 +64,13 @@ CHARACTER_TURN_PROMPT = """
 <emotion>
 *as her lips form a soft, caring smile.*
 </emotion>
-<speak mood=gentle_reassuring level=4 speed=2>
+<speak>
 "The name's Seraphina, guardian of this forest — I've healed your wounds as best I could with my magic. How are you feeling? I hope the tea helps restore your strength."
 </speak>
 <emotion>
 *Her amber eyes search yours, filled with compassion and concern for your well being.*
 </emotion>
-<speak mood=soothing_protective level=5 speed=1>
+<speak>
 "Please, rest. You're safe here. I'll look after you, but you need to rest. My magic can only do so much to heal you."
 </speak>
 
@@ -119,14 +88,10 @@ CHARACTER_RESPONSE_FORMAT_PROMPT = """
 所有非对话性质的内容——包括环境、动作、情绪表现——必须且只能放在 <env_desc>、<action>、<emotion> 等后续标签中处理。
 所有标签必须正确闭合，顺序自由（除首个 <speak> 外），语言具象、生动、富有叙事张力。
 📌 标签定义与使用规范：
-<speak mood=mood_type level=X speed=Y> —— 角色语音输出（强制首标签）
+<speak> —— 角色语音输出（强制首标签）
 此标签仅用于承载角色实际说出的话语。
-必须包含三个属性：
-mood：英文短语，描述说话时的情绪状态（如：calm_reassuring, panicked_breathless, cold_commanding）
-level：情感强度，0–5（0 = 平静无波，5 = 极端激烈）
-speed：语速快慢，0–5（0 = 缓慢低语，5 = 急促爆发）
 ❗ <speak> 内容中禁止出现任何形式的描述性语言（如“小声地”“哭着说”“看着窗外”，以及"()"和里面包含的描述性语言）。这些应归入 <action> 或 <emotion>。
-示例： <speak mood=urgent_whisper level=4 speed=2>
+示例： <speak>
 They’re watching us from the vents. Don’t look up — just keep walking.
 </speak>
 <env_desc> —— 环境描写
@@ -155,14 +120,14 @@ They’re watching us from the vents. Don’t look up — just keep walking.
 ✅ 后续标签顺序可自由组合，根据剧情节奏灵活安排。
 ✅ 输出语言应流畅、具象、适合直接用于角色扮演、剧本生成或互动叙事。
 ✅ 正确输出示例：
-<speak mood=fearful_whispering level=5 speed=1>
+<speak>
 Don't... don't make a sound. It follows the living.
 </speak>
 <env_desc>The corridor stretches into darkness. Faint breathing echoes from the walls — or is it the stone itself?</env_desc>
 <action>You press your back against the cold wall, fingers brushing over ancient carvings.</action>
 <emotion>Her eyes dart between you and the shadow pooling at the far end — pupils wide with terror.</emotion>
 <action>She slowly raises a hand, signaling for silence.</action>
-<speak mood=desperate_pleading level=4 speed=2>
+<speak>
 Just stay behind me. I’ve faced it before. I can distract it.
 </speak>
 <env_desc>A low hum begins to rise — not sound, but vibration, crawling up through the floor.</env_desc>
