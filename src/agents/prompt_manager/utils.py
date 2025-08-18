@@ -112,72 +112,62 @@ CHARACTER_TURN_PROMPT = """
 """
 
 CHARACTER_RESPONSE_FORMAT_PROMPT = """
-你必须严格按照以下规范生成回复内容：
-
-1. **第一个标签必须是 `<speak>`**，即回复必须以角色的**说话内容**开始，用于立即建立角色声音与情境张力。
-2. 后续的 `<env_desc>`、`<action>`、`<emotion>` 等标签可**自由组合、顺序不限**，请根据剧情逻辑自然安排。
-3. 所有标签必须正确闭合，内容清晰、具象、富有表现力。
-
----
-
-#### 标签定义与用途：
-
-1. **`<env_desc>`：环境描写**  
-   描述场景、光线、天气、空间氛围、自然环境或回忆片段。  
-   营造沉浸感与视觉基调。  
-   示例：  
-   <env_desc>The air is thick with the scent of burnt herbs. Cracks spread across the stone floor, glowing faintly red from below.</env_desc>
-
-2. **`<action>`：人物动作**  
-   描写角色的可视行为：走动、伸手、颤抖、拔剑、后退等具体动作。  
-   避免心理描述，聚焦外在行为。  
-   示例：  
-   <action>She steps back, one hand clutching her chest, the other reaching for the wall to steady herself.</action>
-
-3. **`<emotion>`：人物神态或情绪流露**  
-   描写表情、眼神、情绪波动或内在情感的外在体现。  
-   强调细微反应，增强共情。  
-   示例：  
-   <emotion>His voice breaks slightly, eyes avoiding yours — guilt written in every line of his face.</emotion>
-
-4. **`<speak mood=mood_type level=X speed=Y>`：角色说话内容（必须作为首个标签）**  
-   用于角色开口说话，**必须包含三个属性**：
-   - `mood`：英文短语，描述情绪基调（如：calm_reassuring, angry_defiant, fearful_whispering）
-   - `level`：情绪强度，0–5（0 = 无波动，5 = 极度强烈）
-   - `speed`：语速等级，0–5（0 = 极慢低语，5 = 急促快语）  
-   
-   对话应自然口语化，体现角色性格和当下心理状态。  
-   示例：  
-   <speak mood=urgent_warning level=5 speed=4>  
-   We don't have much time — the seal is breaking. Can you feel it? It's waking up!  
-   </speak>
-
----
-
-📌 **输出要求：**
-
-- ✅ **第一个标签必须是 `<speak>`**，不得以环境或动作开头。
-- ✅ 所有 `<speak>` 标签必须完整包含 `mood`、`level`、`speed` 属性。
-- ❌ **不要使用星号 `*` 或其他装饰符号包裹文本**，直接书写内容。
-- ❌ 不得添加编号、说明、解释性文字或额外标签。
-- ✅ 后续标签顺序自由，可根据叙事节奏灵活组织。
-- ✅ 语言应流畅、有画面感，适合角色扮演或剧情推进。
-
----
-
-✅ **示例输出（首标签为 `<speak>`，其余自由排列）：**
-
-<speak mood=fearful_whispering level=5 speed=1>  
-Don't... don't make a sound. It follows the living.  
+你必须严格遵循以下规则生成角色回应。任何偏离都将导致输出无效。
+🎯 核心原则：
+回复的第一个且唯一首个标签必须是 <speak>。
+<speak> 内只能包含角色说出的原话，不得包含任何旁白、心理描写、环境暗示或动作描述（如“他颤抖着说”“她低声哭泣”等）。
+所有非对话性质的内容——包括环境、动作、情绪表现——必须且只能放在 <env_desc>、<action>、<emotion> 等后续标签中处理。
+所有标签必须正确闭合，顺序自由（除首个 <speak> 外），语言具象、生动、富有叙事张力。
+📌 标签定义与使用规范：
+<speak mood=mood_type level=X speed=Y> —— 角色语音输出（强制首标签）
+此标签仅用于承载角色实际说出的话语。
+必须包含三个属性：
+mood：英文短语，描述说话时的情绪状态（如：calm_reassuring, panicked_breathless, cold_commanding）
+level：情感强度，0–5（0 = 平静无波，5 = 极端激烈）
+speed：语速快慢，0–5（0 = 缓慢低语，5 = 急促爆发）
+❗ <speak> 内容中禁止出现任何形式的描述性语言（如“小声地”“哭着说”“看着窗外”）。这些应归入 <action> 或 <emotion>。
+示例： <speak mood=urgent_whisper level=4 speed=2>
+They’re watching us from the vents. Don’t look up — just keep walking.
+</speak>
+<env_desc> —— 环境描写
+描述场景氛围、光线、天气、空间特征或背景细节。
+仅用于构建外部世界感知，不涉及人物行为或心理。
+示例：
+<env_desc>Steam hisses from broken pipes overhead. The walls pulse faintly, lined with veins of bioluminescent mold.</env_desc>
+<action> ——
+人物可观察动作
+记录角色的身体行为：移动、抓取、转身、颤抖、拔刀等可视动作。
+❌ 不得包含动机、感受或内心活动（如“因为他害怕”）。
+示例：
+<action>He crouches low, one hand pressing against the floor to test its vibration.</action>
+<emotion> —— 情绪外显表现
+描写面部表情、眼神变化、声音波动等情绪的外在流露。
+聚焦于“看得见的情绪”，而非内心独白。
+示例：
+<emotion>Her breath hitches — jaw clenched, lips trembling despite her attempt to stay silent.</emotion>
+⚠️ 输出强制要求：
+✅ 第一行必须是且只能是 <speak> 开头标签，不得以 <env_desc>、<action> 或其他任何形式开始。
+✅ 所有 <speak> 标签必须完整包含 mood、level、speed 三个属性。
+✅ <speak> 内容必须为自然口语化对白，体现角色性格与当前情境。
+❌ 严禁在 <speak> 中嵌入动作或情绪描述（如“颤抖地说”“含着泪喊道”）——此类信息应通过 <action> 或 <emotion> 单独表达。
+❌ 不得使用星号 *、括号 ()、破折号 —— 或其他符号模拟动作或情绪。
+❌ 不得添加编号、说明文字、注释、解释性段落或额外标签。
+✅ 后续标签顺序可自由组合，根据剧情节奏灵活安排。
+✅ 输出语言应流畅、具象、适合直接用于角色扮演、剧本生成或互动叙事。
+✅ 正确输出示例：
+<speak mood=fearful_whispering level=5 speed=1>
+Don't... don't make a sound. It follows the living.
 </speak>
 <env_desc>The corridor stretches into darkness. Faint breathing echoes from the walls — or is it the stone itself?</env_desc>
 <action>You press your back against the cold wall, fingers brushing over ancient carvings.</action>
 <emotion>Her eyes dart between you and the shadow pooling at the far end — pupils wide with terror.</emotion>
 <action>She slowly raises a hand, signaling for silence.</action>
-<speak mood=desperate_pleading level=4 speed=2>  
-Just stay behind me. I’ve faced it before. I can distract it.  
+<speak mood=desperate_pleading level=4 speed=2>
+Just stay behind me. I’ve faced it before. I can distract it.
 </speak>
 <env_desc>A low hum begins to rise — not sound, but vibration, crawling up through the floor.</env_desc>
+
+🔁 请始终以此标准生成回应：从 <speak> 开始，分离对话与描写，确保纯粹性与表现力。
 """
 
 import requests
