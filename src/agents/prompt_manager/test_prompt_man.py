@@ -67,47 +67,47 @@ class StreamingTagParser:
 
     async def _handle_content_streaming(self):
         """处理 CONTENT_STREAMING 状态"""
-        # 查找结束标签
-        close_tag = f"</{self.current_tag}>"
-        end_pos = self.buffer.find(close_tag)
-        
-        if end_pos != -1:
+        # 查找任意结束标签形式，如 </...>
+        match = re.search(r'</[^>]*>', self.buffer)
+        if match:
+            end_pos = match.start()
             # 找到结束标签，发送剩余内容并结束
             content = self.buffer[:end_pos]
             if content:
                 await self._send_content_chunk(content)
-            
+
             # 发送标签结束事件
             await self._send_tag_end()
-            
+
             # 重置状态
             self.state = "OUTSIDE"
             self.current_tag = None
             self.attributes = {}
-            self.buffer = self.buffer[end_pos + len(close_tag):]
+            self.buffer = self.buffer[match.end():]
         else:
-            # 没找到结束标签，检查部分匹配
-            partial_match_len = self._get_partial_match_len(close_tag)
-            safe_len = len(self.buffer) - partial_match_len
-            
+            # 没找到完整的结束标签，保留可能的部分匹配（例如以 '</' 开头但未闭合）
+            last_close_start = self.buffer.rfind('</')
+            partial_len = 0
+            if last_close_start != -1 and self.buffer.find('>', last_close_start) == -1:
+                partial_len = len(self.buffer) - last_close_start
+            safe_len = len(self.buffer) - partial_len
+
             if safe_len > 0:
                 # 有安全内容可以发送
                 content = self.buffer[:safe_len]
                 await self._send_content_chunk(content)
                 self.buffer = self.buffer[safe_len:]
             # 如果没有安全内容，等待更多输入
-
-    def _get_partial_match_len(self, close_tag: str) -> int:
-        """计算 buffer 尾部与 close_tag 的最大前缀匹配长度"""
-        max_check = min(len(self.buffer), len(close_tag))
-        matched = 0
-        for i in range(max_check):
-            if self.buffer[-max_check + i] == close_tag[i]:
-                matched += 1
-            else:
-                break
-        return matched
-
+    # def _get_partial_match_len(self, close_tag: str) -> int:
+    #     """计算 buffer 尾部与 close_tag 的最大前缀匹配长度"""
+    #     max_check = min(len(self.buffer), len(close_tag))
+    #     matched = 0
+    #     for i in range(max_check):
+    #         if self.buffer[-max_check + i] == close_tag[i]:
+    #             matched += 1
+    #         else:
+    #             break
+    #     return matched
     def _parse_attributes_simple(self, attr_str: str) -> dict:
         """
         简化属性解析，直接去掉外层引号
@@ -132,7 +132,7 @@ class StreamingTagParser:
             value = match[1] if match[1] else match[3]
             attributes[key] = value.strip()
         return attributes
-
+    
     async def _send_tag_start(self):
         """发送标签开始事件"""
         if not self.tag_callback:
@@ -142,7 +142,7 @@ class StreamingTagParser:
             "status": "start",
             "attributes": self.attributes
         })
-
+    
     async def _send_content_chunk(self, content: str):
         """发送内容块"""
         if not self.tag_callback or not content:
@@ -152,7 +152,7 @@ class StreamingTagParser:
             "status": "streaming",
             "content": content
         })
-
+    
     async def _send_tag_end(self):
         """发送标签结束事件"""
         if not self.tag_callback:
@@ -168,6 +168,7 @@ async def tag_callback(payload):
             # print(f"speak start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
+            print(f"speak streaming: {payload["content"]}")
             # print(f"speak streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
@@ -178,6 +179,7 @@ async def tag_callback(payload):
             # print(f"env_desc start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
+            print(f"env_desc streaming: {payload["content"]}")
             # print(f"env_desc streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
@@ -188,6 +190,7 @@ async def tag_callback(payload):
             # print(f"action start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
+            print(f"action streaming: {payload["content"]}")
             # print(f"action streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
@@ -198,6 +201,7 @@ async def tag_callback(payload):
             # print(f"emotion start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
+            print(f"emotion streaming: {payload["content"]}")
             # print(f"emotion streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
