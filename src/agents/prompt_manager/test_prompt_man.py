@@ -12,7 +12,7 @@ from agents.prompt_manager.character.manager import DBManager as CharacterManage
 from agents.prompt_manager.world_info.scanner import WorldInfoScanner
 from agents.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
 from agents.prompt_manager.system_preset.models import SystemPresetModel
-from configuration import get_chat_model_by_type
+from agents.agent_memory.configuration import get_chat_model_by_type
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 from datetime import datetime
@@ -234,8 +234,8 @@ async def main():
     system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimit")
     print(f"fetch system preset time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     generator = PromptManager(
-        chat_id="test_user_333555",
-        user_id="test_user_333555",
+        chat_id="test_user_001",
+        user_id="test_user_001",
         system_preset=system_preset,
         character=character,
         world_info_scanner=WorldInfoScanner(activate_world_books=["Aura0_1"])

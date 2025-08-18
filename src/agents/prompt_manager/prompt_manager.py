@@ -1,22 +1,17 @@
-"""
-SillyTavern Generate Logic Python Implementation
-复刻SillyTavern的Generate函数逻辑到Python包中
-"""
-
 import re
 import uuid
 import copy
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
+import httpx
 from enum import Enum
-from agents.prompt_manager.utils import count_tokens_openai, get_response_format_prompt
-from agents.prompt_manager.character.models import CharacterModel as CharacterCard
-from agents.prompt_manager.world_info.scanner import WorldInfoScanner
-from agents.prompt_manager.system_preset.models import SystemPresetModel, PromptModel, InjectionPosition
-from agents.agent_memory.message_store import MessageStore, MessageModel
+from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
 from agents.agent_memory.task.task_manager import TaskManager
-from agents.doubao_client.doubao_config import speaker_config
+from agents.prompt_manager.world_info.scanner import WorldInfoScanner
+from agents.agent_memory.message_store import MessageStore, MessageModel
+from agents.prompt_manager.character.models import CharacterModel as CharacterCard
+from agents.prompt_manager.utils import count_tokens_openai, get_response_format_prompt
+from agents.prompt_manager.system_preset.models import SystemPresetModel, PromptModel, InjectionPosition
 
 class GenerationType(Enum):
     NORMAL = "normal"
@@ -939,7 +934,8 @@ class PromptManager:
             "toolResults": PromptModel(identifier="toolResults", enabled=True, role="system", system_prompt=True),
             "validTool": PromptModel(identifier="validTool", enabled=True, role="system", system_prompt=True),
             "toolCalls": PromptModel(identifier="toolCalls", enabled=True, role="system", system_prompt=True),
-            "toolDismiss": PromptModel(identifier="toolDismiss", enabled=True, role="system", system_prompt=True)
+            "toolDismiss": PromptModel(identifier="toolDismiss", enabled=True, role="system", system_prompt=True),
+            "summary": PromptModel(identifier="summary", enabled=True, role="system", system_prompt=True)
         }
         end_items = {
             "responseFormat": PromptModel(identifier="responseFormat", enabled=True, role="system", system_prompt=True)
@@ -1026,7 +1022,7 @@ class PromptManager:
             if not prompts["collection"].get(source):
                 return
             # 检查提示是否为当前角色禁用
-            if self._is_prompt_disabled_for_active_character(source) and source not in ['main', 'toolResults', 'validTool', 'toolCalls', 'toolDismiss', 'responseFormat']:
+            if self._is_prompt_disabled_for_active_character(source) and source not in ['main', 'toolResults', 'validTool', 'toolCalls', 'toolDismiss', 'responseFormat', 'summary']:
                 chat_completion.log(f"跳过提示 {source}，因为它已被禁用")
                 return
             prompt = prompts["collection"].get(source)
@@ -1250,6 +1246,28 @@ class PromptManager:
             return ExtensionPromptRoles.ASSISTANT
         return ExtensionPromptRoles.SYSTEM
     
+    def get_memory_summary(self, char_id: str, user_id: str) -> str:
+        """
+        调用远程API获取记忆摘要（同步实现）
+        """
+        url = "https://sd2hgpu4cck1fc4kbq14g.apigateway-cn-beijing.volceapi.com/v1/search_summary_mem"
+        headers = {
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "char_id": char_id,
+            "user_id": user_id
+        }
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                return data.get("result", "")
+        except Exception as e:
+            print(f"获取记忆摘要时出错: {e}")
+            return ""
+    
     async def generate(self, generation_type: GenerationType = GenerationType.NORMAL,
                       options: GenerationOptions = None) -> list[dict]:
         """主要生成函数 - 复刻Generate函数逻辑"""
@@ -1262,6 +1280,7 @@ class PromptManager:
         if len(self.character_fields.system) == 0:
             self.character_fields.system = self.base_chat_replace(self.default_sysprompt_content)
         self.remove_depth_prompts()
+        self.set_extension_prompt("1_memory", self.get_memory_summary(self.name2, self.name1), 0, 0, False, ExtensionPromptRoles.SYSTEM);
         # 1v1 聊天
         depthPromptText = self.character_fields.char_depth_prompt or ''
         depthPromptDepth = self.character.depth_prompt.depth if self.character.depth_prompt else self.depth_prompt_depth_default

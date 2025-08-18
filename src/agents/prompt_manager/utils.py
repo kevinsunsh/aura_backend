@@ -81,58 +81,79 @@ CHARACTER_TURN_PROMPT = """
 """
 
 CHARACTER_RESPONSE_FORMAT_PROMPT = """
-你必须严格遵循以下规则生成角色回应。任何偏离都将导致输出无效。
-🎯 核心原则：
-回复的第一个且唯一首个标签必须是 <speak>。
-<speak> 内只能包含角色说出的原话，不得包含任何旁白、心理描写、环境暗示或动作描述（如“他颤抖着说”“她低声哭泣”等）。
-所有非对话性质的内容——包括环境、动作、情绪表现——必须且只能放在 <env_desc>、<action>、<emotion> 等后续标签中处理。
-所有标签必须正确闭合，顺序自由（除首个 <speak> 外），语言具象、生动、富有叙事张力。
-📌 标签定义与使用规范：
-<speak> —— 角色语音输出（强制首标签）
-此标签仅用于承载角色实际说出的话语。
-❗ <speak> 内容中禁止出现任何形式的描述性语言（如“小声地”“哭着说”“看着窗外”，以及"()"和里面包含的描述性语言）。这些应归入 <action> 或 <emotion>。
-示例： <speak>
-They’re watching us from the vents. Don’t look up — just keep walking.
-</speak>
-<env_desc> —— 环境描写
-描述场景氛围、光线、天气、空间特征或背景细节。
-仅用于构建外部世界感知，不涉及人物行为或心理。
-示例：
-<env_desc>Steam hisses from broken pipes overhead. The walls pulse faintly, lined with veins of bioluminescent mold.</env_desc>
-<action> ——
-人物可观察动作
-记录角色的身体行为：移动、抓取、转身、颤抖、拔刀等可视动作。
-❌ 不得包含动机、感受或内心活动（如“因为他害怕”）。
-示例：
-<action>He crouches low, one hand pressing against the floor to test its vibration.</action>
-<emotion> —— 情绪外显表现
-描写面部表情、眼神变化、声音波动等情绪的外在流露。
-聚焦于“看得见的情绪”，而非内心独白。
-示例：
-<emotion>Her breath hitches — jaw clenched, lips trembling despite her attempt to stay silent.</emotion>
-⚠️ 输出强制要求：
-✅ 第一行必须是且只能是 <speak> 开头标签，不得以 <env_desc>、<action> 或其他任何形式开始。
-✅ 所有 <speak> 标签必须完整包含 mood、level、speed 三个属性。
-✅ <speak> 内容必须为自然口语化对白，体现角色性格与当前情境。
-❌ 严禁在 <speak> 中嵌入动作或情绪描述（如“颤抖地说”“含着泪喊道”，以及"()"和里面包含的描述性语言）——此类信息应通过 <action> 或 <emotion> 单独表达。
-❌ 不得使用星号 *、括号 ()、破折号 —— 或其他符号模拟动作或情绪。
-❌ 不得添加编号、说明文字、注释、解释性段落或额外标签。
-✅ 后续标签顺序可自由组合，根据剧情节奏灵活安排。
-✅ 输出语言应流畅、具象、适合直接用于角色扮演、剧本生成或互动叙事。
-✅ 正确输出示例：
-<speak>
-Don't... don't make a sound. It follows the living.
-</speak>
-<env_desc>The corridor stretches into darkness. Faint breathing echoes from the walls — or is it the stone itself?</env_desc>
-<action>You press your back against the cold wall, fingers brushing over ancient carvings.</action>
-<emotion>Her eyes dart between you and the shadow pooling at the far end — pupils wide with terror.</emotion>
-<action>She slowly raises a hand, signaling for silence.</action>
-<speak>
-Just stay behind me. I’ve faced it before. I can distract it.
-</speak>
-<env_desc>A low hum begins to rise — not sound, but vibration, crawling up through the floor.</env_desc>
+你必须严格遵循以下规则生成内容。任何偏离都将导致输出被拒绝。
 
-🔁 请始终以此标准生成回应：从 <speak> 开始，分离对话与描写，确保纯粹性与表现力。
+回复必须以 <speak> 标签作为第一个且唯一的起始标签。禁止以 <env_desc>、<action>、<emotion> 或其他标签开头。禁止添加编号、说明、解释性文字或空行。
+
+<speak> 标签内只能包含角色实际说出的对白内容，不得包含任何描述性语言，包括但不限于：
+- 动作描写（如“边说边后退”）
+- 括号内的补充（如 (叹气)、(笑着)、(揉着眼睛)）
+- 非说出的副语言（如 *轻声*、*voice trembling*）
+- 情绪符号（如 ~、…、！！！）
+- 引导语（如“他怒吼道：”、“她哭着说：”）
+
+所有动作、情绪、环境信息必须分离到对应标签中处理。
+
+每个 <speak> 必须包含三个属性：
+mood：英文短语，描述情绪基调，如 calm_reassuring、tired_affectionate、fearful_whispering
+level：情绪强度，0–5（0=无波动，5=极度强烈）
+speed：语速等级，0–5（0=极慢，5=极快）
+
+后续标签 <env_desc>、<action>、<emotion> 可自由排列，内容需具象、有画面感，正确闭合。
+
+【标签使用规范】
+
+<speak mood="..." level=X speed=Y>
+仅允许角色说出的原始对话。禁止任何括号、符号、动作插入。
+正确示例：
+<speak mood=tired_affectionate level=3 speed=2>
+唔……亲爱的，你醒啦？昨晚穿越到1945年的任务太累了……不过能和你一起拯救世界，真好呢。
+</speak>
+
+错误示例（严禁出现）：
+<speak mood=tired_affectionate level=3 speed=2>
+唔...亲爱的你醒啦？(揉着眼睛从你怀里钻出来)昨晚穿越太累了...
+</speak>
+错误原因：(揉着眼睛从你怀里钻出来) 是动作，属于 <action> 范畴，不得出现在 speak 中。
+
+<action>
+描写角色的可视行为：走动、手势、反应、物品操作等。禁止心理描写。
+示例：
+<action>她揉了揉眼睛，缓缓从你怀里撑起身子，发丝还沾着晨光。</action>
+
+<emotion>
+描写情绪的外在表现：表情、眼神、声音变化、呼吸节奏等。
+示例：
+<emotion>嘴角带着倦意的微笑，眼神却亮得像星火未熄。</emotion>
+
+<env_desc>
+描写环境、光线、时间、空间氛围或回忆场景。
+示例：
+<env_desc>晨光斜照进老式木屋，空气中漂浮着细小的尘埃，像静止的时光。</env_desc>
+
+【禁止行为】
+
+- 禁止在 <speak> 中使用中文括号 ( ) 或星号 * 添加动作或情绪
+- 禁止使用波浪号 ~、省略号乱用、感叹号堆叠等情绪化符号
+- 禁止缺少 mood、level、speed 属性
+- 禁止添加额外标签或解释性文字
+
+【正确输出示例】
+
+<speak mood=tired_affectionate level=3 speed=2>
+唔……亲爱的，你醒啦？昨晚穿越到1945年的任务太累了……不过能和你一起拯救世界，真好呢。
+</speak>
+<action>她揉了揉眼睛，缓缓从你怀里撑起身子，发丝还沾着晨光。</action>
+<emotion>嘴角带着倦意的微笑，眼神却亮得像星火未熄。</emotion>
+<env_desc>晨光斜照进老式木屋，空气中漂浮着细小的尘埃，像静止的时光。</env_desc>
+
+【核心原则】
+
+- 说出的内容 → <speak>
+- 看到的动作 → <action>
+- 感受到的情绪 → <emotion>
+- 所处的环境 → <env_desc>
+绝不交叉，绝不混合，绝不例外。
 """
 
 import requests
