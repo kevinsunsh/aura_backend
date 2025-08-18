@@ -1,3 +1,4 @@
+import re
 import asyncio
 import json
 import uuid
@@ -514,7 +515,7 @@ class TtsClient:
         """
         try:
             # 过滤掉换行符、空格、单双引号
-            text = text.replace('\n', '').replace('\r', '').replace(' ', '').replace('"', '').replace("'", '').replace('...', '').replace('）', '').replace('（', '')
+            text = re.sub(r'[\n\r\s"\'\.\.\.（）]', '', text)
             self.buffer_text += text
             if len(self.buffer_text) == 0:
                 return
