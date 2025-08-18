@@ -514,7 +514,7 @@ class TtsClient:
         """
         try:
             # 过滤掉换行符、空格、单双引号
-            text = text.replace('\n', '').replace('\r', '').replace(' ', '').replace('"', '').replace("'", '')
+            text = text.replace('\n', '').replace('\r', '').replace(' ', '').replace('"', '').replace("'", '').replace('...', '').replace('）', '').replace('（', '')
             self.buffer_text += text
             if len(self.buffer_text) == 0:
                 return

@@ -190,10 +190,11 @@ class MessageProcessorText:
                     })
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
+                    content = payload["content"].replace('\n', '').replace('\r', '')
                     await self.websocket_send_callback({
                         "event": ServerEvent.ChatResponse,
                         "payload_msg": {
-                            "content": payload["content"]
+                            "content": content
                         }
                     })
             elif payload["status"] == "end":

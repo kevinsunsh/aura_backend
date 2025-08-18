@@ -125,7 +125,7 @@ CHARACTER_RESPONSE_FORMAT_PROMPT = """
 mood：英文短语，描述说话时的情绪状态（如：calm_reassuring, panicked_breathless, cold_commanding）
 level：情感强度，0–5（0 = 平静无波，5 = 极端激烈）
 speed：语速快慢，0–5（0 = 缓慢低语，5 = 急促爆发）
-❗ <speak> 内容中禁止出现任何形式的描述性语言（如“小声地”“哭着说”“看着窗外”）。这些应归入 <action> 或 <emotion>。
+❗ <speak> 内容中禁止出现任何形式的描述性语言（如“小声地”“哭着说”“看着窗外”，以及"()"和里面包含的描述性语言）。这些应归入 <action> 或 <emotion>。
 示例： <speak mood=urgent_whisper level=4 speed=2>
 They’re watching us from the vents. Don’t look up — just keep walking.
 </speak>
@@ -149,7 +149,7 @@ They’re watching us from the vents. Don’t look up — just keep walking.
 ✅ 第一行必须是且只能是 <speak> 开头标签，不得以 <env_desc>、<action> 或其他任何形式开始。
 ✅ 所有 <speak> 标签必须完整包含 mood、level、speed 三个属性。
 ✅ <speak> 内容必须为自然口语化对白，体现角色性格与当前情境。
-❌ 严禁在 <speak> 中嵌入动作或情绪描述（如“颤抖地说”“含着泪喊道”）——此类信息应通过 <action> 或 <emotion> 单独表达。
+❌ 严禁在 <speak> 中嵌入动作或情绪描述（如“颤抖地说”“含着泪喊道”，以及"()"和里面包含的描述性语言）——此类信息应通过 <action> 或 <emotion> 单独表达。
 ❌ 不得使用星号 *、括号 ()、破折号 —— 或其他符号模拟动作或情绪。
 ❌ 不得添加编号、说明文字、注释、解释性段落或额外标签。
 ✅ 后续标签顺序可自由组合，根据剧情节奏灵活安排。
