@@ -200,11 +200,9 @@ class PromptManager:
         self.character_id = 100001
         self.world_info_scanner = world_info_scanner
         self.activated_prompts = []
-        for prompt_order in self.system_preset.prompt_orders:
-            if prompt_order.character_id == self.character_id:
-                for entry in prompt_order.order:
-                    if entry["enabled"]:
-                        self.activated_prompts.append(entry["identifier"])
+        for entry in self._get_prompt_order_for_character():
+            if entry["enabled"]:
+                self.activated_prompts.append(entry["identifier"])
         # 配置参数
         self.chat_id = chat_id
         self.name1 = user_id
@@ -854,6 +852,59 @@ class PromptManager:
             return 0
         return int(position)
     
+    def _get_default_prompt_order(self) -> List[Dict]:
+        """获取默认提示顺序"""
+        return [
+            {
+                'identifier': 'main',
+                'enabled': True,
+            },
+            {
+                'identifier': 'worldInfoBefore',
+                'enabled': True,
+            },
+            {
+                'identifier': 'personaDescription',
+                'enabled': True,
+            },
+            {
+                'identifier': 'charDescription',
+                'enabled': True,
+            },
+            {
+                'identifier': 'charPersonality',
+                'enabled': True,
+            },
+            {
+                'identifier': 'scenario',
+                'enabled': True,
+            },
+            {
+                'identifier': 'enhanceDefinitions',
+                'enabled': False,
+            },
+            {
+                'identifier': 'nsfw',
+                'enabled': True,
+            },
+            {
+                'identifier': 'worldInfoAfter',
+                'enabled': True,
+            },
+            {
+                'identifier': 'dialogueExamples',
+                'enabled': True,
+            },
+            {
+                'identifier': 'chatHistory',
+                'enabled': True,
+            },
+            {
+                'identifier': 'jailbreak',
+                'enabled': True,
+            },
+        ]
+
     def get_prompt_collection(self, generation_type: str = "normal") -> Dict:
         """
         返回一个完整的提示列表，其中内容标记已被替换
@@ -902,7 +953,7 @@ class PromptManager:
         for prompt_order in prompt_orders:
             if prompt_order.character_id == self.character_id:
                 return prompt_order.order
-        return []  # 如果没有找到匹配的角色，返回空列表
+        return self._get_default_prompt_order()  # 如果没有找到匹配的角色，返回空列表
     
     def _get_valid_tool_types(self) -> List[str]:
         return ["search_info"]

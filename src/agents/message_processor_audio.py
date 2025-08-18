@@ -590,7 +590,10 @@ class MessageProcessorAudio:
         分发消息到两个 client 进程
         """
         if message_data.get("event") == ClientEvent.SayHello:
-            pass
+            self.prepost_input_queues.put({"type": "preprocess"})
+            self.asr_result.value = message_data["payload_msg"].get("content", "").encode("utf-8")
+            self.process_timer.value = time.time()
+            logger.bind(tag="DELAY").info(f"SayHello")
         elif message_data.get("event") == ClientEvent.TaskRequest:
             if "payload_msg" in message_data and message_data["payload_msg"]:
                 payload_msg = message_data["payload_msg"]

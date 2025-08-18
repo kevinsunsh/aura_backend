@@ -1096,10 +1096,11 @@ async def sse_listener(sse_url, session):
 class WebSocketTestSession:
     """WebSocket测试会话管理类 - 裸Opus流解码版本"""
     
-    def __init__(self, uri: str = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com"):
+    def __init__(self, uri: str):
         self.base_uri = uri
-        # self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com"
-        self.base_uri = "ws://sd2e523vq6e0b2bl90om0.apigateway-cn-beijing.volceapi.com"
+        # self.base_uri = "ws://sd1qv76k2fg6tnkffhdug.apigateway-cn-beijing.volceapi.com" # release
+        # self.base_uri = "ws://sd22bo94cm47j59r0tn80.apigateway-cn-beijing.volceapi.com" # dev
+        # self.base_uri = "ws://sd2e523vq6e0b2bl90om0.apigateway-cn-beijing.volceapi.com" # experimental
         self.websocket = None
         # 音频设备管理 - 匹配服务器Float32 PCM格式
         self.audio_device = AudioDeviceManager(

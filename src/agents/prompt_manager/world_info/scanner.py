@@ -6,6 +6,7 @@ from enum import Enum
 from dataclasses import dataclass
 from .models import WorldInfoEntry, WorldInfoBook
 from .manager import DBManager
+from agents.agent_memory.message_store import MessageStore
 
 class ScanState(Enum):
     """扫描状态枚举"""
@@ -256,7 +257,6 @@ class WorldInfoScanner:
             
             next_scan_state = ScanState.NONE
             activated_now = set()
-            
             for entry in sorted_entries:
                 # 跳过已处理的条目
                 if entry in failed_probability_checks or f"{entry.world_info_book_id}.{entry.uid}" in all_activated_entries:
@@ -320,67 +320,26 @@ class WorldInfoScanner:
                     print(f"[WI] Entry {entry.uid} has no keys defined, skipped")
                     continue
                 
-                text_to_scan = buffer.get(entry, scan_state)
-                
                 # 检查主关键词
-                primary_key_match = None
-                for key in entry.keys:
-                    substituted = self.substitute_params(key)
-                    if substituted and buffer.match_keys(text_to_scan, substituted.strip(), entry):
-                        primary_key_match = key
-                        break
-                
-                if not primary_key_match:
+                _, total_count = MessageStore.get_instance().multi_keywords_search(keywords=entry.keys, limit=100)
+                if total_count == 0:
                     continue
                 
                 # 检查次级关键词
                 has_secondary_keywords = (entry.selective and entry.keysecondary and len(entry.keysecondary) > 0)
                 
                 if not has_secondary_keywords:
-                    print(f"[WI] Entry {entry.uid} activated by primary key match: {primary_key_match}")
+                    print(f"[WI] Entry {entry.uid} activated by primary key match")
                     activated_now.add(entry)
                     continue
                 
                 # 处理次级关键词逻辑
                 selective_logic = entry.selectiveLogic or 0
-                print(f"[WI] Entry {entry.uid} with primary key match {primary_key_match} has secondary keywords. Checking with logic {selective_logic}")
+                print(f"[WI] Entry {entry.uid} with primary key match has secondary keywords. Checking with logic {selective_logic}")
                 
-                def match_secondary_keys() -> bool:
-                    has_any_match = False
-                    has_all_match = True
-                    
-                    for key_secondary in entry.keysecondary:
-                        secondary_substituted = self.substitute_params(key_secondary)
-                        has_secondary_match = secondary_substituted and buffer.match_keys(text_to_scan, secondary_substituted.strip(), entry)
-                        
-                        if has_secondary_match:
-                            has_any_match = True
-                        else:
-                            has_all_match = False
-                        
-                        # AND ANY 逻辑
-                        if selective_logic == WorldInfoLogic.AND_ANY.value and has_secondary_match:
-                            print(f"[WI] Entry {entry.uid} activated. (AND ANY) Found match secondary keyword: {secondary_substituted}")
-                            return True
-                        
-                        # NOT ALL 逻辑
-                        if selective_logic == WorldInfoLogic.NOT_ALL.value and not has_secondary_match:
-                            print(f"[WI] Entry {entry.uid} activated. (NOT ALL) Found not matching secondary keyword: {secondary_substituted}")
-                            return True
-                    
-                    # NOT ANY 逻辑
-                    if selective_logic == WorldInfoLogic.NOT_ANY.value and not has_any_match:
-                        print(f"[WI] Entry {entry.uid} activated. (NOT ANY) No secondary keywords found")
-                        return True
-                    
-                    # AND ALL 逻辑
-                    if selective_logic == WorldInfoLogic.AND_ALL.value and has_all_match:
-                        print(f"[WI] Entry {entry.uid} activated. (AND ALL) All secondary keywords found")
-                        return True
-                    
-                    return False
-                
-                if match_secondary_keys():
+                search_type = "or" if selective_logic == WorldInfoLogic.AND_ANY.value else "and"
+                _, total_count = MessageStore.get_instance().multi_keywords_search(keywords=entry.keysecondary, search_type=search_type, limit=100)
+                if total_count > 0:
                     activated_now.add(entry)
                 else:
                     print(f"[WI] Entry {entry.uid} skipped. Secondary keywords not satisfied")
@@ -397,7 +356,7 @@ class WorldInfoScanner:
             new_content = ""
             text_to_scan_tokens = self.get_token_count(all_activated_text)
             
-            self.filter_by_inclusion_groups(new_entries, all_activated_entries, buffer, scan_state, timed_effects)
+            # self.filter_by_inclusion_groups(new_entries, all_activated_entries, buffer, scan_state, timed_effects)
             
             print("[WI] --- PROBABILITY CHECKS ---")
             if not new_entries:
