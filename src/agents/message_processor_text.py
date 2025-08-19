@@ -393,7 +393,9 @@ class MessageProcessorText:
     #     except Exception as e:
     #         logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     async def _replying_response_task(self, prompts: list[dict]):
-        try:            
+        try:
+            for prompt in prompts:
+                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             # 使用LLM生成立即回复
             # chat_model = get_chat_model_by_type("pfc_action_planner")
             # logger.bind(tag="DELAY").debug(f"get model delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
