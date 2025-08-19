@@ -516,6 +516,8 @@ class TtsClient:
         try:
             # 过滤掉换行符、空格、单双引号
             text = re.sub(r'[\n\r\s"\'（）]', '', text)
+            text = text.replace("...", "，")
+            text = text.replace("~", "。")
             self.buffer_text += text
             if self.is_connected() == False:
                 return
