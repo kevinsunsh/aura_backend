@@ -15,15 +15,19 @@ class StreamingTagParser:
         self.current_tag = None
         self.attributes = {}
         self.tag_callback = tag_callback
-
+        # 处理 speak 中括号情绪内容的状态
+        self._speak_emotion_open = False
+        self._speak_emotion_buffer = ""
+    # 接收新的文本块
     async def feed(self, chunk: str):
         """接收新的文本块"""
         self.buffer += chunk
+        # print(f"feed delay {self.buffer}: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
         if self.state == "OUTSIDE":
             await self._handle_outside()
         elif self.state == "CONTENT_STREAMING":
             await self._handle_content_streaming()
-
+    # 处理外部状态
     async def _handle_outside(self):
         """处理 OUTSIDE 状态"""
         # 查找开始标签 '<'
@@ -50,66 +54,50 @@ class StreamingTagParser:
             # 进入内容流式处理状态
             self.state = "CONTENT_STREAMING"
             self.buffer = self.buffer[match.end():]
-
+    # 处理内容流式处理状态
     async def _handle_content_streaming(self):
         """处理 CONTENT_STREAMING 状态"""
-        # 查找结束标签
-        close_tag = f"</{self.current_tag}>"
-        end_pos = self.buffer.find(close_tag)
-        
-        if end_pos != -1:
+        # 查找任意结束标签形式，如 </...>
+        match = re.search(r'</[^>]*>', self.buffer)
+        if match:
+            end_pos = match.start()
             # 找到结束标签，发送剩余内容并结束
             content = self.buffer[:end_pos]
             if content:
                 await self._send_content_chunk(content)
-            
+
             # 发送标签结束事件
             await self._send_tag_end()
-            
+
             # 重置状态
             self.state = "OUTSIDE"
             self.current_tag = None
             self.attributes = {}
-            self.buffer = self.buffer[end_pos + len(close_tag):]
+            self.buffer = self.buffer[match.end():]
         else:
-            # 没找到结束标签，检查部分匹配
-            partial_match_len = self._get_partial_match_len(close_tag)
-            safe_len = len(self.buffer) - partial_match_len
-            
+            # 没找到完整的结束标签，保留可能的部分匹配（例如以 '</' 开头但未闭合）
+            last_close_start = self.buffer.rfind('</')
+            partial_len = 0
+            if last_close_start != -1 and self.buffer.find('>', last_close_start) == -1:
+                partial_len = len(self.buffer) - last_close_start
+            safe_len = len(self.buffer) - partial_len
+
             if safe_len > 0:
                 # 有安全内容可以发送
                 content = self.buffer[:safe_len]
                 await self._send_content_chunk(content)
                 self.buffer = self.buffer[safe_len:]
             # 如果没有安全内容，等待更多输入
-
-    def _get_partial_match_len(self, close_tag: str) -> int:
-        """计算 buffer 末尾与 close_tag 开头的最大匹配长度"""
-        import re
-        
-        buffer_len = len(self.buffer)
-        tag_len = len(close_tag)
-        
-        # 最多检查 min(buffer_len, tag_len) 个字符
-        max_check = min(buffer_len, tag_len)
-        
-        # 构建正则表达式：检查buffer末尾是否与close_tag开头匹配
-        # 使用正向前瞻断言 (?=...) 来匹配buffer末尾
-        pattern = f"({re.escape(close_tag[:max_check])})$"
-        match = re.search(pattern, self.buffer)
-        
-        if match:
-            # 找到匹配，返回匹配长度
-            return len(match.group(1))
-        
-        # 如果没有完全匹配，尝试部分匹配
-        for i in range(max_check, 0, -1):
-            pattern = f"({re.escape(close_tag[:i])})$"
-            if re.search(pattern, self.buffer):
-                return i
-        
-        return 0
-
+    # def _get_partial_match_len(self, close_tag: str) -> int:
+    #     """计算 buffer 尾部与 close_tag 的最大前缀匹配长度"""
+    #     max_check = min(len(self.buffer), len(close_tag))
+    #     matched = 0
+    #     for i in range(max_check):
+    #         if self.buffer[-max_check + i] == close_tag[i]:
+    #             matched += 1
+    #         else:
+    #             break
+    #     return matched
     def _parse_attributes_simple(self, attr_str: str) -> dict:
         """
         简化属性解析，直接去掉外层引号
@@ -134,7 +122,7 @@ class StreamingTagParser:
             value = match[1] if match[1] else match[3]
             attributes[key] = value.strip()
         return attributes
-
+    
     async def _send_tag_start(self):
         """发送标签开始事件"""
         if not self.tag_callback:
@@ -144,21 +132,98 @@ class StreamingTagParser:
             "status": "start",
             "attributes": self.attributes
         })
-
+    
     async def _send_content_chunk(self, content: str):
         """发送内容块"""
         if not self.tag_callback or not content:
+            return
+        # 特殊规则：在 speak 中，括号里的内容当作 emotion 处理
+        if self.current_tag == "speak":
+            await self._process_speak_content(content)
             return
         await self.tag_callback({
             "tag": self.current_tag,
             "status": "streaming",
             "content": content
         })
+    
+    async def _process_speak_content(self, content: str):
+        """在 speak 标签内，将 (...) 中的内容拆分为 emotion 事件，其他文本仍作为 speak 事件发送"""
+        speak_buffer = []
+        for ch in content:
+            if self._speak_emotion_open:
+                # 情绪段中，直到遇到右括号
+                if ch == ')':
+                    # 先把已累积的情绪文本发出
+                    if self._speak_emotion_buffer:
+                        await self._send_emotion_stream(self._speak_emotion_buffer)
+                        self._speak_emotion_buffer = ""
+                    # 关闭情绪段
+                    await self._send_emotion_end()
+                    self._speak_emotion_open = False
+                else:
+                    self._speak_emotion_buffer += ch
+            else:
+                # 非情绪段，遇到左括号则切换
+                if ch == '(':
+                    # 先把已有的 speak 文本发出
+                    if speak_buffer:
+                        await self.tag_callback({
+                            "tag": "speak",
+                            "status": "streaming",
+                            "content": ''.join(speak_buffer)
+                        })
+                        speak_buffer = []
+                    # 开始情绪段
+                    await self._send_emotion_start()
+                    self._speak_emotion_open = True
+                else:
+                    speak_buffer.append(ch)
 
+        # 循环结束，发出剩余的 speak 文本
+        if speak_buffer:
+            await self.tag_callback({
+                "tag": "speak",
+                "status": "streaming",
+                "content": ''.join(speak_buffer)
+            })
+    
+    async def _send_emotion_start(self):
+        if not self.tag_callback:
+            return
+        await self.tag_callback({
+            "tag": "emotion",
+            "status": "start"
+        })
+    
+    async def _send_emotion_stream(self, content: str):
+        if not self.tag_callback or not content:
+            return
+        await self.tag_callback({
+            "tag": "emotion",
+            "status": "streaming",
+            "content": content
+        })
+    
+    async def _send_emotion_end(self):
+        if not self.tag_callback:
+            return
+        await self.tag_callback({
+            "tag": "emotion",
+            "status": "end"
+        })
+    
     async def _send_tag_end(self):
         """发送标签结束事件"""
         if not self.tag_callback:
             return
+        # 结束 speak 前，清理未闭合的情绪段
+        if self.current_tag == "speak" and self._speak_emotion_open:
+            if self._speak_emotion_buffer:
+                await self._send_emotion_stream(self._speak_emotion_buffer)
+                self._speak_emotion_buffer = ""
+            await self._send_emotion_end()
+            self._speak_emotion_open = False
         await self.tag_callback({
             "tag": self.current_tag,
             "status": "end"
@@ -327,7 +392,6 @@ class MessageProcessorText:
     #         # 不重新抛出，让任务自然结束
     #     except Exception as e:
     #         logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
-
     async def _replying_response_task(self, prompts: list[dict]):
         try:            
             # 使用LLM生成立即回复
@@ -437,7 +501,6 @@ class MessageProcessorText:
     #         # 不重新抛出，让任务自然结束
     #     except Exception as e:
     #         logger.error(f"回复任务处理失败: chat_id={self.chat_id}, error={str(e)}")
-    
     # async def _speaking_response_task(self):
     #     """说话任务"""
     #     try:
@@ -547,7 +610,6 @@ class MessageProcessorText:
     #         logger.info(f"观察任务被取消: chat_id={self.chat_id}")
     #     except Exception as e:
     #         logger.error(f"观察任务处理失败: chat_id={self.chat_id}, error={str(e)}")
-
     # async def _recalling_process_task(self):
     #     """异步处理回忆任务"""
     #     try:
@@ -593,7 +655,6 @@ class MessageProcessorText:
     #         logger.info(f"记忆任务被取消: chat_id={self.chat_id}")
     #     except Exception as e:
     #         logger.error(f"记忆任务处理失败: chat_id={self.chat_id}, error={str(e)}")
-
     async def cleanup(self):
         """清理资源"""
         logger.info("MessageProcessorText资源清理完成")

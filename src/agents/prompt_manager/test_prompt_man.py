@@ -28,6 +28,9 @@ class StreamingTagParser:
         self.current_tag = None
         self.attributes = {}
         self.tag_callback = tag_callback
+        # 处理 speak 中括号情绪内容的状态
+        self._speak_emotion_open = False
+        self._speak_emotion_buffer = ""
 
     async def feed(self, chunk: str):
         """接收新的文本块"""
@@ -98,6 +101,7 @@ class StreamingTagParser:
                 await self._send_content_chunk(content)
                 self.buffer = self.buffer[safe_len:]
             # 如果没有安全内容，等待更多输入
+
     # def _get_partial_match_len(self, close_tag: str) -> int:
     #     """计算 buffer 尾部与 close_tag 的最大前缀匹配长度"""
     #     max_check = min(len(self.buffer), len(close_tag))
@@ -108,6 +112,7 @@ class StreamingTagParser:
     #         else:
     #             break
     #     return matched
+
     def _parse_attributes_simple(self, attr_str: str) -> dict:
         """
         简化属性解析，直接去掉外层引号
@@ -147,16 +152,93 @@ class StreamingTagParser:
         """发送内容块"""
         if not self.tag_callback or not content:
             return
+        # 特殊规则：在 speak 中，括号里的内容当作 emotion 处理
+        if self.current_tag == "speak":
+            await self._process_speak_content(content)
+            return
         await self.tag_callback({
             "tag": self.current_tag,
             "status": "streaming",
             "content": content
+        })
+
+    async def _process_speak_content(self, content: str):
+        """在 speak 标签内，将 (...) 中的内容拆分为 emotion 事件，其他文本仍作为 speak 事件发送"""
+        speak_buffer = []
+        for ch in content:
+            if self._speak_emotion_open:
+                # 情绪段中，直到遇到右括号
+                if ch == ')':
+                    # 先把已累积的情绪文本发出
+                    if self._speak_emotion_buffer:
+                        await self._send_emotion_stream(self._speak_emotion_buffer)
+                        self._speak_emotion_buffer = ""
+                    # 关闭情绪段
+                    await self._send_emotion_end()
+                    self._speak_emotion_open = False
+                else:
+                    self._speak_emotion_buffer += ch
+            else:
+                # 非情绪段，遇到左括号则切换
+                if ch == '(':
+                    # 先把已有的 speak 文本发出
+                    if speak_buffer:
+                        await self.tag_callback({
+                            "tag": "speak",
+                            "status": "streaming",
+                            "content": ''.join(speak_buffer)
+                        })
+                        speak_buffer = []
+                    # 开始情绪段
+                    await self._send_emotion_start()
+                    self._speak_emotion_open = True
+                else:
+                    speak_buffer.append(ch)
+
+        # 循环结束，发出剩余的 speak 文本
+        if speak_buffer:
+            await self.tag_callback({
+                "tag": "speak",
+                "status": "streaming",
+                "content": ''.join(speak_buffer)
+            })
+
+    async def _send_emotion_start(self):
+        if not self.tag_callback:
+            return
+        await self.tag_callback({
+            "tag": "emotion",
+            "status": "start"
+        })
+
+    async def _send_emotion_stream(self, content: str):
+        if not self.tag_callback or not content:
+            return
+        await self.tag_callback({
+            "tag": "emotion",
+            "status": "streaming",
+            "content": content
+        })
+
+    async def _send_emotion_end(self):
+        if not self.tag_callback:
+            return
+        await self.tag_callback({
+            "tag": "emotion",
+            "status": "end"
         })
     
     async def _send_tag_end(self):
         """发送标签结束事件"""
         if not self.tag_callback:
             return
+        # 结束 speak 前，清理未闭合的情绪段
+        if self.current_tag == "speak" and self._speak_emotion_open:
+            if self._speak_emotion_buffer:
+                await self._send_emotion_stream(self._speak_emotion_buffer)
+                self._speak_emotion_buffer = ""
+            await self._send_emotion_end()
+            self._speak_emotion_open = False
         await self.tag_callback({
             "tag": self.current_tag,
             "status": "end"
@@ -168,7 +250,7 @@ async def tag_callback(payload):
             # print(f"speak start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
-            print(f"speak streaming: {payload["content"]}")
+            print(f"speak streaming: {payload['content']}")
             # print(f"speak streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
@@ -179,7 +261,7 @@ async def tag_callback(payload):
             # print(f"env_desc start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
-            print(f"env_desc streaming: {payload["content"]}")
+            print(f"env_desc streaming: {payload['content']}")
             # print(f"env_desc streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
@@ -190,7 +272,7 @@ async def tag_callback(payload):
             # print(f"action start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
-            print(f"action streaming: {payload["content"]}")
+            print(f"action streaming: {payload['content']}")
             # print(f"action streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
@@ -201,8 +283,8 @@ async def tag_callback(payload):
             # print(f"emotion start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "streaming":
-            print(f"emotion streaming: {payload["content"]}")
-            # print(f"emotion streaming time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
+            print(f"emotion streaming: {payload['content']}")
+            # print(f"action streaming time =======: {int((datetime.now() + start_time).total_seconds() * 1000)}ms")
             pass
         elif payload["status"] == "end":
             # print(f"emotion end time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
@@ -247,7 +329,7 @@ async def main():
     print(f"prompt manager init time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     prompts = await generator.generate(GenerationType.NORMAL, GenerationOptions())
     print(f"prompt generate tokens =======: {prompts[1]}")
-    chat_model = get_chat_model_by_type("pfc_chat")
+    chat_model = get_chat_model_by_type("memory_summary")
     # messages = []
     # for prompt in prompts[0]:
     #     print(prompt)
