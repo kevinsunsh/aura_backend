@@ -1075,11 +1075,11 @@ class PromptManager:
         for identifier in system_prompts + user_relative_prompts:
             await add_to_chat_completion(identifier)
         # 聊天：动态提示
-        await add_to_chat_completion('vectorsMemory')
-        await add_to_chat_completion('summary')
-        await add_to_chat_completion('authorsNote')
-        await add_to_chat_completion('smartContext')
-        await add_to_chat_completion('vectorsDataBank')
+        # await add_to_chat_completion('vectorsMemory')
+        # await add_to_chat_completion('summary')
+        # await add_to_chat_completion('authorsNote')
+        # await add_to_chat_completion('smartContext')
+        # await add_to_chat_completion('vectorsDataBank')
         # 聊天：对话示例和对话
         # await add_to_chat_completion('impersonate')
         # await add_to_chat_completion('quietPrompt')
