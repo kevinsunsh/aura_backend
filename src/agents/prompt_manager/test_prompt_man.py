@@ -329,7 +329,7 @@ async def main():
     print(f"prompt manager init time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     prompts = await generator.generate(GenerationType.NORMAL, GenerationOptions())
     print(f"prompt generate tokens =======: {prompts[1]}")
-    chat_model = get_chat_model_by_type("memory_summary")
+    chat_model = get_chat_model_by_type("replyer_1")
     # messages = []
     # for prompt in prompts[0]:
     #     print(prompt)

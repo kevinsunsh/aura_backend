@@ -935,7 +935,11 @@ class PromptManager:
             "validTool": PromptModel(identifier="validTool", enabled=True, role="system", system_prompt=True),
             "toolCalls": PromptModel(identifier="toolCalls", enabled=True, role="system", system_prompt=True),
             "toolDismiss": PromptModel(identifier="toolDismiss", enabled=True, role="system", system_prompt=True),
-            "summary": PromptModel(identifier="summary", enabled=True, role="system", system_prompt=True)
+            "summary": PromptModel(identifier="summary", enabled=True, role="system", system_prompt=True),
+            # "authorsNote": PromptModel(identifier="authorsNote", enabled=True, role="system", system_prompt=True),
+            # "vectorsMemory": PromptModel(identifier="vectorsMemory", enabled=True, role="system", system_prompt=True),
+            # "vectorsDataBank": PromptModel(identifier="vectorsDataBank", enabled=True, role="system", system_prompt=True),
+            # "smartContext": PromptModel(identifier="smartContext", enabled=True, role="system", system_prompt=True)
         }
         end_items = {
             "responseFormat": PromptModel(identifier="responseFormat", enabled=True, role="system", system_prompt=True)
@@ -1095,9 +1099,9 @@ class PromptManager:
             await add_to_chat_completion('bias')
 
         # Tavern Extras - 摘要、作者注释等定位提示
-        positioned_prompts = ['summary', 'authorsNote', 'vectorsMemory', 'vectorsDataBank', 'smartContext']
-        for prompt_name in positioned_prompts:
-            await self._handle_positioned_prompt(prompts, chat_completion, prompt_name)
+        # positioned_prompts = ['summary', 'authorsNote', 'vectorsMemory', 'vectorsDataBank', 'smartContext']
+        # for prompt_name in positioned_prompts:
+        #     await self._handle_positioned_prompt(prompts, chat_completion, prompt_name)
 
         # 其他相对扩展提示
         # for prompt in collection.values():
@@ -1151,7 +1155,7 @@ class PromptManager:
         collection = prompts.get("collection", {})
         if collection.get(prompt_name):
             prompt = collection[prompt_name]
-            if prompt.get("position"):
+            if prompt.position is not None:
                 message = await self._message_from_prompt_async(prompt)
                 if message:
                     self._insert_message(chat_completion, message, 'main', prompt["position"])

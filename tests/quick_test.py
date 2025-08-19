@@ -17,7 +17,7 @@ from pathlib import Path
 # 添加项目根目录到路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
 
-from configuration.config_import_export import ConfigImportExport
+from agents.agent_memory.configuration.config_import_export import ConfigImportExport
 
 def quick_test():
     """快速测试配置导入导出功能"""
