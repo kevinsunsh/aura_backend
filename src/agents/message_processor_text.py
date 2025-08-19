@@ -153,7 +153,7 @@ class StreamingTagParser:
         for ch in content:
             if self._speak_emotion_open:
                 # 情绪段中，直到遇到右括号
-                if ch == ')':
+                if ch == ')' or ch == '）':
                     # 先把已累积的情绪文本发出
                     if self._speak_emotion_buffer:
                         await self._send_emotion_stream(self._speak_emotion_buffer)
@@ -165,7 +165,7 @@ class StreamingTagParser:
                     self._speak_emotion_buffer += ch
             else:
                 # 非情绪段，遇到左括号则切换
-                if ch == '(':
+                if ch == '(' or ch == '（':
                     # 先把已有的 speak 文本发出
                     if speak_buffer:
                         await self.tag_callback({

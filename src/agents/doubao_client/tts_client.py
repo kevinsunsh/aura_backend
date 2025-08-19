@@ -445,8 +445,8 @@ class TtsClient:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
                     elif res.optional.event == EVENT_SessionFinished:
                         logger.bind(tag="TTS").info(f"TTS会话结束: {res.optional.event}")
-                        self.session_id_str = str(uuid.uuid4()).replace('-', '')
-                        self.session_id.value = self.session_id_str.encode('utf-8')
+                        # self.session_id_str = str(uuid.uuid4()).replace('-', '')
+                        # self.session_id.value = self.session_id_str.encode('utf-8')
                         await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                         if self.tts_ended_callback:
                             await safe_call(self.tts_ended_callback, res.optional.sessionId)
