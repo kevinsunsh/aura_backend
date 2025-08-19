@@ -59,7 +59,7 @@ def main():
     print(f"重建表: {'成功' if recreate_success else '失败'}")
     
     try:
-        # 添加查询天气任务
+        # # 添加查询天气任务
         weather_success = task_manager.register_task(
             task_id=str(uuid.uuid4()),
             task_type="search_info",
@@ -73,7 +73,7 @@ def main():
             task_request_params_schema={
                 "type": "object",
                 "properties": {
-                    "workflow_id": {"type": "string", "description": "工作流ID", "default": "7534616931148890122"},
+                    "workflow_id": {"type": "string", "description": "工作流ID", "default": "7535055003808612371"},
                     "app_id": {"type": "string", "description": "应用ID", "default": "7534611500569346057"},
                     "parameters": {
                         "type": "object",
@@ -98,7 +98,41 @@ def main():
         
         print("=== 添加任务结果 ===")
         print(f"搜索信息任务: {'成功' if weather_success else '失败'}")
-        
+        # 添加查询天气任务
+        memory_success = task_manager.register_task(
+            task_id=str(uuid.uuid4()),
+            task_type="memory",
+            task_name="agent_memory",
+            task_type_description="记忆管理工具",
+            task_request_url="https://sd2hgpu4cck1fc4kbq14g.apigateway-cn-beijing.volceapi.com",
+            task_request_method="POST",
+            task_request_headers={},
+            task_request_params_description="提供记忆工具请求参数",
+            task_request_params_schema={
+                "type": "object",
+                "properties": {
+                    "request_action": {"type": "string", "description": "请求动作", "default": "/v1/build_summary_mem"},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "char_id": {"type": "string", "description": "角色ID", "default": "Nova"},
+                            "user_id": {"type": "string", "description": "用户ID", "default": "test_user_001"}
+                        },
+                        "required": ["char_id", "user_id"]
+                    }
+                },
+                "required": ["request_action", "parameters"]
+            },
+            task_response_description="返回记忆工具响应结果",
+            task_response_schema={
+                "type": "object",
+                "properties": {
+                    "result": {"type": "string", "description": "记忆工具响应结果"}
+                }
+            },
+            task_is_active=True
+        )
+        print(f"记忆管理任务: {'成功' if memory_success else '失败'}")
         # 获取激活的任务
         print("\n=== 激活的任务 ===")
         active_tasks = task_manager.get_all_active_tasks()
@@ -132,5 +166,15 @@ def main():
     except Exception as e:
         logger.error(f"运行示例时出错: {e}")
 
+
+def run_task_test():
+    """运行任务测试"""
+    task_manager = TaskManager.get_instance()
+    task_manager.initialize()
+    # 调度任务
+    # task_instance_id = task_manager.schedule_task_instance("test_user_001", "agent_memory", {"request_action": "/v1/build_summary_mem", "parameters": {"char_id": "Nova", "user_id": "test_user_001"}})
+    task_instance_id = task_manager.schedule_task_instance("test_user_001", "web_search", {"parameters":{"BOT_USER_INPUT": "", "query": "上海天气如何"}})
+    print(f"任务调度结果: {'成功' if task_instance_id else '失败'}")
+
 if __name__ == "__main__":
-    main()
+    run_task_test()

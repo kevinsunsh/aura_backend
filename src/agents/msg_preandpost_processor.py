@@ -29,12 +29,12 @@ class MessagePreAndPostProcessor(ABC):
         self.history_check_interval = 20000 #ms
         self.chat_id = None
         self.user_id = None
-        self.bot_name = "Nova"
+        self.bot_name = "Eva"
         # self.activate_world_books = ["Aura0_1"]
         self.activate_world_books = ["Aura0_1"]
         self.character = CharacterManager().get_character_by_name(self.bot_name)
         self.world_info_scanner = WorldInfoScanner(activate_world_books=self.activate_world_books)
-        self.system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimit")
+        self.system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimitV3")
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("（全能2.3）王のdeepseek-R1预设")
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
     

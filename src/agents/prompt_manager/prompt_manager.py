@@ -12,6 +12,7 @@ from agents.agent_memory.message_store import MessageStore, MessageModel
 from agents.prompt_manager.character.models import CharacterModel as CharacterCard
 from agents.prompt_manager.utils import count_tokens_openai, get_response_format_prompt
 from agents.prompt_manager.system_preset.models import SystemPresetModel, PromptModel, InjectionPosition
+from agents.agent_memory.summary_mem.manager import DBManager as MemoryManager
 
 class GenerationType(Enum):
     NORMAL = "normal"
@@ -785,19 +786,17 @@ class PromptManager:
             prompts["collection"][prepared_prompt.identifier] = prepared_prompt
         # 应用角色特定的主提示
         system_prompt = prompts["collection"].get("main")
-        is_system_prompt_disabled = self._is_prompt_disabled_for_active_character("main")
+        # is_system_prompt_disabled = self._is_prompt_disabled_for_active_character("main")
         # 处理系统提示覆盖
-        if system_prompt_override and not is_system_prompt_disabled:
-            if system_prompt:
-                system_prompt.content = system_prompt_override
-            else:
-                prompts["collection"]["main"] = PromptModel(
-                    identifier="main",
-                    role="system", 
-                    content=system_prompt_override,
-                    position=0,
-                    system_prompt=True
-                )
+        # if system_prompt_override and not is_system_prompt_disabled:
+        if system_prompt is None:
+            prompts["collection"]["main"] = PromptModel(
+                identifier="main",
+                role="system", 
+                content=system_prompt_override,
+                position=0,
+                system_prompt=True
+            )
         # 应用角色特定的越狱提示
         jailbreak_prompt = prompts["collection"].get("jailbreak")
         is_jailbreak_disabled = self._is_prompt_disabled_for_active_character("jailbreak")
@@ -1254,23 +1253,27 @@ class PromptManager:
         """
         调用远程API获取记忆摘要（同步实现）
         """
-        url = "https://sd2hgpu4cck1fc4kbq14g.apigateway-cn-beijing.volceapi.com/v1/search_summary_mem"
-        headers = {
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "char_id": char_id,
-            "user_id": user_id
-        }
-        try:
-            with httpx.Client(timeout=10) as client:
-                response = client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                return data.get("result", "")
-        except Exception as e:
-            print(f"获取记忆摘要时出错: {e}")
-            return ""
+        memory_summary = MemoryManager().get_summary_mem(char_id, user_id)
+        if memory_summary:
+            return memory_summary.summary
+        return ""
+        # url = "https://sd2hgpu4cck1fc4kbq14g.apigateway-cn-beijing.volceapi.com/v1/search_summary_mem"
+        # headers = {
+        #     "Content-Type": "application/json"
+        # }
+        # payload = {
+        #     "char_id": char_id,
+        #     "user_id": user_id
+        # }
+        # try:
+        #     with httpx.Client(timeout=10) as client:
+        #         response = client.post(url, json=payload, headers=headers)
+        #         response.raise_for_status()
+        #         data = response.json()
+        #         return data.get("result", "")
+        # except Exception as e:
+        #     print(f"获取记忆摘要时出错: {e}")
+        #     return ""
     
     async def generate(self, generation_type: GenerationType = GenerationType.NORMAL,
                       options: GenerationOptions = None) -> list[dict]:

@@ -313,11 +313,11 @@ async def tag_callback(payload):
 async def main():
     print(f"start time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     parser = StreamingTagParser(tag_callback=tag_callback)
-    character = CharacterManager().get_character_by_name("Nova")
+    character = CharacterManager().get_character_by_name("Eva")
     print(f"fetch character time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     # system_preset = SystemPresetManager().get_system_preset_by_name("deepseek-R1 北棱预设v1.2 test(角色扮演特化)")
     # system_preset = SystemPresetManager().get_system_preset_by_name("（全能2.3）王のdeepseek-R1预设")
-    system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimit")
+    system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimitV3")
     print(f"fetch system preset time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     generator = PromptManager(
         chat_id="test_user_001",
@@ -329,7 +329,7 @@ async def main():
     print(f"prompt manager init time =======: {int((datetime.now() - start_time).total_seconds() * 1000)}ms")
     prompts = await generator.generate(GenerationType.NORMAL, GenerationOptions())
     print(f"prompt generate tokens =======: {prompts[1]}")
-    chat_model = get_chat_model_by_type("replyer_1")
+    chat_model = get_chat_model_by_type("pfc_chat")
     # messages = []
     # for prompt in prompts[0]:
     #     print(prompt)
