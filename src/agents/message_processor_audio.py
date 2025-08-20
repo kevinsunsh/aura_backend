@@ -353,7 +353,7 @@ class LLM_TTSClient(ABC):
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
         elif message.get("event") == ServerEvent.ChatResponseEnd:
             self.llm_is_chat_started = False
-            logger.bind(tag="DELAY").info(f"ChatEnded delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
+            logger.bind(tag="DELAY").info(f"ChatResponseEnd delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
             await self.tts_client.send_text_chunk("", start=False, end=True)
         self.output_client_queue.put(message)
 

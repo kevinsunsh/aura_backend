@@ -96,7 +96,7 @@ CHARACTER_RESPONSE_FORMAT_PROMPT = """
    - <scene> - 当前环境和场景描述
 
 【标签定义】
-- <speak:mood> = 角色实际说出的纯对话文本，mood为英文情绪标识
+- <speak:mood> = 角色实际说出的纯对话文本，mood为英文情绪标识，且只能是单个单词
   ⚠️  严格要求：只能包含角色实际说出的话语，禁止任何表情符号、动作描述、心理活动等
   ✅ 正确：<speak:panicked>抓紧扶手！
   ✅ 正确：<speak:calm>深呼吸，别怕。
@@ -130,7 +130,7 @@ CHARACTER_RESPONSE_FORMAT_PROMPT = """
 【输出示例】
 <speak:panicked>抓紧扶手！<speak:shouting>快！快！<action>猛打方向盘，呼吸急促<psych>引擎要爆了<scene>轮胎尖啸划破雨夜
 <speak:calm>深呼吸<psych>这孩子吓坏了<scene>暴雨砸车顶<action>轻拍肩膀，嘴角微扬<speak:whispering>别怕，有我在
-<speak:fearful_whispering>别出声...<scene>黑暗中脚步声逼近<psych>求求走过去<action>贴墙后退，肌肉紧绷<scene>冷风从门缝渗入<speak:nervous>你听到了吗？
+<speak:fearful>别出声...<scene>黑暗中脚步声逼近<psych>求求走过去<action>贴墙后退，肌肉紧绷<scene>冷风从门缝渗入<speak:nervous>你听到了吗？
 
 【验证规则】
 1. 开头检查：是否以<speak:开头？
