@@ -34,7 +34,7 @@ class MessagePreAndPostProcessor(ABC):
         self.activate_world_books = ["Aura0_1"]
         self.character = CharacterManager().get_character_by_name(self.bot_name)
         self.world_info_scanner = WorldInfoScanner(activate_world_books=self.activate_world_books)
-        self.system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimitV3")
+        self.system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimitV4")
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("（全能2.3）王のdeepseek-R1预设")
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
     

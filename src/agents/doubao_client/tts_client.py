@@ -153,6 +153,7 @@ class TtsClient:
         self.token = token or tts_config["token"] 
         self.speaker = speaker or tts_config["speaker"]
         self.ws_url = kwargs.get("ws_url", tts_config["ws_url"])
+        self.recv_timeout = kwargs.get("recv_timeout", 0.1)
         self.uid = None
         self.chat_id = None
         # 回调函数
@@ -168,6 +169,7 @@ class TtsClient:
         self.session_id = session_id
         self.connection_id = None
         self.connection_lost = False  # 新增：标记连接是否丢失
+        self.need_reconnect = False
         
         # TTS会话状态
         self._tts_session_active = False
@@ -412,7 +414,14 @@ class TtsClient:
                     if self.is_running == False:
                         await asyncio.sleep(0.1)
                         continue
-                    res = self._parse_tts_response(await self.ws.recv())
+                    try:
+                        res = self._parse_tts_response(await asyncio.wait_for(self.ws.recv(), timeout=self.recv_timeout))
+                    except asyncio.TimeoutError:
+                        logger.debug("TTS接收超时，继续等待")
+                        if self.need_reconnect:
+                            await self._connect()
+                            self.need_reconnect = False
+                        continue
                     logger.debug(f"TTS响应: cur session_id={self.session_id_str}, event_session_id={res.optional.sessionId}, event={res.optional.event}, type={res.header.message_type}")
                     
                     if res.optional.event == EVENT_TTSResponse and res.header.message_type == AUDIO_ONLY_RESPONSE:
@@ -542,10 +551,7 @@ class TtsClient:
             return
         if self.is_running == False:
             return
-        if self._tts_session_active == False:
-            await self._tts_finish_connection(self.ws)
-            return
-        await self._tts_cancel_session(self.ws, self.session_id_str)
+        self.need_reconnect = True
     
     async def cleanup(self):
         """清理资源"""
