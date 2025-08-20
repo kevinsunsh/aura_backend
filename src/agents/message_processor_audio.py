@@ -351,7 +351,7 @@ class LLM_TTSClient(ABC):
                 self.llm_is_chat_started = True
                 logger.bind(tag="DELAY").info(f"ChatResponse delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
-        elif message.get("event") == ServerEvent.ChatEnded:
+        elif message.get("event") == ServerEvent.ChatResponseEnd:
             self.llm_is_chat_started = False
             logger.bind(tag="DELAY").info(f"ChatEnded delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
             await self.tts_client.send_text_chunk("", start=False, end=True)
@@ -1046,6 +1046,8 @@ class MessageProcessorAudio:
                         await self.websocket_send_callback(msg)
                         if msg.get('event') == ServerEvent.TTSSentenceStart:
                             logger.bind(tag="DELAY").info(f"SEND TTSSentenceStart delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
+                        elif msg.get('event') == ServerEvent.ChatResponseEnd:
+                            logger.bind(tag="DELAY").info(f"SEND ChatResponseEnd delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
                         elif msg.get('event') == ServerEvent.ChatEnded:
                             logger.bind(tag="DELAY").info(f"SEND ChatEnded delay: {int((time.time() - self.process_timer.value) * 1000)}ms")
         except asyncio.CancelledError:

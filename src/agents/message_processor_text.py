@@ -264,7 +264,10 @@ class MessageProcessorText:
                         }
                     })
             elif payload["status"] == "end":
-                pass
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatResponseEnd,
+                    })
         elif payload["tag"] == "scene":
             if payload["status"] == "start":
                 pass
