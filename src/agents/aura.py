@@ -260,14 +260,12 @@ class AuraAgent:
                 if chat_id is None or user_id is None:
                     logger.error(f"开始session消息中没有chat_id或user_id")
                     return False
-                
-                logger.info(f"收到开始session消息: chat_id={chat_id}")
-                
+                logger.bind(tag="BASE").info(f"收到开始session消息: chat_id={chat_id}")
                 # 初始化聊天流和锁
                 self.chat_stream = ChatStreamManager.get_instance().get_or_create_chat_stream(chat_id)
                 locked = ChatStreamManager.get_instance().acquire_lock(chat_id)
                 if not locked:
-                    logger.warning(f"加锁失败: chat_id={chat_id}")
+                    logger.bind(tag="BASE").info(f"加锁失败: chat_id={chat_id}")
                     await self.send_websocket_message({
                         "event": ServerEvent.SessionFailed, 
                         "payload_msg": {"status": "failed", "message": "无法获取session锁"}
@@ -276,6 +274,7 @@ class AuraAgent:
                 
                 result = await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
                 if result == False:
+                    logger.bind(tag="BASE").error(f"无法启动session: chat_id={chat_id}")
                     await self.send_websocket_message({
                         "event": ServerEvent.SessionFailed, 
                         "payload_msg": {"status": "failed", "message": "无法启动session"}
