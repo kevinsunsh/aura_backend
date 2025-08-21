@@ -551,6 +551,11 @@ class TtsClient:
             return
         if self.is_running == False:
             return
+        if self._tts_session_active == False:
+            await self._tts_finish_connection(self.ws)
+            return
+        await self._tts_cancel_session(self.ws, self.session_id_str)
+        await self._tts_finish_connection(self.ws)
         self.need_reconnect = True
     
     async def cleanup(self):
