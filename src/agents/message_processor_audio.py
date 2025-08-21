@@ -330,20 +330,21 @@ class LLM_TTSClient(ABC):
     async def _text_processor_callback(self, message: Dict[str, Any]):
         """文本处理器回调，用于处理聊天响应"""
         if message.get("event") == ServerEvent.ChatResponseParams:
-            params = message.get("payload_msg", {}).get("params", {})
-            mood_code = params.get("mood", "neutral")
-            # 获取心情等级，如果无法转换成数字则默认为3
-            try:
-                mood_level = int(params.get("level", 3))
-            except (ValueError, TypeError):
-                mood_level = 3
-            # 获取语速，如果无法转换成数字则默认为3
-            try:
-                speech_rate = int(params.get("speed", 3))
-            except (ValueError, TypeError):
-                speech_rate = 3
-            mood_code = mood_code if mood_code in speaker_config["female_1"]["mood_code"] else "neutral"
-            await self.tts_client.set_tts_params(mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
+            pass
+            # params = message.get("payload_msg", {}).get("params", {})
+            # mood_code = params.get("mood", "neutral")
+            # # 获取心情等级，如果无法转换成数字则默认为3
+            # try:
+            #     mood_level = int(params.get("level", 3))
+            # except (ValueError, TypeError):
+            #     mood_level = 3
+            # # 获取语速，如果无法转换成数字则默认为3
+            # try:
+            #     speech_rate = int(params.get("speed", 3))
+            # except (ValueError, TypeError):
+            #     speech_rate = 3
+            # mood_code = mood_code if mood_code in speaker_config["female_1"]["mood_code"] else "neutral"
+            # await self.tts_client.set_tts_params(mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
         elif message.get("event") == ServerEvent.ChatResponse:
             if self.llm_is_chat_started:
                 await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))

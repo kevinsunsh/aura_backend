@@ -270,7 +270,13 @@ class MessageProcessorText:
                     })
         elif payload["tag"] == "scene":
             if payload["status"] == "start":
-                pass
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatEnvDescParams,
+                        "payload_msg": {
+                            "params": payload["attributes"]
+                        }
+                    })
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
@@ -286,7 +292,13 @@ class MessageProcessorText:
                     })
         elif payload["tag"] == "action":
             if payload["status"] == "start":
-                pass
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatActionParams,
+                        "payload_msg": {
+                            "params": payload["attributes"]
+                        }
+                    })
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
@@ -302,7 +314,13 @@ class MessageProcessorText:
                     })
         elif payload["tag"] == "psych":
             if payload["status"] == "start":
-                pass
+                if self.websocket_send_callback:
+                    await self.websocket_send_callback({
+                        "event": ServerEvent.ChatEmotionParams,
+                        "payload_msg": {
+                            "params": payload["attributes"]
+                        }
+                    })
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({

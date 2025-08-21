@@ -32,6 +32,7 @@ class MessagePreAndPostProcessor(ABC):
         # self.activate_world_books = ["Aura0_1"]
         self.activate_world_books = ["Aura0_1"]
         self.character = CharacterManager().get_character_by_name(self.bot_name)
+        self.user_info = None
         self.world_info_scanner = WorldInfoScanner(activate_world_books=self.activate_world_books)
         self.system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimitV4")
         # self.system_preset = SystemPresetManager().get_system_preset_by_name("（全能2.3）王のdeepseek-R1预设")
@@ -57,11 +58,11 @@ class MessagePreAndPostProcessor(ABC):
             if isinstance(msg, dict) and msg.get("type") == "start":
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
-                user_info = UserInfoManager().get_user_info_by_user_id(client.user_id)
-                client.bot_name = user_info.activated_character
+                client.user_info = UserInfoManager().get_user_info_by_user_id(client.user_id)
+                client.bot_name = client.user_info.activated_character
                 client.character = CharacterManager().get_character_by_name(client.bot_name)
-                client.world_info_scanner.set_activate_keys(user_info.activated_world_books)
-                client.system_preset = SystemPresetManager().get_system_preset_by_name(user_info.activated_system_preset)
+                client.world_info_scanner.set_activate_keys(client.user_info.activated_world_books)
+                client.system_preset = SystemPresetManager().get_system_preset_by_name(client.user_info.activated_system_preset)
                 client.is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
@@ -84,7 +85,7 @@ class MessagePreAndPostProcessor(ABC):
         """预处理用户输入"""
         generator = PromptManager(
             chat_id=self.chat_id,
-            user_id=self.user_id,
+            user_info=self.user_info,
             system_preset=self.system_preset,
             character=self.character,
             world_info_scanner=self.world_info_scanner

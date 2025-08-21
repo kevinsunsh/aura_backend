@@ -1581,6 +1581,14 @@ class WebSocketTestSession:
                     delay = self.chat_env_desc_end_time - self.asr_ended_time
                     self.asr_to_tts_delays.append(delay)
                     logger.info(f"⏱️ ASREnded到第一个ChatEnvDescEnd延迟: {delay:.3f}秒")
+            elif event_id == ServerEvent.ChatActionParams:  # ChatActionParams
+                logger.info(f"🎵 收到ChatActionParams事件: {payload_msg.get('params', {})}")
+            elif event_id == ServerEvent.ChatEmotionParams:  # ChatEmotionParams
+                logger.info(f"🎵 收到ChatEmotionParams事件: {payload_msg.get('params', {})}")
+            elif event_id == ServerEvent.ChatEnvDescParams:  # ChatEnvDescParams
+                logger.info(f"🎵 收到ChatEnvDescParams事件: {payload_msg.get('params', {})}")
+            elif event_id == ServerEvent.ChatResponseParams:  # ChatActionEndParams
+                logger.info(f"🎵 收到ChatResponseParams事件: {payload_msg.get('params', {})}")
             elif event_id == 999:  # Error
                 logger.error(f"发生错误: {data.get('message', '未知错误')}")
                 # 发生错误时也设置响应完成标志
