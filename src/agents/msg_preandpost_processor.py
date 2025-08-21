@@ -10,13 +10,12 @@ from agents.agent_memory.chat_stream import ChatStreamManager
 from agents.agent_memory.message_store import MessageStore, MessageModel
 from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 from agents.agent_memory.configuration import get_chat_model_by_type
-from langchain_core.messages import SystemMessage
-from agents.prompt_manager.prompt_manager import PromptManager
-from agents.prompt_manager.character.manager import DBManager as CharacterManager
-from agents.prompt_manager.world_info.scanner import WorldInfoScanner
-from agents.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
-from agents.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
-from agents.prompt_manager.utils import count_tokens_openai
+from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
+from agents.agent_memory.prompt_manager.character.manager import DBManager as CharacterManager
+from agents.agent_memory.prompt_manager.world_info.scanner import WorldInfoScanner
+from agents.agent_memory.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
+from agents.agent_memory.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
+from agents.agent_memory.prompt_manager.utils import count_tokens_openai
 
 class MessagePreAndPostProcessor(ABC):
     """MISC客户端包装器"""
@@ -58,6 +57,11 @@ class MessagePreAndPostProcessor(ABC):
             if isinstance(msg, dict) and msg.get("type") == "start":
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
+                user_info = UserInfoManager().get_user_info_by_user_id(client.user_id)
+                client.bot_name = user_info.activated_character
+                client.character = CharacterManager().get_character_by_name(client.bot_name)
+                client.world_info_scanner.set_activate_keys(user_info.activated_world_books)
+                client.system_preset = SystemPresetManager().get_system_preset_by_name(user_info.activated_system_preset)
                 client.is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
@@ -154,8 +158,8 @@ class MessagePreAndPostProcessor(ABC):
                             params_input=task_params,
                             params_schema=task_params_schema
                         )
-                        task_params_str = await chat_model.ainvoke([
-                            SystemMessage(content=prompt)
+                        task_params_str = chat_model.invoke([
+                            {"role": "system",  "content": prompt}
                         ])
                         # 调度任务
                         task_instance_id = TaskManager.get_instance().schedule_task_instance(self.user_id, task_name, json.loads(task_params_str.content))
