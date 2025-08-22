@@ -1,12 +1,12 @@
 edition: 3.0.0
 name: aura-backend-experiment
-access: "default-ms" # todo: 在系统下新建火山引擎的 AK / SK 密钥
+access: "default" # todo: 在系统下新建火山引擎的 AK / SK 密钥
 
 vars:
   sid: "aurabkexp"
   region: "cn-beijing"
   functionName: "aura-backend-function-experiment"
-  version: "0.0.18"
+  version: "0.0.43"
 
 resources:
   aura_backend_experiment:
@@ -37,6 +37,18 @@ resources:
             Value: dc7e10e7-1095-40ae-a172-3a7d16fc1e61
           - Key: OPENAI_BASE_URL
             Value: https://ark.cn-beijing.volces.com/api/v3
+          - Key: POSTGRES_HOST
+            Value: postgresfb9e27de51dc.rds-pg.ivolces.com
+          - Key: POSTGRES_PORT
+            Value: '5432'
+          - Key: POSTGRES_DB
+            Value: aura-PostgreSQL
+          - Key: POSTGRES_USER
+            Value: root
+          - Key: POSTGRES_PASSWORD
+            Value: X1KxZeMkM#nobqKiq
+          - Key: POSTGRES_SCHEMA
+            Value: public
         VpcConfig:
           EnableVpc: true
           EnableSharedInternetAccess: true
