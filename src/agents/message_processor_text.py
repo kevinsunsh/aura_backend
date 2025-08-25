@@ -243,7 +243,7 @@ class MessageProcessorText:
         self.parser = StreamingTagParser(tag_callback=self.tag_callback)
         self.request_tasks = []
         self.dismiss_tasks = []
-
+    
     async def tag_callback(self, payload):
         if payload["tag"] == "speak":
             if payload["status"] == "start":

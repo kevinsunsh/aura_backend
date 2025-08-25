@@ -11,11 +11,8 @@ from enum import Enum
 from typing import Optional, Callable, Any, Dict
 from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
-# 配置相关
-from config import settings
-
 from .agent_memory.chat_stream import ChatStreamManager
-from .message_processor_audio import MessageProcessorAudio
+from .message_processor import MessageProcessor
 from api_protocol.constant import *
 from api_protocol.server_protocol import server_parse_request, server_generate_response
 
@@ -48,7 +45,6 @@ class AuraAgent:
                     # 使用统一的协议构造方法
                     logger.debug(f"发送消息: {message}")
                     binary_data = self._construct_protocol_message(message)
-                    
                     # 兼容 FastAPI WebSocket (send_bytes) 和标准 websockets (send)
                     if hasattr(self.websocket_connection, 'send_bytes'):
                         await self.websocket_connection.send_bytes(binary_data)
@@ -113,8 +109,8 @@ class AuraAgent:
             logger.error(f"关闭WebSocket连接时出错: {e}")
         # 清理消息分发器和聊天流锁
         try:
-            await MessageProcessorAudio.get_instance().cleanup()
-            logger.bind(tag="BASE").info("MessageProcessorAudio清理完成")
+            await MessageProcessor.get_instance().cleanup()
+            logger.bind(tag="BASE").info("MessageProcessor清理完成")
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
                     ChatStreamManager.get_instance().release_lock(self.chat_stream.chat_id)
@@ -272,7 +268,7 @@ class AuraAgent:
                     })
                     return False
                 
-                result = await MessageProcessorAudio.get_instance().start(chat_id, user_id, self.send_websocket_message)
+                result = await MessageProcessor.get_instance().start(chat_id, user_id, self.send_websocket_message)
                 if result == False:
                     logger.bind(tag="BASE").error(f"无法启动session: chat_id={chat_id}")
                     await self.send_websocket_message({
@@ -339,7 +335,7 @@ class AuraAgent:
                 now = time.time()
                 logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')} {now - self.last_message_time}")
                 self.last_message_time = now
-                await MessageProcessorAudio.get_instance().handle_message(message_data)
+                await MessageProcessor.get_instance().handle_message(message_data)
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break
