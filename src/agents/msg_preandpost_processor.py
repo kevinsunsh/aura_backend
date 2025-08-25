@@ -12,6 +12,7 @@ from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
 from agents.agent_memory.prompt_manager.character.manager import DBManager as CharacterManager
+from agents.agent_memory.prompt_manager.scene_info.manager import DBManager as SceneInfoManager
 from agents.agent_memory.prompt_manager.world_info.scanner import WorldInfoScanner
 from agents.agent_memory.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
 from agents.agent_memory.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
@@ -28,15 +29,13 @@ class MessagePreAndPostProcessor(ABC):
         self.history_check_interval = 20000 #ms
         self.chat_id = None
         self.user_id = None
-        self.bot_name = "Eva"
-        # self.activate_world_books = ["Aura0_1"]
-        self.activate_world_books = ["Aura0_1"]
-        self.character = CharacterManager().get_character_by_name(self.bot_name)
+        self.current_scene_id = "d8943faa-bf00-481b-95af-c73bd04c1eb7"
+        self.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(self.current_scene_id)
+        self.character = CharacterManager().get_character_by_id(self.current_scene_info.activated_char_id)
+        self.bot_name = self.character.name
+        self.system_preset = SystemPresetManager().get_system_preset_by_id(self.current_scene_info.activated_system_preset_id)
         self.user_info = None
-        self.world_info_scanner = WorldInfoScanner(activate_world_books=self.activate_world_books)
-        self.system_preset = SystemPresetManager().get_system_preset_by_name("BreakLimitV4")
-        # self.system_preset = SystemPresetManager().get_system_preset_by_name("（全能2.3）王のdeepseek-R1预设")
-        # self.system_preset = SystemPresetManager().get_system_preset_by_name("Default")
+        self.world_info_scanner = WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids)
     
     @staticmethod
     def process_entry(input_queue, llm_input_queues, asr_result, is_process_running, process_timer):
@@ -59,10 +58,11 @@ class MessagePreAndPostProcessor(ABC):
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
                 client.user_info = UserInfoManager().get_user_info_by_user_id(client.user_id)
-                client.bot_name = client.user_info.activated_character
-                client.character = CharacterManager().get_character_by_name(client.bot_name)
-                client.world_info_scanner.set_activate_keys(client.user_info.activated_world_books)
-                client.system_preset = SystemPresetManager().get_system_preset_by_name(client.user_info.activated_system_preset)
+                client.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(client.user_info.current_scene_id)
+                client.character = CharacterManager().get_character_by_id(client.current_scene_info.activated_char_id)
+                client.bot_name = client.character.name
+                client.world_info_scanner.set_activate_keys(client.current_scene_info.activated_world_book_keys)
+                client.system_preset = SystemPresetManager().get_system_preset_by_id(client.current_scene_info.activated_system_preset_id)
                 client.is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
