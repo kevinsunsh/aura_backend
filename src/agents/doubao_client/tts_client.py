@@ -275,7 +275,7 @@ class TtsClient:
 
     async def _tts_start_session(self, websocket, speaker, session_id, mood_code='neutral', mood_level=3, speech_rate=3):
         """TTS开始会话"""
-        logger.bind(tag="TTS").bind(tag="TTS").info(f"===========TTS开始会话: {session_id} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
+        logger.bind(tag="TTS").bind(tag="TTS").debug(f"===========TTS开始会话: {session_id} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -386,7 +386,7 @@ class TtsClient:
         # 开始连接
         await self._tts_start_connection(self.ws)
         res = self._parse_tts_response(await self.ws.recv())
-        logger.bind(tag="TTS").info(f"TTS连接响应: event={res.optional.event}")
+        logger.bind(tag="TTS").debug(f"TTS连接响应: event={res.optional.event}")
         
         if res.optional.event != EVENT_ConnectionStarted:
             raise RuntimeError("TTS连接失败")
@@ -398,7 +398,7 @@ class TtsClient:
         self.session_id.value = self.session_id_str.encode('utf-8')
         await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
         res = self._parse_tts_response(await self.ws.recv())
-        logger.bind(tag="TTS").info(f"TTS会话响应: event={res.optional.event}")
+        logger.bind(tag="TTS").debug(f"TTS会话响应: event={res.optional.event}")
         if res.optional.event != EVENT_SessionStarted:
             raise RuntimeError('连接TTS会话启动失败')
         
@@ -466,7 +466,7 @@ class TtsClient:
                         logger.bind(tag="TTS").info(f"TTS连接结束: {res.optional.event}")
                         await self._connect()
                 except websockets.exceptions.ConnectionClosed as e:
-                    logger.bind(tag="TTS").warning(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
+                    logger.bind(tag="TTS").debug(f"TTS WebSocket连接已关闭, log_id={self.log_id}, code={e.code}, reason={e.reason}")
                     await self._connect()
                     continue
                 except websockets.exceptions.ConnectionClosedError:

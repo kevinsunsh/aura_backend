@@ -34,6 +34,8 @@ class MessagePreAndPostProcessor(ABC):
         self.character = CharacterManager().get_character_by_id(self.current_scene_info.activated_char_id)
         self.bot_name = self.character.name
         self.system_preset = SystemPresetManager().get_system_preset_by_id(self.current_scene_info.activated_system_preset_id)
+        self.system_preset_prompts = self.system_preset.prompts
+        self.system_preset_prompt_order = self.system_preset.prompt_orders[0].order
         self.user_info = None
         self.world_info_scanner = WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids)
     
@@ -63,6 +65,8 @@ class MessagePreAndPostProcessor(ABC):
                 client.bot_name = client.character.name
                 client.world_info_scanner.set_activate_keys(client.current_scene_info.activated_world_book_keys)
                 client.system_preset = SystemPresetManager().get_system_preset_by_id(client.current_scene_info.activated_system_preset_id)
+                client.system_preset_prompts = client.system_preset.prompts
+                client.system_preset_prompt_order = client.system_preset.prompt_orders[0].order
                 client.is_process_running.value = True
             elif isinstance(msg, dict) and msg.get("type") == "stop":
                 client.is_process_running.value = False
@@ -86,7 +90,10 @@ class MessagePreAndPostProcessor(ABC):
         generator = PromptManager(
             chat_id=self.chat_id,
             user_info=self.user_info,
+            scene_info=self.current_scene_info,
             system_preset=self.system_preset,
+            system_preset_prompts=self.system_preset_prompts,
+            system_preset_prompt_order=self.system_preset_prompt_order,
             character=self.character,
             world_info_scanner=self.world_info_scanner
         )
