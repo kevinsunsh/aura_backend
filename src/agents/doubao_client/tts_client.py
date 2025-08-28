@@ -547,14 +547,15 @@ class TtsClient:
     
     async def user_input_interruption(self):
         """用户输入中断"""
-        if self.is_connected() == False:
-            return
-        if self.is_running == False:
-            return
-        if self._tts_session_active == True:
-            await self._tts_cancel_session(self.ws, self.session_id_str)
-        await self._tts_finish_connection(self.ws)
-        self.need_reconnect = True
+        pass
+        # if self.is_connected() == False:
+        #     return
+        # if self.is_running == False:
+        #     return
+        # if self._tts_session_active == True:
+        #     await self._tts_cancel_session(self.ws, self.session_id_str)
+        # await self._tts_finish_connection(self.ws)
+        # self.need_reconnect = True
     
     async def cleanup(self):
         """清理资源"""
