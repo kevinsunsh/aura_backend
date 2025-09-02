@@ -441,7 +441,7 @@ class MessageProcessorText:
             #     world_info_scanner=WorldInfoScanner()
             # )
             # prompts = await generator.generate(GenerationType.NORMAL, GenerationOptions())
-            chat_model = get_chat_model_by_type("pfc_chat")
+            chat_model = get_chat_model_by_type("vlm")
             # messages = []
             # for prompt in prompts:
             #     logger.bind(tag="TASK").info(f"prompt: {prompt}")
