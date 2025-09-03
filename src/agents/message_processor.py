@@ -1061,7 +1061,7 @@ class MessageProcessor:
             logger.error(f"发送LLM_TTS消息失败: {e}")
             # 短暂等待后继续
             return None, sleep_time
-
+    # send message
     async def send_message(self):
         """
         轮询VAD输出队列，有消息就发给 websocket

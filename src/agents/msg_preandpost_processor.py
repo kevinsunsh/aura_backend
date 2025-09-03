@@ -231,3 +231,9 @@ class MessagePreAndPostProcessor(ABC):
                 logger.bind(tag="TASK").warning(f"time_out_finished_tasks XML解析失败: {e}")
             except Exception as e:
                 logger.bind(tag="TASK").error(f"time_out_finished_tasks 任务解析异常: {e}")
+        # build_summary_mem
+        task_instance_id = TaskManager.get_instance().schedule_task_instance(self.user_id, "agent_memory", {"user_id": self.user_id, "char_id": self.character.name})
+        if task_instance_id:
+            logger.bind(tag="TASK").info(f"成功调度任务: {task_instance_id}")
+        else:
+            logger.bind(tag="TASK").warning(f"调度任务失败: {task_name}")

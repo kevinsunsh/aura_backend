@@ -318,7 +318,6 @@ class AuraAgent:
                 
                 # 解析二进制协议消息
                 message_data = self._parse_binary_protocol_message(data)
-
                 # 检查解析是否成功
                 if "error" in message_data:
                     logger.error(f"消息解析失败: {message_data['error']}")

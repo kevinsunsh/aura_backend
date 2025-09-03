@@ -1128,7 +1128,8 @@ class WebSocketTestSession:
         # 状态控制
         self.session_id = None
         self.chat_id = "f9280b33-4a31-2add-a0c2-3a92d065cc74"
-        self.user_id = "2342342334"
+        # self.user_id = "2342342334"
+        self.user_id = "test_user_001"
         self.is_running = True
         self.is_playing = True
         self.pause_playing = False
