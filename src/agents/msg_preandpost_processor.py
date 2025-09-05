@@ -137,6 +137,8 @@ class MessagePreAndPostProcessor(ABC):
         )
         # 存储到消息存储
         MessageStore.get_instance().add_message(message)
+        chat_model = get_chat_model_by_type("vlm")
+        
         ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
         request_tasks = bot_response.get("request_tasks", "")
         # 解析task标签，例如 <task name="web_search" params="天气查询"/>

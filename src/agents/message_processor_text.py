@@ -1,19 +1,21 @@
 import re
+import json
 import asyncio
+import requests
+import numpy as np
 from loguru import logger
 from datetime import datetime
-from typing import Dict, Any, Callable, List
-from agents.agent_memory.configuration import get_chat_model_by_type
 from api_protocol.constant import *
-from langchain_core.messages import SystemMessage
-from langchain_core.messages import HumanMessage, AIMessage
+from typing import Dict, Any, Callable, List
+from agents.agent_memory.configuration.config import ChatModel
+from agents.agent_memory.configuration import get_chat_model_by_type
+from utils.ray_conversion import screen_to_ray_robust
 
 class StreamingTagParser:
     def __init__(self, tag_callback=None):
         self.buffer: List[str] = []  # 保持完整的token列表
         self.state = "OUTSIDE"  # 初始状态：OUTSIDE
         self.tag_callback = tag_callback
-        
         # 标签相关状态
         self.current_tag_type: str = ""  # 'speak', 'action', 'psych', 'scene'
         self.current_tag_attribute: str = ""  # 标签的属性值（如mood）
@@ -29,7 +31,6 @@ class StreamingTagParser:
         """处理缓冲区内容"""
         while self.buffer:
             processed = False
-            
             if self.state == "OUTSIDE":
                 processed = await self._handle_outside()
             elif self.state == "IN_TAG_NAME":
@@ -38,7 +39,6 @@ class StreamingTagParser:
                 processed = await self._handle_in_tag_attribute()
             elif self.state == "IN_TAG_CONTENT":
                 processed = await self._handle_in_tag_content()
-                
             if not processed:
                 break
     # 处理OUTSIDE状态：查找<开始符
@@ -55,9 +55,6 @@ class StreamingTagParser:
             # 找到了开始符
             # 移除已处理的token
             self.buffer.pop(0)
-            
-            # 如果<前面有内容，根据规范应该忽略
-            
             # 如果<后面还有内容，放回剩余部分
             if tag_start_pos + 1 < len(token):
                 self.buffer.insert(0, token[tag_start_pos + 1:])
@@ -230,6 +227,101 @@ class StreamingTagParser:
                 "status": "end"
             })
 
+interactivate_prompt = """
+根据用户看到的画面和想要采取的行动，通过点击来选择画面中最合适的交互目标。
+
+## Output Format
+```
+Thought: ...
+Action: ...
+```
+
+## Action Space
+click(point='<point>x y</point>')
+
+## User Instruction
+Action:
+"""
+
+def handle_position(user_id:str, chat_id:str, action_str:str):
+    chat_model = ChatModel(
+        model_name="doubao-1-5-ui-tars-250428",
+        api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+        api_base="https://ark.cn-beijing.volces.com/api/v3",
+        model_provider="openai"
+    )
+    look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{chat_id}/view_data/look.jpg"
+    messages = [{
+        "role": "system",
+        "content": interactivate_prompt
+    }, {
+        "role": "user",
+        "content": [
+            {
+                "image_url":
+                    {
+                        "url": look_url
+                    },
+                "type":"image_url"
+            },
+            {
+                "text": "这是我看到的画面",
+                "type": "text"
+            }
+        ]
+    }, {
+        "role": "user",
+        "content": f"这是我想要做的动作：{action_str}"
+    }]
+    response = chat_model.invoke(messages)
+    print(f"{response.content}")
+    response_text = response.content
+    # 使用正则表达式提取point中的坐标
+    point_pattern = r"click\(point='<point>(\d+)\s+(\d+)</point>'\)"
+    match = re.search(point_pattern, response_text)
+    if match:
+        x = int(match.group(1))
+        y = int(match.group(2))
+        print(f"提取到坐标: x={x}, y={y}")
+        # 可以使用这些坐标进行后续处理
+        coordinates = np.array([x, y])
+        print(f"坐标数组: {coordinates}")
+    else:
+        print("未找到坐标信息")
+    # 下载并处理 cam.json 文件
+    cam_json_url = look_url.replace("look.jpg", "cam.json")
+    
+    try:
+        print(f"正在下载 cam.json 文件: {cam_json_url}")
+        # 下载JSON文件
+        response_cam = requests.get(cam_json_url, timeout=30)
+        response_cam.raise_for_status()
+        
+        # 解析JSON数据
+        cam_data = response_cam.json()
+        print(f"cam.json 下载成功，包含 {len(cam_data)} 个键")
+        
+        # 转换为numpy数组
+        mvp = np.array(cam_data["mvp"])
+        
+        x_float = float(x) / 1000
+        y_float = float(y) / 1000
+        # 使用射线转换函数
+        ray_origin, ray_direction = screen_to_ray_robust(x_float, y_float, mvp)
+        
+        print(f"屏幕坐标: ({x}, {y})")
+        print(f"射线起点: {ray_origin}")
+        print(f"射线方向: {ray_direction}")
+        
+        return ray_origin, ray_direction
+    except requests.exceptions.RequestException as e:
+        print(f"下载 cam.json 失败: {e}")
+    except json.JSONDecodeError as e:
+        print(f"解析 cam.json 失败: {e}")
+    except Exception as e:
+        print(f"处理 cam.json 时出错: {e}")
+    return response.content
+
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
 
@@ -241,6 +333,7 @@ class MessageProcessorText:
         self.websocket_send_callback = websocket_send_callback
         self.process_timer = process_timer
         self.parser = StreamingTagParser(tag_callback=self.tag_callback)
+        self.action_content = ""
         self.request_tasks = []
         self.dismiss_tasks = []
     
@@ -292,23 +385,45 @@ class MessageProcessorText:
                     })
         elif payload["tag"] == "action":
             if payload["status"] == "start":
+                self.action_content = payload['attributes']['attribute'] + ":"
+                # if self.websocket_send_callback:
+                #     await self.websocket_send_callback({
+                #         "event": ServerEvent.ChatActionParams,
+                #         "payload_msg": {
+                #             "params": payload["attributes"]
+                #         }
+                #     })
+            elif payload["status"] == "streaming":
+                self.action_content = self.action_content + payload['content']
+                # if self.websocket_send_callback:
+                #     await self.websocket_send_callback({
+                #         "event": ServerEvent.ChatAction,
+                #         "payload_msg": {
+                #             "content": payload["content"]
+                #         }
+                #     })
+            elif payload["status"] == "end":
+                actions = self.action_content.split(":")
+                res = handle_position(self.user_id, self.chat_id, self.action_content)
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
                         "event": ServerEvent.ChatActionParams,
                         "payload_msg": {
-                            "params": payload["attributes"]
+                            "params": {
+                                "attribute": {
+                                    "action": actions[0],
+                                    "start": res[0].tolist(),
+                                    "direction": res[1].tolist()
+                                }
+                            }
                         }
                     })
-            elif payload["status"] == "streaming":
-                if self.websocket_send_callback:
                     await self.websocket_send_callback({
                         "event": ServerEvent.ChatAction,
                         "payload_msg": {
-                            "content": payload["content"]
+                            "content": actions[1]
                         }
                     })
-            elif payload["status"] == "end":
-                if self.websocket_send_callback:
                     await self.websocket_send_callback({
                         "event": ServerEvent.ChatActionEnd,
                     })

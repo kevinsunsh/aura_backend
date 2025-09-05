@@ -104,7 +104,7 @@ def main():
             task_type="memory",
             task_name="agent_memory",
             task_type_description="记忆管理工具",
-            task_request_url="https://sd2hgpu4cck1fc4kbq14g.apigateway-cn-beijing.volceapi.com",
+            task_request_url="https://sd2hgpu4cck1fc4kbq14g.apigateway-cn-beijing.volceapi.com/v1",
             task_request_method="POST",
             task_request_headers={},
             task_request_params_description="提供记忆工具请求参数",
