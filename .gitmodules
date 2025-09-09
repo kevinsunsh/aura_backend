@@ -4,3 +4,6 @@
 [submodule "src/agents/agent_memory"]
 	path = src/agents/agent_memory
 	url = https://github.com/kevinsunsh/agent_memory.git
+[submodule "src_go/internal/agent/agent_memory"]
+	path = src_go/internal/agent/agent_memory
+	url = https://github.com/kevinsunsh/agent_memory.git
