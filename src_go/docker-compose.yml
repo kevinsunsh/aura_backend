@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  aura-backend:
+    build: .
+    container_name: aura-backend-go
+    ports:
+      - "5876:5876"
+    environment:
+      - CONFIG_PATH=/app
+      - LOG_LEVEL=info
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=5876
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_DBNAME=aura_postgresql
+      - DATABASE_USER=root
+      - DATABASE_PASSWORD=X1KxZeMkM#nobqKiq
+      - DATABASE_SSLMODE=disable
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_MODEL=gpt-3.5-turbo
+      - APP_DEBUG=true
+      - APP_VERSION=1.0.0
+    volumes:
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - aura-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: aura-postgres
+    environment:
+      - POSTGRES_DB=aura_postgresql
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=X1KxZeMkM#nobqKiq
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    networks:
+      - aura-network
+
+volumes:
+  postgres_data:
+
+networks:
+  aura-network:
+    driver: bridge

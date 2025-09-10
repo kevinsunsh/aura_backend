@@ -83,10 +83,6 @@ async def websocket_stream_endpoint_without_tts(websocket: WebSocket):
     logger.bind(tag="BASE").info(f"开始处理WebSocket连接")
     await AuraAgent.get_instance().handle_websocket_connection(websocket)
 
-@app.get("/sse")
-async def sse_endpoint(request: Request):
-    return StreamingResponse(MessageProcessor.get_instance().send_sse_message(), media_type="text/event-stream")
-
 if __name__ == "__main__":
     uvicorn.run(
         "app:app",
