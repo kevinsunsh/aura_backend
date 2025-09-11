@@ -101,3 +101,4 @@ yarl==1.20.1
 zstandard==0.23.0
 torch==2.7.1
 torchaudio==2.7.1
+pykka==3.0.0

@@ -568,7 +568,7 @@ class MessageProcessorText:
             # 生成立即回复
             final_response = ""
             first_chunk = True
-            logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+            logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
             async for chunk in chat_model.astream(prompts, extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
                     if self.is_interruption:
@@ -577,7 +577,7 @@ class MessageProcessorText:
                     final_response += chunk.content
                     if first_chunk:
                         first_chunk = False
-                        logger.bind(tag="TTS").info(f"start streaming response delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
+                        logger.bind(tag="TTS").info(f"start streaming response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
                     await self.parser.feed(chunk.content)
             await self.parser.end()
             if self.websocket_send_callback:

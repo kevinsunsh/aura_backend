@@ -12,7 +12,7 @@ from typing import Optional, Callable, Any, Dict
 from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
 from .agent_memory.chat_stream import ChatStreamManager
-from .message_processor import MessageProcessor
+from .actor_message_processor import ActorMessageProcessor
 from api_protocol.constant import *
 from api_protocol.server_protocol import server_parse_request, server_generate_response
 
@@ -109,8 +109,8 @@ class AuraAgent:
             logger.error(f"关闭WebSocket连接时出错: {e}")
         # 清理消息分发器和聊天流锁
         try:
-            await MessageProcessor.get_instance().cleanup()
-            logger.bind(tag="BASE").info("MessageProcessor清理完成")
+            await ActorMessageProcessor.get_instance().cleanup()
+            logger.bind(tag="BASE").info("ActorMessageProcessor清理完成")
             if hasattr(self, 'chat_stream') and self.chat_stream:
                 try:
                     ChatStreamManager.get_instance().release_lock(self.chat_stream.chat_id)
@@ -268,7 +268,14 @@ class AuraAgent:
                     })
                     return False
                 
-                result = await MessageProcessor.get_instance().start(chat_id, user_id, self.send_websocket_message)
+                # 将异步发送方法包装为线程安全的同步回调
+                loop = asyncio.get_running_loop()
+                def safe_send(msg: Dict[str, Any]):
+                    try:
+                        asyncio.run_coroutine_threadsafe(self.send_websocket_message(msg), loop)
+                    except Exception as e:
+                        logger.error(f"提交WebSocket发送任务失败: {e}")
+                result = ActorMessageProcessor.get_instance().start(chat_id, user_id, safe_send)
                 if result == False:
                     logger.bind(tag="BASE").error(f"无法启动session: chat_id={chat_id}")
                     await self.send_websocket_message({
@@ -334,7 +341,7 @@ class AuraAgent:
                 now = time.time()
                 logger.debug(f"收到二进制协议消息: event={message_data.get('event', 'unknown')} {now - self.last_message_time}")
                 self.last_message_time = now
-                await MessageProcessor.get_instance().handle_message(message_data)
+                await ActorMessageProcessor.get_instance().handle_message(message_data)
             except WebSocketDisconnect:
                 logger.info("WebSocket客户端主动断开连接")
                 break

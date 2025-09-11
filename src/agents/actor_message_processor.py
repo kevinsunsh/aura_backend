@@ -1,0 +1,320 @@
+import pykka
+import asyncio
+import time
+import queue
+from loguru import logger
+from typing import Dict, Any, Callable, Optional
+from enum import Enum
+from abc import ABC
+
+from .vad_actor import VADActor
+from .e2e_actor import E2EActor
+from .llm_tts_actor import LLMTTSActor
+from .prepost_actor import PrePostActor
+from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set
+from muttering_data.mutter_index import get_muttering_file_path, MutteringType
+from api_protocol.constant import *
+
+class ActorMessageProcessor:
+    """
+    基于Pykka Actor的消息处理器
+    """
+    instance = None
+    
+    @staticmethod
+    def get_instance():
+        if ActorMessageProcessor.instance is None:
+            ActorMessageProcessor.instance = ActorMessageProcessor()
+        return ActorMessageProcessor.instance
+    
+    def __init__(self):
+        self.chat_id = None
+        self.user_id = None
+        self.websocket_send_callback = None
+        self.sse_started = False
+        # Actor引用
+        self.vad_actor = None
+        self.e2e_actor = None
+        self.llm_tts_actor = None
+        self.prepost_actor = None
+        # 共享状态
+        self.asr_result = ""
+        self.asr_is_started = False
+        self.process_timer = 0
+        # 启动所有Actor
+        self._start_actors()
+    
+    def on_receive(self, message):
+        """处理接收到的消息"""
+        try:
+            msg_type = message.get("type")
+            if msg_type == "start":
+                return self._start(message.get("data", {}))
+            elif msg_type == "handle_message":
+                return self._handle_message(message.get("data"))
+            elif msg_type == "cleanup":
+                return self._cleanup()
+            elif msg_type == "set_asr_state":
+                self.asr_is_started = message.get("asr_started", False)
+                return {"success": True}
+            elif msg_type == "set_asr_result":
+                self.asr_result = message.get("asr_result", "")
+                return {"success": True}
+            elif msg_type == "set_process_timer":
+                self.process_timer = message.get("timer", 0)
+                return {"success": True}
+            else:
+                return {"error": f"Unknown message type: {msg_type}"}
+        except Exception as e:
+            logger.error(f"ActorMessageProcessor处理消息失败: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _start_actors(self):
+        """启动所有Actor"""
+        try:
+            # 创建所有Actor实例
+            self.vad_actor = VADActor.start()
+            self.e2e_actor = E2EActor.start()
+            self.llm_tts_actor = LLMTTSActor.start()
+            self.prepost_actor = PrePostActor.start()
+            # 设置输出回调
+            self.vad_actor.tell({"type": "set_callback", "callback": self._handle_vad_output})
+            self.e2e_actor.tell({"type": "set_callback", "callback": self._handle_e2e_output})
+            self.llm_tts_actor.tell({"type": "set_callback", "callback": self._handle_llm_tts_output})
+            self.prepost_actor.tell({"type": "set_callback", "callback": self._handle_prepost_output})
+            logger.info("所有Actor启动完成")
+        except Exception as e:
+            logger.error(f"启动Actor失败: {e}")
+            raise e
+    
+    def _handle_vad_output(self, message):
+        """处理VAD输出"""
+        logger.info(f"收到VAD输出: {message}")
+        # 处理VAD检测到的事件
+        if message.get("event") == ServerEvent.ASRInfo:
+            # VAD检测到语音开始
+            if not self.asr_is_started:
+                self.asr_is_started = True
+                logger.info("VAD检测到语音开始")
+                # 发送中断信号给其他Actor
+                self.llm_tts_actor.tell({"type": "interruption"})
+                # 发送ASRInfo事件到WebSocket
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+            else:
+                logger.debug("VAD检测到语音开始，但ASR已开始")
+        elif message.get("event") == ServerEvent.ASREnded:
+            # VAD检测到语音结束
+            if self.asr_is_started:
+                self.asr_is_started = False
+                self.process_timer = time.time()
+                logger.bind(tag="BASE").info("VAD检测到语音结束")
+                # 同步处理计时器到PrePost
+                if self.prepost_actor:
+                    self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                # 发送预处理信号
+                self.prepost_actor.tell({"type": "preprocess"})
+                # 发送ASREnded事件到WebSocket
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+            else:
+                logger.warning("VAD检测到语音结束，但ASR未开始")
+    
+    def _handle_e2e_output(self, message):
+        """处理E2E输出"""
+        logger.debug(f"收到E2E输出: {message}")
+        # 处理E2E检测到的事件
+        if message.get("event") == ServerEvent.ASRInfo:
+            # E2E检测到语音开始
+            if not self.asr_is_started:
+                self.asr_is_started = True
+                logger.bind(tag="BASE").info("E2E检测到语音开始")
+                # 发送中断信号给其他Actor
+                self.llm_tts_actor.tell({"type": "interruption"})
+                # 发送ASRInfo事件到WebSocket
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+            else:
+                logger.debug("E2E检测到语音开始，但ASR已开始")
+        elif message.get("event") == ServerEvent.ASREnded:
+            # E2E检测到语音结束
+            if self.asr_is_started:
+                self.asr_is_started = False
+                self.process_timer = time.time()
+                logger.bind(tag="BASE").info("E2E检测到语音结束")
+                # 同步处理计时器到PrePost
+                if self.prepost_actor:
+                    self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                # 发送预处理信号
+                self.prepost_actor.tell({"type": "preprocess"})
+                # 发送ASREnded事件到WebSocket
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+            else:
+                logger.warning("E2E检测到语音结束，但ASR未开始")
+        # 处理其他E2E输出消息
+        elif message.get("event") == ServerEvent.ASRResponse:
+            # 直接转发到WebSocket
+            if self.websocket_send_callback:
+                self.websocket_send_callback(message)
+            # 同步ASR文本到PrePost
+            try:
+                payload = message.get("payload_msg", {})
+                content = payload.get("results", [{}])[0].get("text", "") if isinstance(payload, dict) else ""
+                if content:
+                    self.asr_result = content
+                    if self.prepost_actor:
+                        self.prepost_actor.tell({"type": "set_asr_result", "asr_result": content})
+            except Exception:
+                pass
+    
+    def _handle_llm_tts_output(self, message):
+        """处理LLM+TTS输出"""
+        logger.debug(f"收到LLM+TTS输出: {message}")
+        if message.get("event") == ServerEvent.:
+            # E2E检测到语音开始
+            if not self.asr_is_started:
+                self.asr_is_started = True
+                logger.bind(tag="BASE").info("E2E检测到语音开始")
+                # 发送中断信号给其他Actor
+                self.llm_tts_actor.tell({"type": "interruption"})
+                # 发送ASRInfo事件到WebSocket
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+            else:
+                logger.debug("E2E检测到语音开始，但ASR已开始")
+        elif message.get("event") == ServerEvent.ASREnded:
+            # E2E检测到语音结束
+            if self.asr_is_started:
+                self.asr_is_started = False
+                self.process_timer = time.time()
+                logger.bind(tag="BASE").info("E2E检测到语音结束")
+                # 同步处理计时器到PrePost
+                if self.prepost_actor:
+                    self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                # 发送预处理信号
+                self.prepost_actor.tell({"type": "preprocess"})
+                # 发送ASREnded事件到WebSocket
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+            else:
+                logger.warning("E2E检测到语音结束，但ASR未开始")
+        # 处理其他E2E输出消息
+        elif message.get("event") == ServerEvent.ASRResponse:
+            # 直接转发到WebSocket
+            if self.websocket_send_callback:
+                self.websocket_send_callback(message)
+            # 同步ASR文本到PrePost
+            try:
+                payload = message.get("payload_msg", {})
+                content = payload.get("results", [{}])[0].get("text", "") if isinstance(payload, dict) else ""
+                if content:
+                    self.asr_result = content
+                    if self.prepost_actor:
+                        self.prepost_actor.tell({"type": "set_asr_result", "asr_result": content})
+            except Exception:
+                pass
+    
+    def _handle_prepost_output(self, message):
+        """处理预处理/后处理输出"""
+        logger.debug(f"收到PrePost输出: {message}")
+        # 将PrePost生成的prompts转发给LLM+TTS
+        if isinstance(message, dict) and message.get("event") == "LLMRun":
+            prompts = message.get("prompts")
+            if prompts and self.llm_tts_actor:
+                prompts.append({"role": "user", "content": self.asr_result})
+                self.llm_tts_actor.tell({"type": "run", "data": prompts})
+    
+    def handle_message(self, message_data: Dict[str, Any]):
+        """
+        分发消息到各个Actor
+        """
+        if message_data.get("event") == ClientEvent.SayHello:
+            # 同步输入与计时器
+            self.asr_result = message_data["payload_msg"].get("content", "")
+            self.process_timer = time.time()
+            if self.prepost_actor:
+                self.prepost_actor.tell({"type": "set_asr_result", "asr_result": self.asr_result})
+                self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+            # 触发预处理
+            self.prepost_actor.tell({"type": "preprocess"})
+            logger.info("处理SayHello消息")
+        elif message_data.get("event") == ClientEvent.TaskRequest:
+            if "payload_msg" in message_data and message_data["payload_msg"]:
+                payload_msg = message_data["payload_msg"]
+            else:
+                return {"success": False, "error": "payload_msg is required"}
+            # 发送到VAD Actor
+            self.vad_actor.tell({"type": "input", "data": payload_msg})
+            # 发送到E2E Actor
+            self.e2e_actor.tell({"type": "input", "data": payload_msg})
+        elif message_data.get("event") == ClientEvent.SpeakEnded:
+            if self.asr_is_started:
+                self.asr_is_started = False
+                self.prepost_actor.tell({"type": "preprocess"})
+                self.process_timer = time.time()
+                logger.info("处理SpeakEnded消息")
+            else:
+                logger.info("SpeakEnded，但ASR未开始")
+        elif message_data.get("event") == ClientEvent.WorldInfoActivateKeys:
+            self.prepost_actor.tell({
+                "type": "change_world_info_activate_keys",
+                "data": message_data.get("payload_msg", {}).get("activate_keys", [])
+            })
+        elif message_data.get("event") == ClientEvent.ChangeBotID:
+            self.prepost_actor.tell({
+                "type": "change_bot_name",
+                "data": message_data.get("payload_msg", {}).get("bot_name", "")
+            })
+        elif message_data.get("event") == ClientEvent.ChangeSystemPreset:
+            self.prepost_actor.tell({
+                "type": "change_system_preset",
+                "data": message_data.get("payload_msg", {}).get("system_preset", "")
+            })
+        return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
+    
+    def start(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
+        """启动消息处理器"""
+        self.chat_id = chat_id
+        self.user_id = user_id
+        self.websocket_send_callback = websocket_send_callback
+        
+        logger.info(f"ActorMessageProcessor启动开始: chat_id={self.chat_id}")
+        
+        # 启动所有Actor
+        start_data = {"chat_id": self.chat_id, "user_id": self.user_id}
+        
+        # 使用ask方法等待所有Actor启动完成
+        vad_result = self.vad_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        e2e_result = self.e2e_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        llm_tts_result = self.llm_tts_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        prepost_result = self.prepost_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        
+        # 检查启动结果
+        if (vad_result.get("success") and e2e_result.get("success") and 
+            llm_tts_result.get("success") and prepost_result.get("success")):
+            logger.info("ActorMessageProcessor启动完成")
+            return True
+        else:
+            logger.error("ActorMessageProcessor启动失败")
+            return False
+    
+    def cleanup(self):
+        """清理资源"""
+        logger.info(f"开始清理ActorMessageProcessor: chat_id={self.chat_id}")
+        
+        self.websocket_send_callback = None
+        self.sse_started = False
+        
+        # 停止所有Actor
+        if self.vad_actor:
+            self.vad_actor.stop()
+        if self.e2e_actor:
+            self.e2e_actor.stop()
+        if self.llm_tts_actor:
+            self.llm_tts_actor.stop()
+        if self.prepost_actor:
+            self.prepost_actor.stop()
+        
+        logger.info("ActorMessageProcessor清理完成")
+        return {"success": True}
