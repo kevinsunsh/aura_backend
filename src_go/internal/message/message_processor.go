@@ -4,7 +4,6 @@ import (
 	"aura-backend/internal/ai"
 	"aura-backend/internal/logger"
 	"aura-backend/internal/protocol"
-	"aura-backend/internal/tool"
 	"context"
 	"fmt"
 	"sync"
@@ -47,31 +46,25 @@ type MessageProcessor struct {
 	currentUserID string
 	sendCallback  func(interface{}) error
 	isActive      bool
-
 	// 多线程相关
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-
 	// 消息通道
-	vadInputChan     chan WorkerMessage
-	asrInputChan     chan WorkerMessage
+	// vadInputChan     chan WorkerMessage
+	// asrInputChan     chan WorkerMessage
 	llmInputChan     chan WorkerMessage
 	ttsInputChan     chan WorkerMessage
 	e2eInputChan     chan WorkerMessage
 	prepostInputChan chan WorkerMessage
 	outputChan       chan interface{}
-
 	// 工作线程状态
-	vadStatus WorkerStatus
+	// vadStatus WorkerStatus
 	// asrStatus     WorkerStatus // ASR工作器被注释掉
 	llmStatus     WorkerStatus
 	ttsStatus     WorkerStatus
 	e2eStatus     WorkerStatus
 	prepostStatus WorkerStatus
-
-	// VAD客户端
-	vadClient *tool.VADLocal
 
 	// 共享状态
 	asrResult    string
@@ -94,50 +87,17 @@ func GetMessageProcessor() *MessageProcessor {
 			aiClient: ai.GetAIClient(),
 			ctx:      ctx,
 			cancel:   cancel,
-
 			// 初始化通道
-			vadInputChan:     make(chan WorkerMessage, 100),
-			asrInputChan:     make(chan WorkerMessage, 100),
+			// vadInputChan:     make(chan WorkerMessage, 100),
+			// asrInputChan:     make(chan WorkerMessage, 100),
 			llmInputChan:     make(chan WorkerMessage, 100),
 			ttsInputChan:     make(chan WorkerMessage, 100),
 			e2eInputChan:     make(chan WorkerMessage, 100),
 			prepostInputChan: make(chan WorkerMessage, 100),
 			outputChan:       make(chan interface{}, 1000),
 		}
-
-		// 初始化VAD客户端
-		messageProcessorInstance.initVADClient()
 	})
 	return messageProcessorInstance
-}
-
-// initVADClient 初始化VAD客户端
-func (mp *MessageProcessor) initVADClient() {
-	// 创建VADLocal客户端所需的参数
-	inputQueue := make(chan map[string]interface{}, 100)
-	prepostInputQueues := make(chan map[string]interface{}, 100)
-	asrIsStarted := false
-	asrLock := &sync.Mutex{}
-	outputClientQueue := make(chan map[string]interface{}, 100)
-	isProcessRunning := false
-	processTimer := time.Now()
-
-	// 创建Python包装器（CPython C-API，非 os/exec）
-	pythonWrapper := tool.NewPythonWrapper()
-
-	// 创建VADLocal客户端
-	mp.vadClient = tool.NewVADLocal(
-		inputQueue,
-		prepostInputQueues,
-		&asrIsStarted,
-		asrLock,
-		outputClientQueue,
-		&isProcessRunning,
-		&processTimer,
-		pythonWrapper,
-	)
-
-	logger.Log.Info("VAD客户端初始化完成")
 }
 
 // Start 启动消息处理器
@@ -149,10 +109,6 @@ func (mp *MessageProcessor) Start(chatID, userID string, sendCallback func(inter
 	mp.currentUserID = userID
 	mp.sendCallback = sendCallback
 	mp.isActive = true
-
-	// 注册默认的消息处理器
-	mp.registerDefaultHandlers()
-
 	// 启动所有工作线程
 	mp.startWorkers()
 
@@ -255,18 +211,6 @@ func (mp *MessageProcessor) handleTaskRequest(msg *protocol.Message) (map[string
 			"error":   "payload_msg is required",
 		}, nil
 	}
-
-	// 直接使用VAD客户端处理音频
-	if mp.vadClient != nil && mp.vadStatus.GetRunning() {
-		if audioData, ok := msg.Payload.([]byte); ok {
-			mp.vadClient.ProcessInput(audioData)
-		} else {
-			logger.Log.Warn("TaskRequest payload不是[]byte类型")
-		}
-	} else {
-		logger.Log.Warn("VAD客户端未启动或未初始化")
-	}
-
 	// 发送到E2E工作器
 	mp.e2eInputChan <- WorkerMessage{
 		Type: "input",
@@ -384,74 +328,6 @@ func (mp *MessageProcessor) handleChangeSystemPreset(msg *protocol.Message) (map
 	}, nil
 }
 
-// registerDefaultHandlers 注册默认的消息处理器
-func (mp *MessageProcessor) registerDefaultHandlers() {
-	// 处理文本消息
-	mp.handlers[fmt.Sprintf("%d", protocol.ClientEventSendMessage)] = mp.handleTextMessage
-
-	// 处理音频消息
-	mp.handlers[fmt.Sprintf("%d", protocol.ClientEventSendAudio)] = mp.handleAudioMessage
-}
-
-// handleTextMessage 处理文本消息
-func (mp *MessageProcessor) handleTextMessage(message interface{}) error {
-	msg, ok := message.(*protocol.Message)
-	if !ok {
-		return fmt.Errorf("无效的消息格式")
-	}
-
-	logger.Log.Infof("处理文本消息: %s", msg.Payload)
-
-	// 调用AI处理文本
-	go mp.processTextWithAI(msg.Payload)
-	return nil
-}
-
-// handleAudioMessage 处理音频消息
-func (mp *MessageProcessor) handleAudioMessage(message interface{}) error {
-	msg, ok := message.(*protocol.Message)
-	if !ok {
-		return fmt.Errorf("无效的消息格式")
-	}
-
-	logger.Log.Infof("处理音频消息: 长度=%d", len(msg.Payload.([]byte)))
-
-	// 直接使用VAD客户端处理音频
-	if mp.vadClient != nil && mp.vadStatus.GetRunning() {
-		mp.vadClient.ProcessInput(msg.Payload.([]byte))
-	} else {
-		logger.Log.Warn("VAD客户端未启动或未初始化")
-	}
-	return nil
-}
-
-// processTextWithAI 使用AI处理文本
-func (mp *MessageProcessor) processTextWithAI(payload interface{}) {
-	// 这里应该调用AI服务处理文本
-	// 暂时记录日志
-	logger.Log.Infof("AI处理文本: %v", payload)
-}
-
-// processAudioWithAI 使用AI处理音频 - 已移除，直接使用VADLocal客户端
-
-// RegisterHandler 注册自定义消息处理器
-func (mp *MessageProcessor) RegisterHandler(event string, handler MessageHandler) {
-	mp.mu.Lock()
-	defer mp.mu.Unlock()
-
-	mp.handlers[event] = handler
-	logger.Log.Infof("注册消息处理器: %s", event)
-}
-
-// UnregisterHandler 注销消息处理器
-func (mp *MessageProcessor) UnregisterHandler(event string) {
-	mp.mu.Lock()
-	defer mp.mu.Unlock()
-
-	delete(mp.handlers, event)
-	logger.Log.Infof("注销消息处理器: %s", event)
-}
-
 // GetStats 获取统计信息
 func (mp *MessageProcessor) GetStats() map[string]interface{} {
 	mp.mu.RLock()
@@ -461,8 +337,6 @@ func (mp *MessageProcessor) GetStats() map[string]interface{} {
 		"is_active":       mp.isActive,
 		"current_chat_id": mp.currentChatID,
 		"current_user_id": mp.currentUserID,
-		"handler_count":   len(mp.handlers),
-		"vad_running":     mp.vadStatus.GetRunning(),
 		// "asr_running":     mp.asrStatus.GetRunning(), // ASR工作器被注释掉
 		"llm_running":     mp.llmStatus.GetRunning(),
 		"tts_running":     mp.ttsStatus.GetRunning(),
@@ -478,15 +352,15 @@ func (mp *MessageProcessor) StartAllWorkers(chatID, userID string) error {
 	logger.Log.Infof("启动所有工作器: chat_id=%s, user_id=%s", chatID, userID)
 
 	// 启动VAD客户端
-	if mp.vadClient != nil {
-		success := mp.vadClient.Start(chatID, userID)
-		if success {
-			mp.vadStatus.SetRunning(true)
-			logger.Log.Info("VAD客户端启动成功")
-		} else {
-			logger.Log.Error("VAD客户端启动失败")
-		}
-	}
+	// if mp.vadClient != nil {
+	// 	success := mp.vadClient.Start(chatID, userID)
+	// 	if success {
+	// 		mp.vadStatus.SetRunning(true)
+	// 		logger.Log.Info("VAD客户端启动成功")
+	// 	} else {
+	// 		logger.Log.Error("VAD客户端启动失败")
+	// 	}
+	// }
 
 	// ASR工作器被注释掉，与Python版本保持一致
 	// mp.asrInputChan <- WorkerMessage{
@@ -538,9 +412,9 @@ func (mp *MessageProcessor) StartAllWorkers(chatID, userID string) error {
 	startTime := time.Now()
 
 	for time.Since(startTime) < timeout {
-		if mp.vadStatus.GetRunning() &&
-			// mp.asrStatus.GetRunning() && // ASR工作器被注释掉
-			mp.llmStatus.GetRunning() &&
+		// if mp.vadStatus.GetRunning() &&
+		// mp.asrStatus.GetRunning() && // ASR工作器被注释掉
+		if mp.llmStatus.GetRunning() &&
 			mp.ttsStatus.GetRunning() &&
 			mp.e2eStatus.GetRunning() &&
 			mp.prepostStatus.GetRunning() {
@@ -559,11 +433,11 @@ func (mp *MessageProcessor) StopAllWorkers() {
 	logger.Log.Info("停止所有工作器")
 
 	// 停止VAD客户端
-	if mp.vadClient != nil {
-		mp.vadClient.Cleanup()
-		mp.vadStatus.SetRunning(false)
-		logger.Log.Info("VAD客户端已停止")
-	}
+	// if mp.vadClient != nil {
+	// 	mp.vadClient.Cleanup()
+	// 	mp.vadStatus.SetRunning(false)
+	// 	logger.Log.Info("VAD客户端已停止")
+	// }
 
 	// ASR工作器被注释掉，与Python版本保持一致
 	// mp.asrInputChan <- WorkerMessage{Type: "stop", Data: nil}
@@ -585,9 +459,9 @@ func (mp *MessageProcessor) StopAllWorkers() {
 	startTime := time.Now()
 
 	for time.Since(startTime) < timeout {
-		if !mp.vadStatus.GetRunning() &&
-			// !mp.asrStatus.GetRunning() && // ASR工作器被注释掉
-			!mp.llmStatus.GetRunning() &&
+		// if !mp.vadStatus.GetRunning() &&
+		// !mp.asrStatus.GetRunning() && // ASR工作器被注释掉
+		if !mp.llmStatus.GetRunning() &&
 			!mp.ttsStatus.GetRunning() &&
 			!mp.e2eStatus.GetRunning() &&
 			!mp.prepostStatus.GetRunning() {
@@ -663,15 +537,15 @@ func (mp *MessageProcessor) startWorkers() {
 // sendWorkerStartMessages 发送启动消息给各个工作器
 func (mp *MessageProcessor) sendWorkerStartMessages() {
 	// 启动VAD客户端
-	if mp.vadClient != nil {
-		success := mp.vadClient.Start(mp.currentChatID, mp.currentUserID)
-		if success {
-			mp.vadStatus.SetRunning(true)
-			logger.Log.Info("VAD客户端启动成功")
-		} else {
-			logger.Log.Error("VAD客户端启动失败")
-		}
-	}
+	// if mp.vadClient != nil {
+	// 	success := mp.vadClient.Start(mp.currentChatID, mp.currentUserID)
+	// 	if success {
+	// 		mp.vadStatus.SetRunning(true)
+	// 		logger.Log.Info("VAD客户端启动成功")
+	// 	} else {
+	// 		logger.Log.Error("VAD客户端启动失败")
+	// 	}
+	// }
 
 	// 启动LLM工作器
 	mp.llmInputChan <- WorkerMessage{
