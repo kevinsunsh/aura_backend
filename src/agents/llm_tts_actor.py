@@ -153,14 +153,16 @@ class LLMTTSActor(pykka.ThreadingActor):
         """文本处理器回调（异步），透传到上层回调"""
         try:
             if message.get("event") == ServerEvent.ChatResponse:
-                if self.tts_client:
-                    self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
-                return
+                if self.llm_is_chat_started:
+                    await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""))
+                else:
+                    self.llm_is_chat_started = True
+                    await self.tts_client.send_text_chunk(message.get("payload_msg", {}).get("content", ""), start=True, end=False)
+            elif message.get("event") == ServerEvent.ChatResponseEnd:
+                self.llm_is_chat_started = False
+                await self.tts_client.send_text_chunk("", start=False, end=True)
             if self.output_callback:
-                # 允许上层是同步或异步
-                result = self.output_callback(message)
-                if asyncio.iscoroutine(result):
-                    await result
+                await self.output_callback(message)
         except Exception as e:
             logger.error(f"文本处理器回调失败: {e}")
 

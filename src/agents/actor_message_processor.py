@@ -171,18 +171,13 @@ class ActorMessageProcessor:
     def _handle_llm_tts_output(self, message):
         """处理LLM+TTS输出"""
         logger.debug(f"收到LLM+TTS输出: {message}")
-        if message.get("event") == ServerEvent.:
-            # E2E检测到语音开始
-            if not self.asr_is_started:
-                self.asr_is_started = True
-                logger.bind(tag="BASE").info("E2E检测到语音开始")
-                # 发送中断信号给其他Actor
-                self.llm_tts_actor.tell({"type": "interruption"})
-                # 发送ASRInfo事件到WebSocket
-                if self.websocket_send_callback:
-                    self.websocket_send_callback(message)
-            else:
-                logger.debug("E2E检测到语音开始，但ASR已开始")
+        if message.get("event") == ServerEvent.TTSSentenceStart:
+            if self.websocket_send_callback:
+                self.websocket_send_callback(message)
+        else:
+            if message.get("event") == ServerEvent.ChatEnded:
+                if self.prepost_actor:
+                    self.prepost_actor.tell({"type": "postprocess", "data": message.get("payload_msg", {})})
         elif message.get("event") == ServerEvent.ASREnded:
             # E2E检测到语音结束
             if self.asr_is_started:
