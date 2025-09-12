@@ -53,7 +53,6 @@ class LLMTTSActor(pykka.ThreadingActor):
         try:
             self.chat_id = data.get("chat_id")
             self.user_id = data.get("user_id")
-            self.session_id = f"{self.chat_id}_{self.user_id}"
             
             if not self.chat_id or not self.user_id:
                 return {"success": False, "error": "Missing chat_id or user_id"}
@@ -71,9 +70,10 @@ class LLMTTSActor(pykka.ThreadingActor):
                 tts_sentence_start_callback=self._on_tts_sentence_start,
                 tts_response_callback=self._on_tts_response,
                 tts_sentence_end_callback=self._on_tts_sentence_end,
-                tts_ended_callback=self._on_tts_ended,
-                session_id=self.session_id
+                tts_ended_callback=self._on_tts_ended
             )
+            # 启动TTS客户端
+            self._run_async(self.tts_client.start(self.chat_id, self.user_id))
             
             self.is_running = True
             
@@ -91,15 +91,11 @@ class LLMTTSActor(pykka.ThreadingActor):
             
             # 清理TTS客户端
             if self.tts_client:
-                # 这里应该调用cleanup，但TtsClient可能没有cleanup方法
-                # 我们可以在TtsClient中添加cleanup方法
-                pass
+                self._run_async(self.tts_client.cleanup())
             
             # 清理文本处理器
             if self.text_processor:
-                # 这里应该调用cleanup，但MessageProcessorText可能没有cleanup方法
-                # 我们可以在MessageProcessorText中添加cleanup方法
-                pass
+                self._run_async(self.text_processor.cleanup())
             
             logger.info("LLM+TTS Actor停止成功")
             return {"success": True}

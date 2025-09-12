@@ -11,6 +11,7 @@ import websockets
 import fastrand
 from utils.utils import start_performance_point, end_performance_point, safe_call
 from .doubao_config import tts_config, get_tts_payload_bytes
+import threading
 
 # 发送消息类型
 class SendMessageType(Enum):
@@ -166,7 +167,7 @@ class TtsClient:
         self.ws = None
         self.is_running = False
         self.session_id_str = None
-        self.session_id = session_id
+        # self.session_id = session_id
         self.connection_id = None
         self.connection_lost = False  # 新增：标记连接是否丢失
         self.need_reconnect = False
@@ -180,6 +181,10 @@ class TtsClient:
 
         # 性能指标
         self.message_loop = None
+        # 内部事件循环线程，确保接收循环稳定运行
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
         
     def _gen_log_id(self):
         """生成logID"""
@@ -264,7 +269,23 @@ class TtsClient:
             response.payload, offset = self._read_tts_payload(res, offset)
         
         return response
-    
+    async def _start_and_loop(self):
+        """在内部事件循环中启动并开启接收循环"""
+        try:
+            if self.message_loop is not None and self.message_loop.done() == False:
+                self.message_loop.cancel()
+                await self.message_loop
+            await self._connect()
+            self.message_loop = asyncio.create_task(self.message_receive_loop())
+        except Exception as e:
+            logger.error(f"内部循环启动TTS失败: {e}")
+            raise
+
+    def start_background(self, chat_id: str, user_id: str):
+        """在内部事件循环线程中启动TTS并保持接收循环持续运行"""
+        self.uid = user_id
+        self.chat_id = chat_id
+        return asyncio.run_coroutine_threadsafe(self._start_and_loop(), self._loop)
     async def _tts_start_connection(self, websocket):
         """TTS开始连接"""
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
@@ -303,7 +324,33 @@ class TtsClient:
         optional = TTSOptional(event=EVENT_FinishSession, sessionId=session_id).as_bytes()
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
-    
+    async def _cleanup_all(self):
+        """内部事件循环上的完整清理"""
+        try:
+            self.is_running = False
+            await self._cleanup_connection()
+            if self.message_loop:
+                self.message_loop.cancel()
+            logger.debug("TTS客户端已清理(内部循环)")
+        except Exception as e:
+            logger.error(f"内部循环清理TTS客户端时出错: {e}")
+
+    def cleanup_background(self):
+        """在内部事件循环线程中执行清理，并尝试停止内部事件循环"""
+        try:
+            fut = asyncio.run_coroutine_threadsafe(self._cleanup_all(), self._loop)
+            # 等待清理完成（短超时避免阻塞）
+            try:
+                fut.result(timeout=2)
+            except Exception:
+                pass
+            # 停止内部事件循环
+            if self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread.is_alive():
+                self._loop_thread.join(timeout=1)
+        except Exception as e:
+            logger.error(f"停止内部事件循环失败: {e}")
     async def _tts_cancel_session(self, ws, session_id):
         """TTS取消会话"""
         logger.bind(tag="TTS").info(f"===========TTS取消会话: {session_id}")
@@ -395,7 +442,7 @@ class TtsClient:
         
         # 开始会话
         self.session_id_str = str(uuid.uuid4()).replace('-', '')
-        self.session_id.value = self.session_id_str.encode('utf-8')
+        # self.session_id.value = self.session_id_str.encode('utf-8')
         await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
         res = self._parse_tts_response(await self.ws.recv())
         logger.bind(tag="TTS").info(f"TTS会话响应: event={res.optional.event}")
@@ -568,6 +615,8 @@ class TtsClient:
             logger.debug("TTS客户端已清理")
         except Exception as e:
             logger.error(f"清理TTS客户端时出错: {e}")
+
+    
     
     def is_connected(self) -> bool:
         """检查连接状态"""
