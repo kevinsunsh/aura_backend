@@ -5,6 +5,7 @@ from abc import ABC
 from loguru import logger
 from datetime import datetime
 import xml.etree.ElementTree as ET
+from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
 from agents.agent_memory.chat_stream import ChatStreamManager
 from agents.agent_memory.message_store import MessageStore, MessageModel
@@ -77,6 +78,8 @@ class MessagePreAndPostProcessor(ABC):
                 client.system_preset = SystemPresetManager().get_system_preset_by_name(msg["data"])
             elif isinstance(msg, dict) and msg.get("type") == "change_world_info_activate_keys":
                 client.world_info_scanner.set_activate_keys(msg["data"])
+            elif isinstance(msg, dict) and msg.get("type") == "char_status":
+                CharInstanceInfoManager().upsert_char_instance_info(client.user_info.user_id, client.chat_id, msg["data"])
             elif isinstance(msg, dict) and msg.get("type") == "preprocess":
                 if client.is_process_running.value:
                     logger.bind(tag="BASE").info("预处理用户输入")
