@@ -701,6 +701,8 @@ class MessageProcessor:
             self.prepost_input_queues.put({"type": "change_bot_name", "data": message_data.get("payload_msg", {}).get("bot_name", "")})
         elif message_data.get("event") == ClientEvent.ChangeSystemPreset:
             self.prepost_input_queues.put({"type": "change_system_preset", "data": message_data.get("payload_msg", {}).get("system_preset", "")})
+        elif message_data.get("event") == ClientEvent.CharStatus:
+            self.prepost_input_queues.put({"type": "char_status", "data": message_data.get("payload_msg", {}).get("char_status", "")})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     # async def send_asr_message(self):

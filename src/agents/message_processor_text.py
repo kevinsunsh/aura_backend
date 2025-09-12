@@ -9,7 +9,7 @@ from api_protocol.constant import *
 from typing import Dict, Any, Callable, List
 from agents.agent_memory.configuration.config import ChatModel
 from agents.agent_memory.configuration import get_chat_model_by_type
-from utils.ray_conversion import screen_to_ray_robust
+from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 
 class StreamingTagParser:
     def __init__(self, tag_callback=None):
@@ -227,86 +227,86 @@ class StreamingTagParser:
                 "status": "end"
             })
 
-interactivate_prompt = """
-根据用户看到的画面和想要采取的行动，通过点击来选择画面中最合适的交互目标。
+# interactivate_prompt = """
+# 根据用户看到的画面和想要采取的行动，通过点击来选择画面中最合适的交互目标。
 
-## Output Format
-```
-Thought: ...
-Action: ...
-```
+# ## Output Format
+# ```
+# Thought: ...
+# Action: ...
+# ```
 
-## Action Space
-click(point='<point>x y</point>')
+# ## Action Space
+# click(point='<point>x y</point>')
 
-## User Instruction
-Action:
-"""
+# ## User Instruction
+# Action:
+# """
 
-def handle_position(user_id:str, chat_id:str, action_str:str):
-    # chat_model = ChatModel(
-    #     model_name="doubao-1-5-ui-tars-250428",
-    #     api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
-    #     api_base="https://ark.cn-beijing.volces.com/api/v3",
-    #     model_provider="openai"
-    # )
-    # look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{chat_id}/view_data/look.jpg"
-    # messages = [{
-    #     "role": "system",
-    #     "content": interactivate_prompt
-    # }, {
-    #     "role": "user",
-    #     "content": [
-    #         {
-    #             "image_url":
-    #                 {
-    #                     "url": look_url
-    #                 },
-    #             "type":"image_url"
-    #         },
-    #         {
-    #             "text": "这是我看到的画面",
-    #             "type": "text"
-    #         }
-    #     ]
-    # }, {
-    #     "role": "user",
-    #     "content": f"这是我想要做的动作：{action_str}"
-    # }]
-    # response = chat_model.invoke(messages)
-    # print(f"{response.content}")
-    # response_text = response.content
-    # # 使用正则表达式提取point中的坐标
-    # point_pattern = r"click\(point='<point>(\d+)\s+(\d+)</point>'\)"
-    # match = re.search(point_pattern, response_text)
-    # if match:
-    #     x = int(match.group(1))
-    #     y = int(match.group(2))
-    #     print(f"提取到坐标: x={x}, y={y}")
-    #     # 可以使用这些坐标进行后续处理
-    #     coordinates = np.array([x, y])
-    #     print(f"坐标数组: {coordinates}")
-    # else:
-    #     print("未找到坐标信息")
-    # 下载并处理 cam.json 文件
-    scene_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{chat_id}/view_data/scene.json"
+# def handle_position(user_id:str, chat_id:str, action_str:str):
+#     # chat_model = ChatModel(
+#     #     model_name="doubao-1-5-ui-tars-250428",
+#     #     api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+#     #     api_base="https://ark.cn-beijing.volces.com/api/v3",
+#     #     model_provider="openai"
+#     # )
+#     # look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{chat_id}/view_data/look.jpg"
+#     # messages = [{
+#     #     "role": "system",
+#     #     "content": interactivate_prompt
+#     # }, {
+#     #     "role": "user",
+#     #     "content": [
+#     #         {
+#     #             "image_url":
+#     #                 {
+#     #                     "url": look_url
+#     #                 },
+#     #             "type":"image_url"
+#     #         },
+#     #         {
+#     #             "text": "这是我看到的画面",
+#     #             "type": "text"
+#     #         }
+#     #     ]
+#     # }, {
+#     #     "role": "user",
+#     #     "content": f"这是我想要做的动作：{action_str}"
+#     # }]
+#     # response = chat_model.invoke(messages)
+#     # print(f"{response.content}")
+#     # response_text = response.content
+#     # # 使用正则表达式提取point中的坐标
+#     # point_pattern = r"click\(point='<point>(\d+)\s+(\d+)</point>'\)"
+#     # match = re.search(point_pattern, response_text)
+#     # if match:
+#     #     x = int(match.group(1))
+#     #     y = int(match.group(2))
+#     #     print(f"提取到坐标: x={x}, y={y}")
+#     #     # 可以使用这些坐标进行后续处理
+#     #     coordinates = np.array([x, y])
+#     #     print(f"坐标数组: {coordinates}")
+#     # else:
+#     #     print("未找到坐标信息")
+#     # 下载并处理 cam.json 文件
+#     scene_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{chat_id}/view_data/scene.json"
     
-    try:
-        print(f"正在下载 scene.json 文件: {scene_url}")
-        # 下载JSON文件
-        response_scene = requests.get(scene_url, timeout=30)
-        response_scene.raise_for_status()
-        # 解析JSON数据
-        scene_data = response_scene.json()
-        print(f"scene.json 下载成功，包含 {len(scene_data)} 个键")
-        # 转换为numpy数组
-        return scene_data
-    except requests.exceptions.RequestException as e:
-        print(f"下载 scene.json 失败: {e}")
-    except json.JSONDecodeError as e:
-        print(f"解析 scene.json 失败: {e}")
-    except Exception as e:
-        print(f"处理 scene.json 时出错: {e}")
+#     try:
+#         print(f"正在下载 scene.json 文件: {scene_url}")
+#         # 下载JSON文件
+#         response_scene = requests.get(scene_url, timeout=30)
+#         response_scene.raise_for_status()
+#         # 解析JSON数据
+#         scene_data = response_scene.json()
+#         print(f"scene.json 下载成功，包含 {len(scene_data)} 个键")
+#         # 转换为numpy数组
+#         return scene_data
+#     except requests.exceptions.RequestException as e:
+#         print(f"下载 scene.json 失败: {e}")
+#     except json.JSONDecodeError as e:
+#         print(f"解析 scene.json 失败: {e}")
+#     except Exception as e:
+#         print(f"处理 scene.json 时出错: {e}")
 
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
@@ -383,6 +383,7 @@ class MessageProcessorText:
                         "func": matches[0][0] if matches[0][0] else "idle",
                         "target": matches[0][1] if matches[0][1] else "null"
                     }
+                    CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, {"action": {"current": result["func"], "target": result["target"]}})
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
                         "event": ServerEvent.ChatActionParams,
@@ -505,7 +506,6 @@ class MessageProcessorText:
     #                 "thread_id": f"streaming_{self.chat_id}"
     #             }
     #         }
-
     #         graph = muttering_graph_builder.compile()
     #         while True:
     #             async for event in graph.astream(input_data, thread, stream_mode=["updates"]):
