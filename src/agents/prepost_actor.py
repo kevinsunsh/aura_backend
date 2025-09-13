@@ -12,6 +12,7 @@ from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
 from agents.agent_memory.prompt_manager.scene_info.manager import DBManager as SceneInfoManager
 from agents.agent_memory.prompt_manager.character.manager import DBManager as CharacterManager
 from agents.agent_memory.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
+from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.prompt_manager.world_info.scanner import WorldInfoScanner
 from agents.agent_memory.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
 from agents.agent_memory.prompt_manager.utils import count_tokens_openai
@@ -61,6 +62,8 @@ class PrePostActor(pykka.ThreadingActor):
                 return self._change_system_preset(message.get("data"))
             elif msg_type == "change_world_info_activate_keys":
                 return self._change_world_info_keys(message.get("data"))
+            elif msg_type == "char_status":
+                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, message.get("data"))
             elif msg_type == "set_callback":
                 self.output_callback = message.get("callback")
                 return {"success": True}
@@ -366,51 +369,3 @@ class PrePostActor(pykka.ThreadingActor):
                         logger.bind(tag="TASK").info(f"忽略超时任务: {task.task_instance_id}")
         except Exception as e:
             logger.bind(tag="TASK").error(f"time_out_finished_tasks 任务解析异常: {e}")
-
-# 便捷函数
-def create_prepost_actor(output_callback):
-    """创建PrePost Actor的便捷函数"""
-    return PrePostActor.start(output_callback)
-
-def start_prepost_session(prepost_actor, chat_id, user_id):
-    """启动PrePost会话的便捷函数"""
-    return prepost_actor.ask({
-        "type": "start",
-        "data": {"chat_id": chat_id, "user_id": user_id}
-    }, timeout=5)
-
-def stop_prepost_session(prepost_actor):
-    """停止PrePost会话的便捷函数"""
-    return prepost_actor.ask({"type": "stop"}, timeout=5)
-
-def run_preprocess(prepost_actor):
-    """运行预处理的便捷函数"""
-    return prepost_actor.tell({"type": "preprocess"})
-
-def run_postprocess(prepost_actor, data):
-    """运行后处理的便捷函数"""
-    return prepost_actor.tell({"type": "postprocess", "data": data})
-
-def change_bot_name(prepost_actor, bot_name):
-    """更改机器人名称的便捷函数"""
-    return prepost_actor.tell({"type": "change_bot_name", "data": bot_name})
-
-def change_system_preset(prepost_actor, preset):
-    """更改系统预设的便捷函数"""
-    return prepost_actor.tell({"type": "change_system_preset", "data": preset})
-
-def change_world_info_keys(prepost_actor, keys):
-    """更改世界信息激活键的便捷函数"""
-    return prepost_actor.tell({"type": "change_world_info_activate_keys", "data": keys})
-
-def set_prepost_callback(prepost_actor, callback):
-    """设置PrePost回调的便捷函数"""
-    return prepost_actor.tell({"type": "set_callback", "callback": callback})
-
-def set_prepost_asr_result(prepost_actor, asr_result):
-    """设置PrePost ASR结果的便捷函数"""
-    return prepost_actor.tell({"type": "set_asr_result", "asr_result": asr_result})
-
-def set_prepost_process_timer(prepost_actor, timer):
-    """设置PrePost处理计时器的便捷函数"""
-    return prepost_actor.tell({"type": "set_process_timer", "timer": timer})

@@ -239,6 +239,11 @@ class ActorMessageProcessor:
                 "type": "change_system_preset",
                 "data": message_data.get("payload_msg", {}).get("system_preset", "")
             })
+        elif message_data.get("event") == ClientEvent.CharStatus:
+            self.prepost_actor.tell({
+                "type": "char_status",
+                "data": message_data.get("payload_msg", {}).get("char_status", "")
+            })
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     def start(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
