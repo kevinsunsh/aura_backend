@@ -10,6 +10,7 @@ from typing import Dict, Any, Callable, List
 from agents.agent_memory.configuration.config import ChatModel
 from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
+from agents.agent_memory.prompt_manager.scene_iteams.manager import DBManager as SceneItemEntryManager
 
 class StreamingTagParser:
     def __init__(self, tag_callback=None):
@@ -383,6 +384,9 @@ class MessageProcessorText:
                         "func": matches[0][0] if matches[0][0] else "idle",
                         "target": matches[0][1] if matches[0][1] else "null"
                     }
+                    if result["func"] == "move_to":
+                        result["func"] = "stand"
+                        result["position"] = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"]).get_world_pos().tolist()
                     CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, {"action": {"current": result["func"], "target": result["target"]}})
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
