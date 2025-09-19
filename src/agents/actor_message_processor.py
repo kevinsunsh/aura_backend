@@ -155,6 +155,8 @@ class ActorMessageProcessor:
                     self.tts_actor.tell({"type": "send_text_chunk", "text": content, "start": False, "end": False})
             elif message.get("event") == ServerEvent.ChatResponseEnd:
                 self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
+            elif message.get("event") == ServerEvent.ChatEnded:
+                self.prepost_actor.tell({"type": "postprocess", "data": message.get("payload_msg", {})})
             # 透传到前端
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)

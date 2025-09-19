@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy import null
 from api_protocol.constant import *
 from typing import Dict, Any, Callable, List
-from agents.agent_memory.configuration.config import ChatModel
+from agents.agent_memory.configuration.config import ChatModel, EmbeddingModel
 from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.prompt_manager.scene_iteams.manager import DBManager as SceneItemEntryManager
@@ -394,7 +394,16 @@ class MessageProcessorText:
                                 result["position"] = item.get_world_pos().tolist()
                             result["func"] = "stand"
                         else:
-                            result["func"] = "idle"
+                            embedding_model = EmbeddingModel(
+                                model_name="doubao-embedding-large-text-250515",
+                                api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+                                api_base="https://ark.cn-beijing.volces.com/api/v3",
+                            )
+                            desc_vec = embedding_model.embed(result["target"])
+                            item = SceneItemEntryManager().search_items_by_description_vector("d8943faa-bf00-481b-95af-c73bd04c1eb7", desc_vec, top_k=1)
+                            result["position"] = item.get_world_pos().tolist()
+                            result["target"] = item.item_id
+                            result["func"] = "stand"
                     else:
                         item = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"])
                         if item:
@@ -557,8 +566,8 @@ class MessageProcessorText:
     #         logger.error(f"自言自语任务处理失败: chat_id={self.chat_id}, error={str(e)}")
     async def _replying_response_task(self, prompts: list[dict]):
         try:
-            # for prompt in prompts:
-            #     logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
+            for prompt in prompts:
+                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             # 使用LLM生成立即回复
             # chat_model = get_chat_model_by_type("pfc_action_planner")
             # logger.bind(tag="DELAY").debug(f"get model delay: {int((datetime.now().timestamp() - self.process_timer.value) * 1000)}ms")
