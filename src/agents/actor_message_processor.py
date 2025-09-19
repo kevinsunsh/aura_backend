@@ -89,9 +89,7 @@ class ActorMessageProcessor:
                 self.asr_is_started = False
                 self.process_timer = time.time()
                 logger.bind(tag="BASE").info("VAD检测到语音结束")
-                # 同步处理计时器到PrePost
-                if self.prepost_actor:
-                    self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
                 # 发送预处理信号
                 self.prepost_actor.tell({"type": "preprocess"})
                 # 发送ASREnded事件到WebSocket
@@ -122,9 +120,7 @@ class ActorMessageProcessor:
                 self.asr_is_started = False
                 self.process_timer = time.time()
                 logger.bind(tag="BASE").info("E2E检测到语音结束")
-                # 同步处理计时器到PrePost
-                if self.prepost_actor:
-                    self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
                 # 发送预处理信号
                 self.prepost_actor.tell({"type": "preprocess"})
                 # 发送ASREnded事件到WebSocket
@@ -191,6 +187,7 @@ class ActorMessageProcessor:
             prompts = message.get("prompts")
             if prompts and self.llm_actor:
                 prompts.append({"role": "user", "content": self.asr_result})
+                self.llm_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
                 self.llm_actor.tell({"type": "run", "data": prompts})
     
     def handle_message(self, message_data: Dict[str, Any]):
@@ -206,7 +203,7 @@ class ActorMessageProcessor:
                 self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
             # 触发预处理
             self.prepost_actor.tell({"type": "preprocess"})
-            logger.info("处理SayHello消息")
+            logger.bind(tag="BASE").info("处理SayHello消息")
         elif message_data.get("event") == ClientEvent.TaskRequest:
             if "payload_msg" in message_data and message_data["payload_msg"]:
                 payload_msg = message_data["payload_msg"]
@@ -221,9 +218,9 @@ class ActorMessageProcessor:
                 self.asr_is_started = False
                 self.prepost_actor.tell({"type": "preprocess"})
                 self.process_timer = time.time()
-                logger.info("处理SpeakEnded消息")
+                logger.bind(tag="BASE").info("处理SpeakEnded消息")
             else:
-                logger.info("SpeakEnded，但ASR未开始")
+                logger.bind(tag="BASE").info("SpeakEnded，但ASR未开始")
         elif message_data.get("event") == ClientEvent.WorldInfoActivateKeys:
             self.prepost_actor.tell({
                 "type": "change_world_info_activate_keys",

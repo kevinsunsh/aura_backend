@@ -5,6 +5,8 @@ import requests
 import numpy as np
 from loguru import logger
 from datetime import datetime
+
+from sqlalchemy import null
 from api_protocol.constant import *
 from typing import Dict, Any, Callable, List
 from agents.agent_memory.configuration.config import ChatModel
@@ -384,10 +386,26 @@ class MessageProcessorText:
                         "func": matches[0][0] if matches[0][0] else "idle",
                         "target": matches[0][1] if matches[0][1] else "null"
                     }
-                    if result["func"] == "move_to":
-                        result["func"] = "stand"
-                        result["position"] = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"]).get_world_pos().tolist()
+                    if result["func"] not in ["sit", "stand", "idle", "take", "turn"]:
+                        item = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"])
+                        if item:
+                            logger.bind(tag="BASE").info(f"item: {item.item_name}")
+                            if item.item_name != "":
+                                result["position"] = item.get_world_pos().tolist()
+                            result["func"] = "stand"
+                        else:
+                            result["func"] = "idle"
+                    else:
+                        item = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"])
+                        if item:
+                            logger.bind(tag="BASE").info(f"item: {item.item_name}")
+                            if item.item_name != "":
+                                result["func"] = "stand"
+                                result["position"] = item.get_world_pos().tolist()
+                        else:
+                            result["func"] = "idle"
                     CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, {"action": {"current": result["func"], "target": result["target"]}})
+                logger.bind(tag="BASE").info(f"action result: {result}")
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({
                         "event": ServerEvent.ChatActionParams,
@@ -575,6 +593,7 @@ class MessageProcessorText:
             logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
             async for chunk in chat_model.astream(prompts, extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
+                    # logger.bind(tag="BASE").info(f"chunk: {chunk.content}")
                     if self.is_interruption:
                         logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
                         break
@@ -595,9 +614,9 @@ class MessageProcessorText:
                 })
             logger.bind(tag="TASK").info(f"final_response: {final_response}, request_tasks: {self.request_tasks}, dismiss_tasks: {self.dismiss_tasks}")
         except asyncio.CancelledError:
-            logger.info(f"回复任务被取消: chat_id={self.chat_id}")
+            logger.bind(tag="BASE").info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:
-            logger.error(f"生成被动回复时出错: {str(e)}")
+            logger.bind(tag="BASE").info(f"生成被动回复时出错: {str(e)}")
     
     # async def _replying_response_task(self):
     #     """回复任务"""

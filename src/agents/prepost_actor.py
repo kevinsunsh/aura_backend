@@ -219,7 +219,7 @@ class PrePostActor(pykka.ThreadingActor):
     def _change_bot_name(self, bot_name):
         """更改机器人名称"""
         try:
-            logger.info(f"更改机器人名称为: {bot_name}")
+            logger.bind(tag="BASE").info(f"更改机器人名称为: {bot_name}")
             if bot_name:
                 self.bot_name = bot_name
                 # 同步角色信息（若存在同名角色）

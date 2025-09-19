@@ -15,7 +15,6 @@ class LLMActor(pykka.ThreadingActor):
         self.is_running = False
         self.chat_id = None
         self.user_id = None
-        self.process_timer = time.time()
         self.text_processor: MessageProcessorText | None = None
 
     def on_receive(self, message):
@@ -31,7 +30,7 @@ class LLMActor(pykka.ThreadingActor):
                 self.output_callback = message.get("callback")
                 return {"success": True}
             elif msg_type == "set_process_timer":
-                self.process_timer = message.get("timer", 0)
+                self.text_processor.process_timer = message.get("timer", 0)
                 return {"success": True}
             else:
                 return {"error": f"Unknown message type: {msg_type}"}
@@ -46,8 +45,7 @@ class LLMActor(pykka.ThreadingActor):
             if not self.chat_id or not self.user_id:
                 return {"success": False, "error": "Missing chat_id or user_id"}
             self.text_processor = MessageProcessorText(
-                websocket_send_callback=self._text_processor_callback,
-                process_timer=self.process_timer,
+                websocket_send_callback=self._text_processor_callback
             )
             self._run_async(self.text_processor.start(self.chat_id, self.user_id))
             self.is_running = True
