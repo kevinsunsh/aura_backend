@@ -403,7 +403,12 @@ class MessageProcessorText:
                                 result["func"] = "stand"
                                 result["position"] = item.get_world_pos().tolist()
                         else:
-                            result["func"] = "idle"
+                            item = SceneItemEntryManager().get_scene_item_by_action("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["func"])
+                            if item:
+                                logger.bind(tag="BASE").info(f"item: {item.item_name}")
+                                result["target"] = item.item_id
+                            else:
+                                result["func"] = "idle"
                     CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, {"action": {"current": result["func"], "target": result["target"]}})
                 logger.bind(tag="BASE").info(f"action result: {result}")
                 if self.websocket_send_callback:
