@@ -58,6 +58,8 @@ class PrePostActor(pykka.ThreadingActor):
                 return self._postprocess(message.get("data"))
             elif msg_type == "change_bot_name":
                 return self._change_bot_name(message.get("data"))
+            elif msg_type == "change_scene_name":
+                return self._change_scene_name(message.get("data"))
             elif msg_type == "change_system_preset":
                 return self._change_system_preset(message.get("data"))
             elif msg_type == "change_world_info_activate_keys":
@@ -231,6 +233,18 @@ class PrePostActor(pykka.ThreadingActor):
             
         except Exception as e:
             logger.error(f"更改机器人名称失败: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _change_scene_name(self, scene_name):
+        """更改场景名称"""
+        try:
+            logger.bind(tag="BASE").info(f"更改场景名称为: {scene_name}")
+            if scene_name:
+                scene_info = SceneInfoManager().get_scene_info_by_scene_name(scene_name)
+                UserInfoManager().update_user_info(self.user_id, {"current_scene_id": scene_info.scene_id})
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"更改场景名称失败: {e}")
             return {"success": False, "error": str(e)}
     
     def _change_system_preset(self, preset):

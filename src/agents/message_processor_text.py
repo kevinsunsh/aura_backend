@@ -13,6 +13,7 @@ from agents.agent_memory.configuration.config import ChatModel, EmbeddingModel
 from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.prompt_manager.scene_iteams.manager import DBManager as SceneItemEntryManager
+from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
 
 class StreamingTagParser:
     def __init__(self, tag_callback=None):
@@ -319,6 +320,7 @@ class MessageProcessorText:
                  process_timer: Any = None):
         self.chat_id = None
         self.user_id = None
+        self.scene_id = None
         self.websocket_send_callback = websocket_send_callback
         self.process_timer = process_timer
         self.parser = StreamingTagParser(tag_callback=self.tag_callback)
@@ -375,6 +377,9 @@ class MessageProcessorText:
         elif payload["tag"] == "action":
             if payload["status"] == "start":
                 # self.action_content = payload['attributes']['attribute'] + ":"
+                self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
+                # 用户可切换场景，这里以用户当前场景为准
+                current_scene_id = self.user_info.current_scene_id if self.user_info and getattr(self.user_info, "current_scene_id", None) else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
                 pattern = r'(\w+)\(([^)]+)\)'
                 matches = re.findall(pattern, payload['attributes']['attribute'])
                 result = {
@@ -387,12 +392,13 @@ class MessageProcessorText:
                         "target": matches[0][1] if matches[0][1] else "null"
                     }
                     if result["func"] not in ["sit", "stand", "idle", "take", "turn"]:
-                        item = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"])
+                        item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
                         if item:
-                            logger.bind(tag="BASE").info(f"item: {item.item_name}")
-                            if item.item_name != "":
+                            logger.bind(tag="BASE").info(f"item: {item.item_type}")
+                            if item.item_type != "":
                                 result["position"] = item.get_world_pos().tolist()
                             result["func"] = "stand"
+                            result["name"] = item.item_name
                         else:
                             embedding_model = EmbeddingModel(
                                 model_name="doubao-embedding-large-text-250515",
@@ -400,22 +406,25 @@ class MessageProcessorText:
                                 api_base="https://ark.cn-beijing.volces.com/api/v3",
                             )
                             desc_vec = embedding_model.embed(result["target"])
-                            item = SceneItemEntryManager().search_items_by_description_vector("d8943faa-bf00-481b-95af-c73bd04c1eb7", desc_vec, top_k=1)
-                            result["position"] = item.get_world_pos().tolist()
-                            result["target"] = item.item_id
+                            items = SceneItemEntryManager().search_items_by_description_vector(current_scene_id, desc_vec, top_k=1)
+                            result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], items[0]["world_pos_z"]]
+                            result["target"] = items[0]["item_id"]
+                            result["name"] = items[0]["item_name"]
                             result["func"] = "stand"
                     else:
-                        item = SceneItemEntryManager().get_scene_item_by_id("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["target"])
+                        item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
                         if item:
-                            logger.bind(tag="BASE").info(f"item: {item.item_name}")
-                            if item.item_name != "":
+                            logger.bind(tag="BASE").info(f"item type: {item.item_type}")
+                            if item.item_type != "":
                                 result["func"] = "stand"
                                 result["position"] = item.get_world_pos().tolist()
+                                result["name"] = item.item_name
                         else:
-                            item = SceneItemEntryManager().get_scene_item_by_action("d8943faa-bf00-481b-95af-c73bd04c1eb7", result["func"])
+                            item = SceneItemEntryManager().get_scene_item_by_action(current_scene_id, result["func"])
                             if item:
-                                logger.bind(tag="BASE").info(f"item: {item.item_name}")
+                                logger.bind(tag="BASE").info(f"item: {item.item_type}")
                                 result["target"] = item.item_id
+                                result["name"] = item.item_name
                             else:
                                 result["func"] = "idle"
                     CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, {"action": {"current": result["func"], "target": result["target"]}})

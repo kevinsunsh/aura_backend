@@ -228,6 +228,16 @@ class ActorMessageProcessor:
                 "type": "change_world_info_activate_keys",
                 "data": message_data.get("payload_msg", {}).get("activate_keys", [])
             })
+            if len(message_data.get("payload_msg", {}).get("activate_keys", [])) > 0:
+                self.prepost_actor.tell({
+                    "type": "change_world_info_activate_keys",
+                    "data": message_data.get("payload_msg", {}).get("activate_keys", [])
+                })
+            if len(message_data.get("payload_msg", {}).get("scene_name", "")) > 0:
+                self.prepost_actor.tell({
+                    "type": "change_scene_name",
+                    "data": message_data.get("payload_msg", {}).get("scene_name", "")
+                })
         elif message_data.get("event") == ClientEvent.ChangeBotID:
             self.prepost_actor.tell({
                 "type": "change_bot_name",
