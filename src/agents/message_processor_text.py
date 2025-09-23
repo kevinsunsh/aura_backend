@@ -407,10 +407,18 @@ class MessageProcessorText:
                             )
                             desc_vec = embedding_model.embed(result["target"])
                             items = SceneItemEntryManager().search_items_by_description_vector(current_scene_id, desc_vec, top_k=1)
-                            result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], items[0]["world_pos_z"]]
-                            result["target"] = items[0]["item_id"]
-                            result["name"] = items[0]["item_name"]
-                            result["func"] = "stand"
+                            if len(items) > 0:
+                                result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], items[0]["world_pos_z"]]
+                                result["target"] = items[0]["item_id"]
+                                result["name"] = items[0]["item_name"]
+                                result["func"] = "stand"
+                            else:
+                                items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
+                                if len(items) > 0:
+                                    result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], items[0]["world_pos_z"]]
+                                    result["target"] = items[0]["item_id"]
+                                    result["name"] = items[0]["item_name"]
+                                    result["func"] = "stand"
                     else:
                         item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
                         if item:
