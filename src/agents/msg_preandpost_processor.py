@@ -61,7 +61,9 @@ class MessagePreAndPostProcessor(ABC):
                 client.chat_id = msg["data"]["chat_id"]
                 client.user_id = msg["data"]["user_id"]
                 client.user_info = UserInfoManager().get_user_info_by_user_id(client.user_id)
-                client.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(client.user_info.current_scene_id)
+                char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(client.user_id, client.chat_id)
+                current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7")
+                client.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
                 client.character = CharacterManager().get_character_by_id(client.current_scene_info.activated_char_id)
                 client.bot_name = client.character.name
                 client.world_info_scanner.set_activate_keys(client.current_scene_info.activated_world_book_keys)
@@ -79,7 +81,10 @@ class MessagePreAndPostProcessor(ABC):
             elif isinstance(msg, dict) and msg.get("type") == "change_world_info_activate_keys":
                 client.world_info_scanner.set_activate_keys(msg["data"])
             elif isinstance(msg, dict) and msg.get("type") == "char_status":
-                CharInstanceInfoManager().upsert_char_instance_info(client.user_info.user_id, client.chat_id, msg["data"])
+                action = msg["data"].get("action", {})
+                view_matrix = msg["data"].get("view_matrix", [])
+                proj_matrix = msg["data"].get("projection_matrix", [])
+                CharInstanceInfoManager().upsert_char_instance_info(client.user_info.user_id, client.chat_id, char_status={"action": action}, view_matrix=view_matrix, projection_matrix=proj_matrix)
             elif isinstance(msg, dict) and msg.get("type") == "preprocess":
                 if client.is_process_running.value:
                     logger.bind(tag="BASE").info("预处理用户输入")

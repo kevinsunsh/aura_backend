@@ -377,9 +377,11 @@ class MessageProcessorText:
         elif payload["tag"] == "action":
             if payload["status"] == "start":
                 # self.action_content = payload['attributes']['attribute'] + ":"
-                self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
+                # self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
+                char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
+                current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7")
                 # 用户可切换场景，这里以用户当前场景为准
-                current_scene_id = self.user_info.current_scene_id if self.user_info and getattr(self.user_info, "current_scene_id", None) else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
+                # current_scene_id = self.user_info.current_scene_id if self.user_info and getattr(self.user_info, "current_scene_id", None) else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
                 pattern = r'(\w+)\(([^)]+)\)'
                 matches = re.findall(pattern, payload['attributes']['attribute'])
                 result = {
@@ -391,51 +393,59 @@ class MessageProcessorText:
                         "func": matches[0][0] if matches[0][0] else "idle",
                         "target": matches[0][1] if matches[0][1] else "null"
                     }
-                    if result["func"] not in ["sit", "stand", "idle", "take", "turn"]:
-                        item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
-                        if item:
-                            logger.bind(tag="BASE").info(f"item: {item.item_type}")
-                            if item.item_type != "":
-                                result["position"] = item.get_world_pos().tolist()
-                            result["func"] = "stand"
-                            result["name"] = item.item_name
+                    # if result["func"] not in ["sit", "stand", "idle", "take", "turn"]:
+                    item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
+                    if item:
+                        logger.bind(tag="BASE").info(f"item: {item.item_type}")
+                        if item.item_type != "":
+                            result["position"] = item.get_world_pos().tolist()
+                            result["position"][2] = 0.5
+                        result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+                        result["name"] = item.item_name
+                        result["label"] = item.label_name
+                    else:
+                        embedding_model = EmbeddingModel(
+                            model_name="doubao-embedding-large-text-250515",
+                            api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+                            api_base="https://ark.cn-beijing.volces.com/api/v3",
+                        )
+                        desc_vec = embedding_model.embed(result["target"])
+                        items = SceneItemEntryManager().search_items_by_description_vector(current_scene_id, desc_vec, top_k=1)
+                        if len(items) > 0:
+                            result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
+                            result["target"] = items[0]["item_id"]
+                            result["name"] = items[0]["item_name"]
+                            result["label"] = items[0]["label_name"]
+                            result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                         else:
-                            embedding_model = EmbeddingModel(
-                                model_name="doubao-embedding-large-text-250515",
-                                api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
-                                api_base="https://ark.cn-beijing.volces.com/api/v3",
-                            )
-                            desc_vec = embedding_model.embed(result["target"])
-                            items = SceneItemEntryManager().search_items_by_description_vector(current_scene_id, desc_vec, top_k=1)
+                            items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
                             if len(items) > 0:
-                                result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], items[0]["world_pos_z"]]
+                                result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
                                 result["target"] = items[0]["item_id"]
                                 result["name"] = items[0]["item_name"]
-                                result["func"] = "stand"
-                            else:
-                                items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
-                                if len(items) > 0:
-                                    result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], items[0]["world_pos_z"]]
-                                    result["target"] = items[0]["item_id"]
-                                    result["name"] = items[0]["item_name"]
-                                    result["func"] = "stand"
-                    else:
-                        item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
-                        if item:
-                            logger.bind(tag="BASE").info(f"item type: {item.item_type}")
-                            if item.item_type != "":
-                                result["func"] = "stand"
-                                result["position"] = item.get_world_pos().tolist()
-                                result["name"] = item.item_name
-                        else:
-                            item = SceneItemEntryManager().get_scene_item_by_action(current_scene_id, result["func"])
-                            if item:
-                                logger.bind(tag="BASE").info(f"item: {item.item_type}")
-                                result["target"] = item.item_id
-                                result["name"] = item.item_name
-                            else:
-                                result["func"] = "idle"
-                    CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, {"action": {"current": result["func"], "target": result["target"]}})
+                                result["label"] = items[0]["label_name"]
+                                result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+                    # else:
+                    #     item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
+                    #     if item:
+                    #         logger.bind(tag="BASE").info(f"item type: {item.item_type}")
+                    #         if item.item_type != "":
+                    #             result["func"] = "stand"
+                    #             result["position"] = item.get_world_pos().tolist()
+                    #             result["position"][2] = 0.5
+                    #             result["name"] = item.item_name
+                    #             result["label"] = item.label_name
+                    #     else:
+                    #         item = SceneItemEntryManager().get_scene_item_by_action(current_scene_id, result["func"])
+                    #         if item:
+                    #             logger.bind(tag="BASE").info(f"item: {item.item_type}")
+                    #             result["target"] = item.item_id
+                    #             result["name"] = item.item_name
+                    #             result["label"] = item.label_name
+                    #         else:
+                    #             result["func"] = "idle"
+                    char_status = {"action": {"current": result["func"], "target": result["target"]}}
+                    CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status)
                 logger.bind(tag="BASE").info(f"action result: {result}")
                 if self.websocket_send_callback:
                     await self.websocket_send_callback({

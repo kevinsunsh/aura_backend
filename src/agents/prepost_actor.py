@@ -65,7 +65,7 @@ class PrePostActor(pykka.ThreadingActor):
             elif msg_type == "change_world_info_activate_keys":
                 return self._change_world_info_keys(message.get("data"))
             elif msg_type == "char_status":
-                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, message.get("data"))
+                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status={"action": message.get("data").get("action", {})})
             elif msg_type == "set_callback":
                 self.output_callback = message.get("callback")
                 return {"success": True}
@@ -94,7 +94,8 @@ class PrePostActor(pykka.ThreadingActor):
             # 初始化运行期上下文（对齐 msg_preandpost_processor）
             self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
             # 用户可切换场景，这里以用户当前场景为准
-            current_scene_id = self.user_info.current_scene_id if self.user_info and getattr(self.user_info, "current_scene_id", None) else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
+            char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
+            current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7")
             self.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
             self.character = CharacterManager().get_character_by_id(self.current_scene_info.activated_char_id)
             self.bot_name = self.character.name
@@ -241,7 +242,7 @@ class PrePostActor(pykka.ThreadingActor):
             logger.bind(tag="BASE").info(f"更改场景名称为: {scene_name}")
             if scene_name:
                 scene_info = SceneInfoManager().get_scene_info_by_scene_name(scene_name)
-                UserInfoManager().update_user_info(self.user_id, {"current_scene_id": scene_info.scene_id})
+                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, current_scene_id=scene_info.scene_id)
             return {"success": True}
         except Exception as e:
             logger.error(f"更改场景名称失败: {e}")
