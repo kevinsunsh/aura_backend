@@ -379,7 +379,7 @@ class MessageProcessorText:
                 # self.action_content = payload['attributes']['attribute'] + ":"
                 # self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
                 char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
-                current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7")
+                current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7") if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
                 # 用户可切换场景，这里以用户当前场景为准
                 # current_scene_id = self.user_info.current_scene_id if self.user_info and getattr(self.user_info, "current_scene_id", None) else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
                 pattern = r'(\w+)\(([^)]+)\)'

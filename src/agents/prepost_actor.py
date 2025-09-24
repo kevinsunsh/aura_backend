@@ -95,7 +95,7 @@ class PrePostActor(pykka.ThreadingActor):
             self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
             # 用户可切换场景，这里以用户当前场景为准
             char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
-            current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7")
+            current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7") if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
             self.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
             self.character = CharacterManager().get_character_by_id(self.current_scene_info.activated_char_id)
             self.bot_name = self.character.name
