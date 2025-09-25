@@ -14,6 +14,7 @@ from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.prompt_manager.scene_iteams.manager import DBManager as SceneItemEntryManager
 from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
+from utils.utils import safe_call
 
 class StreamingTagParser:
     def __init__(self, tag_callback=None):
@@ -332,7 +333,7 @@ class MessageProcessorText:
         if payload["tag"] == "speak":
             if payload["status"] == "start":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatResponseParams,
                         "payload_msg": {
                             "params": payload["attributes"]
@@ -341,7 +342,7 @@ class MessageProcessorText:
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
                     content = payload["content"].replace('\n', '').replace('\r', '')
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatResponse,
                         "payload_msg": {
                             "content": content
@@ -349,13 +350,13 @@ class MessageProcessorText:
                     })
             elif payload["status"] == "end":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatResponseEnd,
                     })
         elif payload["tag"] == "scene":
             if payload["status"] == "start":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatEnvDescParams,
                         "payload_msg": {
                             "params": payload["attributes"]
@@ -363,7 +364,7 @@ class MessageProcessorText:
                     })
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatEnvDesc,
                         "payload_msg": {
                             "content": payload["content"]
@@ -371,7 +372,7 @@ class MessageProcessorText:
                     })
             elif payload["status"] == "end":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatEnvDescEnd,
                     })
         elif payload["tag"] == "action":
@@ -453,7 +454,7 @@ class MessageProcessorText:
                     CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status, view_matrix=view_matrix, projection_matrix=projection_matrix, current_scene_id=scene_id)
                 logger.bind(tag="BASE").info(f"action result: {result}")
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatActionParams,
                         "payload_msg": {
                             "params": {
@@ -464,7 +465,7 @@ class MessageProcessorText:
             elif payload["status"] == "streaming":
                 # self.action_content = self.action_content + payload['content']
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatAction,
                         "payload_msg": {
                             "content": payload["content"]
@@ -492,13 +493,13 @@ class MessageProcessorText:
                     #         "content": actions[1]
                     #     }
                     # })
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatActionEnd
                     })
         elif payload["tag"] == "psych":
             if payload["status"] == "start":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatEmotionParams,
                         "payload_msg": {
                             "params": payload["attributes"]
@@ -506,7 +507,7 @@ class MessageProcessorText:
                     })
             elif payload["status"] == "streaming":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatEmotion,
                         "payload_msg": {
                             "content": payload["content"]
@@ -514,7 +515,7 @@ class MessageProcessorText:
                     })
             elif payload["status"] == "end":
                 if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                    await safe_call(self.websocket_send_callback, {
                         "event": ServerEvent.ChatEmotionEnd,
                     })
         elif payload["tag"] == "request_task":
@@ -650,7 +651,7 @@ class MessageProcessorText:
                     await self.parser.feed(chunk.content)
             await self.parser.end()
             if self.websocket_send_callback:
-                await self.websocket_send_callback({
+                await safe_call(self.websocket_send_callback, {
                     "event": ServerEvent.ChatEnded,
                     "payload_msg": {
                         "content": final_response,

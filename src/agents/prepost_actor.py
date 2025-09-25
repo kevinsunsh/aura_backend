@@ -56,6 +56,8 @@ class PrePostActor(pykka.ThreadingActor):
                 return self._preprocess()
             elif msg_type == "postprocess":
                 return self._postprocess(message.get("data"))
+            elif msg_type == "add_action_message":
+                return self._add_action_message(message.get("data"))
             elif msg_type == "change_bot_name":
                 return self._change_bot_name(message.get("data"))
             elif msg_type == "change_scene_name":
@@ -118,12 +120,10 @@ class PrePostActor(pykka.ThreadingActor):
             self.world_info_scanner = WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids)
             # 激活世界书关键词
             self.world_info_scanner.set_activate_keys(self.current_scene_info.activated_world_book_keys)
-            
             self.is_running = True
             
-            logger.info(f"PrePost Actor启动成功: chat_id={self.chat_id}, user_id={self.user_id}")
+            logger.bind(tag="BASE").info(f"PrePost Actor启动成功: chat_id={self.chat_id}, user_id={self.user_id}")
             return {"success": True}
-            
         except Exception as e:
             logger.error(f"PrePost Actor启动失败: {e}")
             return {"success": False, "error": str(e)}
@@ -251,6 +251,32 @@ class PrePostActor(pykka.ThreadingActor):
             
         except Exception as e:
             logger.error(f"后处理失败: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _add_action_message(self, data):
+        """执行后处理"""
+        if not self.is_running:
+            return {"success": False, "error": "PrePost Actor未运行"}
+        
+        try:
+            bot_response = data or {}
+            content = bot_response.get("content", "")
+            tokens = count_tokens_openai(content)
+            message = MessageModel(
+                msg_id=str(uuid.uuid4()),
+                chat_id=self.chat_id,
+                user_id=self.bot_name or "assistant",
+                platform="default",
+                role="assistant",
+                m_type="action",
+                content=content,
+                tokens=tokens,
+                data={},
+                created_at=int(datetime.now().timestamp() * 1000)
+            )
+            MessageStore.get_instance().add_message(message)
+        except Exception as e:
+            logger.error(f"添加动作消息失败: {e}")
             return {"success": False, "error": str(e)}
     
     def _change_bot_name(self, bot_name):

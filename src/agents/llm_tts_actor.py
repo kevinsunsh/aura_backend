@@ -157,6 +157,9 @@ class LLMTTSActor(pykka.ThreadingActor):
             elif message.get("event") == ServerEvent.ChatResponseEnd:
                 self.llm_is_chat_started = False
                 await self.tts_client.send_text_chunk("", start=False, end=True)
+            elif message.get("event") == ServerEvent.ChatEnded:
+                self.llm_is_chat_started = False
+                await self.tts_client.send_text_chunk("", start=False, end=True)
             if self.output_callback:
                 await self.output_callback(message)
         except Exception as e:

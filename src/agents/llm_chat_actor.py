@@ -7,6 +7,7 @@ from typing import Optional, Callable, Dict, Any
 from api_protocol.constant import *
 from .message_processor_text import StreamingTagParser
 from agents.agent_memory.configuration import get_chat_model_by_type
+from utils.utils import safe_call
 
 class LLMChatActor(pykka.ThreadingActor):
     """仅负责文本处理（LLM）的 Actor"""
@@ -19,7 +20,8 @@ class LLMChatActor(pykka.ThreadingActor):
         self.user_id = None
         self.parser = StreamingTagParser(tag_callback=self.tag_callback)
         self.process_timer = 0
-    
+        self.is_interruption = False
+
     def on_receive(self, message):
         try:
             msg_type = message.get("type")
@@ -79,7 +81,7 @@ class LLMChatActor(pykka.ThreadingActor):
         if payload["tag"] == "speak":
             if payload["status"] == "start":
                 if self.output_callback:
-                    await self.output_callback({
+                    await safe_call(self.output_callback, {
                         "event": ServerEvent.ChatResponseParams,
                         "payload_msg": {
                             "params": payload["attributes"]
@@ -88,7 +90,7 @@ class LLMChatActor(pykka.ThreadingActor):
             elif payload["status"] == "streaming":
                 if self.output_callback:
                     content = payload["content"].replace('\n', '').replace('\r', '')
-                    await self.output_callback({
+                    await safe_call(self.output_callback, {
                         "event": ServerEvent.ChatResponse,
                         "payload_msg": {
                             "content": content
@@ -96,7 +98,7 @@ class LLMChatActor(pykka.ThreadingActor):
                     })
             elif payload["status"] == "end":
                 if self.output_callback:
-                    await self.output_callback({
+                    await safe_call(self.output_callback, {
                         "event": ServerEvent.ChatResponseEnd,
                     })
     
@@ -132,13 +134,13 @@ class LLMChatActor(pykka.ThreadingActor):
                     await self.parser.feed(chunk.content)
             await self.parser.end()
             if self.output_callback:
-                await self.output_callback({
+                await safe_call(self.output_callback, {
                     "event": ServerEvent.ChatEnded,
                     "payload_msg": {
                         "content": final_response
                     }
                 })
-            logger.bind(tag="TASK").info(f"final_response: {final_response}, request_tasks: {self.request_tasks}, dismiss_tasks: {self.dismiss_tasks}")
+            logger.bind(tag="TASK").info(f"final_response: {final_response}")
         except asyncio.CancelledError:
             logger.bind(tag="BASE").info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:

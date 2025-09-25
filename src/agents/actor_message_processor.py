@@ -152,7 +152,7 @@ class ActorMessageProcessor:
     
     def _handle_llm_chat_output(self, message):
         """处理Chat LLM输出，并将内容转发给TTSActor"""
-        logger.debug(f"收到Chat LLM输出: {message}")
+        logger.bind(tag="BASE").debug(f"收到Chat LLM输出: {message}")
         try:
             if message.get("event") == ServerEvent.ChatResponse:
                 content = message.get("payload_msg", {}).get("content", "")
@@ -166,16 +166,18 @@ class ActorMessageProcessor:
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)
         except Exception:
-            pass
+            logger.bind(tag="BASE").info(f"处理Chat LLM输出失败: {message}")
     
     def _handle_llm_action_output(self, message):
         """处理Action LLM输出"""
-        logger.debug(f"收到Action LLM输出: {message}")
+        logger.bind(tag="BASE").debug(f"收到Action LLM输出: {message}")
         try:
+            if message.get("event") == ServerEvent.ChatActionEnd:
+                self.prepost_actor.tell({"type": "add_action_message", "data": message.get("payload_msg", {})})
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)
         except Exception:
-            pass
+            logger.bind(tag="BASE").info(f"处理Action LLM输出失败: {message}")
     
     def _handle_tts_output(self, message):
         """处理TTS输出并透传到 websocket"""
@@ -292,15 +294,15 @@ class ActorMessageProcessor:
         llm_chat_result = self.llm_chat_actor.ask({"type": "start", "data": start_data}, timeout=5)
         llm_action_result = self.llm_action_actor.ask({"type": "start", "data": start_data}, timeout=5)
         tts_result = self.tts_actor.ask({"type": "start", "data": start_data}, timeout=5)
-        prepost_result = self.prepost_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        prepost_result = self.prepost_actor.ask({"type": "start", "data": start_data}, timeout=60)
         
         # 检查启动结果
         if (vad_result.get("success") and e2e_result.get("success") and 
             llm_chat_result.get("success") and llm_action_result.get("success") and tts_result.get("success") and prepost_result.get("success")):
-            logger.info("ActorMessageProcessor启动完成")
+            logger.bind(tag="BASE").info("ActorMessageProcessor启动完成")
             return True
         else:
-            logger.error("ActorMessageProcessor启动失败")
+            logger.bind(tag="BASE").error("ActorMessageProcessor启动失败")
             return False
     
     def cleanup(self):

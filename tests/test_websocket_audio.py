@@ -1128,7 +1128,7 @@ class WebSocketTestSession:
         # 状态控制
         self.session_id = None
         # self.chat_id = "3ae1ed57-48fc-8d9d-430d-53a6292b3d6a"
-        self.chat_id = "8a6f5983-4407-9a16-00c2-b08c45a8d127"
+        self.chat_id = "30e5c474-45ff-444b-21c6-dcbdb745e7d4"
         self.user_id = "2342342334"
         # self.user_id = "test_user_001"
         self.is_running = True
@@ -2242,7 +2242,7 @@ class WebSocketTestSession:
                 f"{self.base_uri}/ws/stream",
                 ping_interval=30,      # 每30秒发送一次ping（更保守）
                 ping_timeout=15,       # ping超时时间15秒（更宽松）
-                close_timeout=10,      # 关闭超时时间10秒
+                close_timeout=100,      # 关闭超时时间10秒
                 max_size=1000000000,   # 最大消息大小1GB
                 compression=None,      # 禁用压缩避免问题
                 max_queue=32
@@ -2383,10 +2383,10 @@ class WebSocketTestSession:
             # 重新建立连接
             self.websocket = await websockets.connect(
                 self.base_uri + "/ws/stream",
-                open_timeout=5,
-                ping_interval=30,      # 每30秒发送一次ping（更保守）
+                open_timeout=50,
+                ping_interval=None,      # 每30秒发送一次ping（更保守）
                 ping_timeout=15,       # ping超时时间15秒（更宽松）
-                close_timeout=10,      # 关闭超时时间10秒
+                close_timeout=100,      # 关闭超时时间10秒
                 max_size=1000000000,   # 最大消息大小1GB
                 compression=None,      # 禁用压缩避免问题
                 max_queue=1024,          # 限制队列大小

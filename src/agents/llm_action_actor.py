@@ -1,6 +1,6 @@
 import pykka
 import asyncio
-import time
+import re
 from datetime import datetime
 from loguru import logger
 from typing import Optional, Callable, Dict, Any
@@ -10,6 +10,10 @@ from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.prompt_manager.scene_iteams.manager import DBManager as SceneItemEntryManager
 from agents.agent_memory.configuration.config import ChatModel, EmbeddingModel
+from utils.utils import safe_call
+from agents.agent_memory.prompt_manager.utils import count_tokens_openai
+from agents.agent_memory.message_store import MessageStore, MessageModel
+import uuid
 
 class LLMActionActor(pykka.ThreadingActor):
     """仅负责文本处理（LLM）的 Actor"""
@@ -22,6 +26,7 @@ class LLMActionActor(pykka.ThreadingActor):
         self.user_id = None
         self.parser = StreamingTagParser(tag_callback=self.tag_callback)
         self.process_timer = 0
+        self.final_response = ""
     
     def on_receive(self, message):
         try:
@@ -157,8 +162,8 @@ class LLMActionActor(pykka.ThreadingActor):
                     scene_id = char_instance_info.current_scene_id if char_instance_info else None
                     CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status, view_matrix=view_matrix, projection_matrix=projection_matrix, current_scene_id=scene_id)
                 logger.bind(tag="BASE").info(f"action result: {result}")
-                if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                if self.output_callback:
+                    await safe_call(self.output_callback, {
                         "event": ServerEvent.ChatActionParams,
                         "payload_msg": {
                             "params": {
@@ -168,8 +173,8 @@ class LLMActionActor(pykka.ThreadingActor):
                     })
             elif payload["status"] == "streaming":
                 # self.action_content = self.action_content + payload['content']
-                if self.websocket_send_callback:
-                    await self.websocket_send_callback({
+                if self.output_callback:
+                    await safe_call(self.output_callback, {
                         "event": ServerEvent.ChatAction,
                         "payload_msg": {
                             "content": payload["content"]
@@ -178,7 +183,7 @@ class LLMActionActor(pykka.ThreadingActor):
             elif payload["status"] == "end":
                 # actions = self.action_content.split(":")
                 # res = handle_position(self.user_id, self.chat_id, self.action_content)
-                if self.websocket_send_callback:
+                if self.output_callback:
                     # await self.websocket_send_callback({
                     #     "event": ServerEvent.ChatActionParams,
                     #     "payload_msg": {
@@ -197,8 +202,11 @@ class LLMActionActor(pykka.ThreadingActor):
                     #         "content": actions[1]
                     #     }
                     # })
-                    await self.websocket_send_callback({
-                        "event": ServerEvent.ChatActionEnd
+                    await safe_call(self.output_callback,{
+                        "event": ServerEvent.ChatActionEnd,
+                        "payload_msg": {
+                            "content": self.final_response
+                        }
                     })
     
     def _run_async(self, coro):
@@ -211,29 +219,21 @@ class LLMActionActor(pykka.ThreadingActor):
                 loop.run_until_complete(coro)
             finally:
                 loop.close()
-    
+        
     async def handle_message(self, prompts: list[dict]) -> Dict[str, Any]:
         try:
             for prompt in prompts:
                 logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             chat_model = get_chat_model_by_type("pfc_action_planner")
-            final_response = ""
-            first_chunk = True
+            self.final_response = ""
             logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
             async for chunk in chat_model.astream(prompts, extra_body={"thinking": {"type": "disabled"}}):
                 if hasattr(chunk, 'content'):
-                    # logger.bind(tag="BASE").info(f"chunk: {chunk.content}")
-                    if self.is_interruption:
-                        logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
-                        break
-                    final_response += chunk.content
-                    if first_chunk:
-                        first_chunk = False
-                        logger.bind(tag="TTS").info(f"start streaming response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
+                    self.final_response += chunk.content
                     await self.parser.feed(chunk.content)
             await self.parser.end()
-            logger.bind(tag="TASK").info(f"final_response: {final_response}, request_tasks: {self.request_tasks}, dismiss_tasks: {self.dismiss_tasks}")
+            logger.bind(tag="TASK").info(f"final_response: {self.final_response}")
         except asyncio.CancelledError:
             logger.bind(tag="BASE").info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:
-            logger.bind(tag="BASE").info(f"生成被动回复时出错: {str(e)}")
+            logger.bind(tag="BASE").info(f"生成动作回复时出错: {str(e)}")
