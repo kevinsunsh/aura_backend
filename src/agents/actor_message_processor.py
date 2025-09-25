@@ -9,7 +9,8 @@ from abc import ABC
 
 from .vad_actor import VADActor
 from .e2e_actor import E2EActor
-from .llm_actor import LLMActor
+from .llm_chat_actor import LLMChatActor
+from .llm_action_actor import LLMActionActor
 from .tts_actor import TTSActor
 from .prepost_actor import PrePostActor
 from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set
@@ -36,7 +37,8 @@ class ActorMessageProcessor:
         # Actor引用
         self.vad_actor = None
         self.e2e_actor = None
-        self.llm_actor = None
+        self.llm_chat_actor = None
+        self.llm_action_actor = None
         self.tts_actor = None
         self.prepost_actor = None
         # 共享状态
@@ -52,13 +54,17 @@ class ActorMessageProcessor:
             # 创建所有Actor实例
             self.vad_actor = VADActor.start()
             self.e2e_actor = E2EActor.start()
-            self.llm_actor = LLMActor.start()
+            # self.llm_actor = LLMActor.start()
+            self.llm_chat_actor = LLMChatActor.start()
+            self.llm_action_actor = LLMActionActor.start()
             self.tts_actor = TTSActor.start()
             self.prepost_actor = PrePostActor.start()
             # 设置输出回调
             self.vad_actor.tell({"type": "set_callback", "callback": self._handle_vad_output})
             self.e2e_actor.tell({"type": "set_callback", "callback": self._handle_e2e_output})
-            self.llm_actor.tell({"type": "set_callback", "callback": self._handle_llm_output})
+            # self.llm_actor.tell({"type": "set_callback", "callback": self._handle_llm_output})
+            self.llm_chat_actor.tell({"type": "set_callback", "callback": self._handle_llm_chat_output})
+            self.llm_action_actor.tell({"type": "set_callback", "callback": self._handle_llm_action_output})
             self.tts_actor.tell({"type": "set_callback", "callback": self._handle_tts_output})
             self.prepost_actor.tell({"type": "set_callback", "callback": self._handle_prepost_output})
             logger.info("所有Actor启动完成")
@@ -144,10 +150,9 @@ class ActorMessageProcessor:
             except Exception:
                 pass
     
-    def _handle_llm_output(self, message):
-        """处理LLM输出，并将内容转发给TTSActor"""
-        logger.debug(f"收到LLM输出: {message}")
-        # 将 LLM 的 ChatResponse/ChatResponseEnd 转为 TTSActor 的 send_text_chunk
+    def _handle_llm_chat_output(self, message):
+        """处理Chat LLM输出，并将内容转发给TTSActor"""
+        logger.debug(f"收到Chat LLM输出: {message}")
         try:
             if message.get("event") == ServerEvent.ChatResponse:
                 content = message.get("payload_msg", {}).get("content", "")
@@ -158,6 +163,15 @@ class ActorMessageProcessor:
             elif message.get("event") == ServerEvent.ChatEnded:
                 self.prepost_actor.tell({"type": "postprocess", "data": message.get("payload_msg", {})})
             # 透传到前端
+            if self.websocket_send_callback:
+                self.websocket_send_callback(message)
+        except Exception:
+            pass
+    
+    def _handle_llm_action_output(self, message):
+        """处理Action LLM输出"""
+        logger.debug(f"收到Action LLM输出: {message}")
+        try:
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)
         except Exception:
@@ -185,12 +199,17 @@ class ActorMessageProcessor:
         """处理预处理/后处理输出"""
         logger.debug(f"收到PrePost输出: {message}")
         # 将PrePost生成的prompts转发给LLM+TTS
-        if isinstance(message, dict) and message.get("event") == "LLMRun":
+        if isinstance(message, dict) and message.get("event") == "ChatLLMRun":
             prompts = message.get("prompts")
-            if prompts and self.llm_actor:
+            if prompts and self.llm_chat_actor:
                 prompts.append({"role": "user", "content": self.asr_result})
-                self.llm_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
-                self.llm_actor.tell({"type": "run", "data": prompts})
+                self.llm_chat_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                self.llm_chat_actor.tell({"type": "run", "data": prompts})
+        elif isinstance(message, dict) and message.get("event") == "ActionLLMRun":
+            prompts = message.get("prompts")
+            if prompts and self.llm_action_actor:
+                self.llm_action_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                self.llm_action_actor.tell({"type": "run", "data": prompts})
     
     def handle_message(self, message_data: Dict[str, Any]):
         """
@@ -269,13 +288,15 @@ class ActorMessageProcessor:
         # 使用ask方法等待所有Actor启动完成
         vad_result = self.vad_actor.ask({"type": "start", "data": start_data}, timeout=5)
         e2e_result = self.e2e_actor.ask({"type": "start", "data": start_data}, timeout=5)
-        llm_result = self.llm_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        # llm_result = self.llm_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        llm_chat_result = self.llm_chat_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        llm_action_result = self.llm_action_actor.ask({"type": "start", "data": start_data}, timeout=5)
         tts_result = self.tts_actor.ask({"type": "start", "data": start_data}, timeout=5)
         prepost_result = self.prepost_actor.ask({"type": "start", "data": start_data}, timeout=5)
         
         # 检查启动结果
         if (vad_result.get("success") and e2e_result.get("success") and 
-            llm_result.get("success") and tts_result.get("success") and prepost_result.get("success")):
+            llm_chat_result.get("success") and llm_action_result.get("success") and tts_result.get("success") and prepost_result.get("success")):
             logger.info("ActorMessageProcessor启动完成")
             return True
         else:
@@ -294,8 +315,10 @@ class ActorMessageProcessor:
             self.vad_actor.stop()
         if self.e2e_actor:
             self.e2e_actor.stop()
-        if self.llm_actor:
-            self.llm_actor.stop()
+        if self.llm_chat_actor:
+            self.llm_chat_actor.stop()
+        if self.llm_action_actor:
+            self.llm_action_actor.stop()
         if self.tts_actor:
             self.tts_actor.stop()
         if self.prepost_actor:

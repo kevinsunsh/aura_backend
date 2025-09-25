@@ -158,14 +158,14 @@ class PrePostActor(pykka.ThreadingActor):
                 character=self.character,
                 world_info_scanner=self.world_info_scanner
             )
-            prompts, token_usage = self._safe_async_generate(generator)
+            prompts, token_usage = self._safe_async_generate(generator, GenerationType.CHAT)
             # 延迟日志
             if self.process_timer:
                 logger.bind(tag="DELAY").info(f"Preprocess delay: {int((time.time() - self.process_timer) * 1000)}ms")
             # 通过回调把 prompts 交给 LLM+TTS Actor
             if self.output_callback and prompts:
                 self.output_callback({
-                    "event": "LLMRun",
+                    "event": "ChatLLMRun",
                     "prompts": prompts
                 })
             # 写入用户消息
@@ -215,18 +215,39 @@ class PrePostActor(pykka.ThreadingActor):
             MessageStore.get_instance().add_message(message)
             # chat stream 心跳
             ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
+            # 延迟日志
+            if self.process_timer:
+                logger.bind(tag="DELAY").info(f"Postprocess delay: {int((time.time() - self.process_timer) * 1000)}ms")
+            # 生成 prompts
+            generator = PromptManager(
+                chat_id=self.chat_id,
+                user_info=self.user_info,
+                scene_info=self.current_scene_info,
+                system_preset=self.system_preset,
+                system_preset_prompts=self.system_preset_prompts,
+                system_preset_prompt_order=self.system_preset_prompt_order,
+                character=self.character,
+                world_info_scanner=self.world_info_scanner
+            )
+            prompts, token_usage = self._safe_async_generate(generator, GenerationType.ACTION)
+            # 通过回调把 prompts 交给 LLM+TTS Actor
+            if self.output_callback and prompts:
+                self.output_callback({
+                    "event": "ActionLLMRun",
+                    "prompts": prompts
+                })
             # 任务调度
-            self._handle_tasks(bot_response)
-            # build_summary_mem
-            try:
-                task_instance_id = TaskManager.get_instance().schedule_task_instance(self.user_id, "agent_memory", {"user_id": self.user_id, "char_id": self.character.name})
-                if task_instance_id:
-                    logger.bind(tag="TASK").info(f"成功调度任务: {task_instance_id}")
-                else:
-                    logger.bind(tag="TASK").warning("调度任务失败: agent_memory")
-            except Exception as e:
-                logger.bind(tag="TASK").error(f"agent_memory 任务调度异常: {e}")
-            return {"success": True}
+            # self._handle_tasks(bot_response)
+            # # build_summary_mem
+            # try:
+            #     task_instance_id = TaskManager.get_instance().schedule_task_instance(self.user_id, "agent_memory", {"user_id": self.user_id, "char_id": self.character.name})
+            #     if task_instance_id:
+            #         logger.bind(tag="TASK").info(f"成功调度任务: {task_instance_id}")
+            #     else:
+            #         logger.bind(tag="TASK").warning("调度任务失败: agent_memory")
+            # except Exception as e:
+            #     logger.bind(tag="TASK").error(f"agent_memory 任务调度异常: {e}")
+            # return {"success": True}
             
         except Exception as e:
             logger.error(f"后处理失败: {e}")
@@ -301,13 +322,13 @@ class PrePostActor(pykka.ThreadingActor):
             logger.error(f"更改世界信息激活键失败: {e}")
             return {"success": False, "error": str(e)}
 
-    def _safe_async_generate(self, generator: PromptManager):
+    def _safe_async_generate(self, generator: PromptManager, generation_type: GenerationType = GenerationType.CHAT):
         """在同步Actor中包装调用异步Prompt生成器"""
         try:
             # PromptManager.generate 是异步方法，这里用简单的事件循环桥接
             import asyncio
             async def _run():
-                return await generator.generate(GenerationType.NORMAL, GenerationOptions())
+                return await generator.generate(generation_type, GenerationOptions())
             return asyncio.run(_run())
         except RuntimeError:
             # 已存在事件循环（例如在某些环境），退化为新循环
@@ -315,7 +336,7 @@ class PrePostActor(pykka.ThreadingActor):
             loop = asyncio.new_event_loop()
             try:
                 asyncio.set_event_loop(loop)
-                return loop.run_until_complete(generator.generate(GenerationType.NORMAL, GenerationOptions()))
+                return loop.run_until_complete(generator.generate(generation_type, GenerationOptions()))
             finally:
                 loop.close()
         except Exception as e:

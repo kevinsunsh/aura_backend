@@ -297,7 +297,7 @@ class AuraAgent:
             logger.info("WebSocket连接已关闭")
             return False
         except Exception as e:
-            logger.error(f"等待session开始消息时出错: {e}")
+            logger.bind(tag="BASE").error(f"等待session开始消息时出错: {e}")
             return False
 
     async def _message_processing_loop(self, websocket):
