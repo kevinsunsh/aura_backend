@@ -26,9 +26,9 @@ class LLMChatActor(pykka.ThreadingActor):
         try:
             msg_type = message.get("type")
             if msg_type == "start":
-                return self._start(message.get("data", {}))
+                return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
-                return self._stop()
+                return self._stop_process()
             elif msg_type == "run":
                 return self._run_llm(message.get("data"))
             elif msg_type == "set_callback":
@@ -43,7 +43,7 @@ class LLMChatActor(pykka.ThreadingActor):
             logger.error(f"LLMActor处理消息失败: {e}")
             return {"success": False, "error": str(e)}
 
-    def _start(self, data):
+    def _start_process(self, data):
         try:
             self.chat_id = data.get("chat_id")
             self.user_id = data.get("user_id")
@@ -56,7 +56,7 @@ class LLMChatActor(pykka.ThreadingActor):
             logger.error(f"LLMActor启动失败: {e}")
             return {"success": False, "error": str(e)}
 
-    def _stop(self):
+    def _stop_process(self):
         try:
             self.is_running = False
             logger.info("LLMActor停止成功")

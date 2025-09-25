@@ -28,9 +28,9 @@ class LLMTTSActor(pykka.ThreadingActor):
             msg_type = message.get("type")
             
             if msg_type == "start":
-                return self._start(message.get("data", {}))
+                return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
-                return self._stop()
+                return self._stop_process()
             elif msg_type == "interruption":
                 return self._handle_interruption()
             elif msg_type == "run":
@@ -48,7 +48,7 @@ class LLMTTSActor(pykka.ThreadingActor):
             logger.error(f"LLM+TTS Actor处理消息失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _start(self, data):
+    def _start_process(self, data):
         """启动LLM+TTS客户端"""
         try:
             self.chat_id = data.get("chat_id")
@@ -84,7 +84,7 @@ class LLMTTSActor(pykka.ThreadingActor):
             logger.error(f"LLM+TTS Actor启动失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _stop(self):
+    def _stop_process(self):
         """停止LLM+TTS客户端"""
         try:
             self.is_running = False

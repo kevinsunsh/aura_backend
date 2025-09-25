@@ -20,9 +20,9 @@ class TTSActor(pykka.ThreadingActor):
         try:
             msg_type = message.get("type")
             if msg_type == "start":
-                return self._start(message.get("data", {}))
+                return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
-                return self._stop()
+                return self._stop_process()
             elif msg_type == "send_text_chunk":
                 return self._send_text_chunk(message.get("text", ""), message.get("start", False), message.get("end", False))
             elif msg_type == "set_callback":
@@ -33,8 +33,8 @@ class TTSActor(pykka.ThreadingActor):
         except Exception as e:
             logger.error(f"TTSActor处理消息失败: {e}")
             return {"success": False, "error": str(e)}
-
-    def _start(self, data):
+    
+    def _start_process(self, data):
         try:
             self.chat_id = data.get("chat_id")
             self.user_id = data.get("user_id")
@@ -52,8 +52,8 @@ class TTSActor(pykka.ThreadingActor):
         except Exception as e:
             logger.error(f"TTSActor启动失败: {e}")
             return {"success": False, "error": str(e)}
-
-    def _stop(self):
+    
+    def _stop_process(self):
         try:
             if self.tts_client:
                 self.tts_client.cleanup_background()
@@ -62,7 +62,7 @@ class TTSActor(pykka.ThreadingActor):
         except Exception as e:
             logger.error(f"TTSActor停止失败: {e}")
             return {"success": False, "error": str(e)}
-
+    
     def _send_text_chunk(self, text: str, start: bool, end: bool):
         try:
             if not self.tts_client:

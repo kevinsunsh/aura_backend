@@ -26,9 +26,9 @@ class E2EActor(pykka.ThreadingActor):
             msg_type = message.get("type")
             
             if msg_type == "start":
-                return self._start(message.get("data", {}))
+                return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
-                return self._stop()
+                return self._stop_process()
             elif msg_type == "input":
                 return self._process_input(message.get("data"))
             elif msg_type == "set_callback":
@@ -41,7 +41,7 @@ class E2EActor(pykka.ThreadingActor):
             logger.error(f"E2E Actor处理消息失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _start(self, data):
+    def _start_process(self, data):
         """启动E2E客户端"""
         try:
             self.chat_id = data.get("chat_id")
@@ -87,7 +87,7 @@ class E2EActor(pykka.ThreadingActor):
             logger.error(f"E2E Actor启动失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _stop(self):
+    def _stop_process(self):
         """停止E2E客户端"""
         try:
             self.is_running = False

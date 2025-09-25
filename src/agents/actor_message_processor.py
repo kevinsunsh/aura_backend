@@ -152,15 +152,17 @@ class ActorMessageProcessor:
     
     def _handle_llm_chat_output(self, message):
         """处理Chat LLM输出，并将内容转发给TTSActor"""
-        logger.bind(tag="BASE").debug(f"收到Chat LLM输出: {message}")
+        logger.bind(tag="BASE").info(f"收到Chat LLM输出: {message}")
         try:
             if message.get("event") == ServerEvent.ChatResponse:
                 content = message.get("payload_msg", {}).get("content", "")
                 if content:
                     self.tts_actor.tell({"type": "send_text_chunk", "text": content, "start": False, "end": False})
             elif message.get("event") == ServerEvent.ChatResponseEnd:
-                self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
+                # self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
+                pass
             elif message.get("event") == ServerEvent.ChatEnded:
+                self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
                 self.prepost_actor.tell({"type": "postprocess", "data": message.get("payload_msg", {})})
             # 透传到前端
             if self.websocket_send_callback:
@@ -241,6 +243,7 @@ class ActorMessageProcessor:
                 self.asr_is_started = False
                 self.prepost_actor.tell({"type": "preprocess"})
                 self.process_timer = time.time()
+                self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
                 logger.bind(tag="BASE").info("处理SpeakEnded消息")
             else:
                 logger.bind(tag="BASE").info("SpeakEnded，但ASR未开始")
@@ -314,17 +317,17 @@ class ActorMessageProcessor:
         
         # 停止所有Actor
         if self.vad_actor:
-            self.vad_actor.stop()
+            self.vad_actor.tell({"type": "stop"})
         if self.e2e_actor:
-            self.e2e_actor.stop()
+            self.e2e_actor.tell({"type": "stop"})
         if self.llm_chat_actor:
-            self.llm_chat_actor.stop()
+            self.llm_chat_actor.tell({"type": "stop"})
         if self.llm_action_actor:
-            self.llm_action_actor.stop()
+            self.llm_action_actor.tell({"type": "stop"})
         if self.tts_actor:
-            self.tts_actor.stop()
+            self.tts_actor.tell({"type": "stop"})
         if self.prepost_actor:
-            self.prepost_actor.stop()
+            self.prepost_actor.tell({"type": "stop"})
         
         logger.info("ActorMessageProcessor清理完成")
         return {"success": True}

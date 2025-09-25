@@ -587,8 +587,8 @@ class TtsClient:
             if len(self.buffer_text) > 0:
                 await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 self.buffer_text = ""
-            # if end:
-            #     await self._tts_finish_session(self.ws, self.session_id_str)
+            if end:
+                await self._tts_finish_session(self.ws, self.session_id_str)
             logger.bind(tag="TTS").debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:
             logger.error(f"发送文本片段失败: {e}")

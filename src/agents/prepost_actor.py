@@ -49,9 +49,9 @@ class PrePostActor(pykka.ThreadingActor):
             msg_type = message.get("type")
             
             if msg_type == "start":
-                return self._start(message.get("data", {}))
+                return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
-                return self._stop()
+                return self._stop_process()
             elif msg_type == "preprocess":
                 return self._preprocess()
             elif msg_type == "postprocess":
@@ -97,7 +97,7 @@ class PrePostActor(pykka.ThreadingActor):
             logger.error(f"PrePost Actor处理消息失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _start(self, data):
+    def _start_process(self, data):
         """启动预处理和后处理器"""
         try:
             self.chat_id = data.get("chat_id")
@@ -128,7 +128,7 @@ class PrePostActor(pykka.ThreadingActor):
             logger.error(f"PrePost Actor启动失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _stop(self):
+    def _stop_process(self):
         """停止预处理和后处理器"""
         try:
             self.is_running = False
@@ -196,7 +196,7 @@ class PrePostActor(pykka.ThreadingActor):
             return {"success": False, "error": "PrePost Actor未运行"}
         
         try:
-            logger.info("执行后处理")
+            logger.bind(tag="BASE").info("执行后处理")
             bot_response = data or {}
             content = bot_response.get("content", "")
             tokens = count_tokens_openai(content)
@@ -229,9 +229,13 @@ class PrePostActor(pykka.ThreadingActor):
                 character=self.character,
                 world_info_scanner=self.world_info_scanner
             )
+            logger.bind(tag="BASE").info(f"generator: {generator}")
             prompts, token_usage = self._safe_async_generate(generator, GenerationType.ACTION)
+            for prompt in prompts:
+                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             # 通过回调把 prompts 交给 LLM+TTS Actor
             if self.output_callback and prompts:
+                logger.bind(tag="BASE").info("send prompts to ActionLLMRun")
                 self.output_callback({
                     "event": "ActionLLMRun",
                     "prompts": prompts
