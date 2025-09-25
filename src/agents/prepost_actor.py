@@ -65,7 +65,20 @@ class PrePostActor(pykka.ThreadingActor):
             elif msg_type == "change_world_info_activate_keys":
                 return self._change_world_info_keys(message.get("data"))
             elif msg_type == "char_status":
-                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status={"action": message.get("data").get("action", {})})
+                char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
+                char_status = None
+                action = message.get("data").get("action", None)
+                if action:
+                    current_action = action.get("current", "")
+                    if len(current_action) > 0:
+                        char_status= {"action": {"current": current_action, "target": action.get("target", "")}}
+                view_matrix = message.get("data").get("view_matrix", None)
+                view_matrix = view_matrix if view_matrix is not None else char_instance_info.view_matrix if char_instance_info else None
+                proj_matrix = message.get("data").get("projection_matrix", None)
+                proj_matrix = proj_matrix if proj_matrix is not None else char_instance_info.projection_matrix if char_instance_info else None
+                scene_id = char_instance_info.current_scene_id if char_instance_info else None
+                char_status = char_status if char_status is not None else char_instance_info.char_status if char_instance_info else None
+                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status, view_matrix=view_matrix, projection_matrix=proj_matrix, current_scene_id=scene_id)
             elif msg_type == "set_callback":
                 self.output_callback = message.get("callback")
                 return {"success": True}
@@ -95,7 +108,7 @@ class PrePostActor(pykka.ThreadingActor):
             self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
             # 用户可切换场景，这里以用户当前场景为准
             char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
-            current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7") if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
+            current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
             self.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
             self.character = CharacterManager().get_character_by_id(self.current_scene_info.activated_char_id)
             self.bot_name = self.character.name
@@ -242,7 +255,11 @@ class PrePostActor(pykka.ThreadingActor):
             logger.bind(tag="BASE").info(f"更改场景名称为: {scene_name}")
             if scene_name:
                 scene_info = SceneInfoManager().get_scene_info_by_scene_name(scene_name)
-                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, current_scene_id=scene_info.scene_id)
+                char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
+                view_matrix = char_instance_info.view_matrix if char_instance_info else None
+                projection_matrix = char_instance_info.projection_matrix if char_instance_info else None
+                char_status = char_instance_info.char_status if char_instance_info else None
+                CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, current_scene_id=scene_info.scene_id, view_matrix=view_matrix, projection_matrix=projection_matrix, char_status=char_status)
             return {"success": True}
         except Exception as e:
             logger.error(f"更改场景名称失败: {e}")

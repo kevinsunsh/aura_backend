@@ -62,7 +62,7 @@ class MessagePreAndPostProcessor(ABC):
                 client.user_id = msg["data"]["user_id"]
                 client.user_info = UserInfoManager().get_user_info_by_user_id(client.user_id)
                 char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(client.user_id, client.chat_id)
-                current_scene_id = char_instance_info.char_status.get("current_scene_id", "d8943faa-bf00-481b-95af-c73bd04c1eb7") if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
+                current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
                 client.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
                 client.character = CharacterManager().get_character_by_id(client.current_scene_info.activated_char_id)
                 client.bot_name = client.character.name
