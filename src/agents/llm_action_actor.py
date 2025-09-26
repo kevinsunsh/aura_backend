@@ -105,57 +105,59 @@ class LLMActionActor(pykka.ThreadingActor):
                         "func": matches[0][0] if matches[0][0] else "idle",
                         "target": matches[0][1] if matches[0][1] else "null"
                     }
-                    # if result["func"] not in ["sit", "stand", "idle", "take", "turn"]:
-                    item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
-                    if item:
-                        logger.bind(tag="BASE").info(f"item: {item.item_type}")
-                        if item.item_type != "":
-                            result["position"] = item.get_world_pos().tolist()
-                            result["position"][2] = 0.5
-                        result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                        result["name"] = item.item_name
-                        result["label"] = item.label_name
-                    else:
-                        embedding_model = EmbeddingModel(
-                            model_name="doubao-embedding-large-text-250515",
-                            api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
-                            api_base="https://ark.cn-beijing.volces.com/api/v3",
-                        )
-                        desc_vec = embedding_model.embed(result["target"])
-                        items = SceneItemEntryManager().search_items_by_description_vector(current_scene_id, desc_vec, top_k=1)
-                        if len(items) > 0:
-                            result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
-                            result["target"] = items[0]["item_id"]
-                            result["name"] = items[0]["item_name"]
-                            result["label"] = items[0]["label_name"]
+                    logger.bind(tag="BASE").info(f"action result: {result}")
+                    if result["func"] not in ["idle", "turn"]:
+                        # if result["func"] not in ["sit", "stand", "idle", "take", "turn"]:
+                        item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
+                        if item:
+                            logger.bind(tag="BASE").info(f"item: {item.item_type}")
+                            if item.item_type != "":
+                                result["position"] = item.get_world_pos().tolist()
+                                result["position"][2] = 0.5
                             result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+                            result["name"] = item.item_name
+                            result["label"] = item.label_name
                         else:
-                            items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
+                            embedding_model = EmbeddingModel(
+                                model_name="doubao-embedding-large-text-250515",
+                                api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+                                api_base="https://ark.cn-beijing.volces.com/api/v3",
+                            )
+                            desc_vec = embedding_model.embed(result["target"])
+                            items = SceneItemEntryManager().search_items_by_description_vector(current_scene_id, desc_vec, top_k=1)
                             if len(items) > 0:
                                 result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
                                 result["target"] = items[0]["item_id"]
                                 result["name"] = items[0]["item_name"]
                                 result["label"] = items[0]["label_name"]
                                 result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                    # else:
-                    #     item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
-                    #     if item:
-                    #         logger.bind(tag="BASE").info(f"item type: {item.item_type}")
-                    #         if item.item_type != "":
-                    #             result["func"] = "stand"
-                    #             result["position"] = item.get_world_pos().tolist()
-                    #             result["position"][2] = 0.5
-                    #             result["name"] = item.item_name
-                    #             result["label"] = item.label_name
-                    #     else:
-                    #         item = SceneItemEntryManager().get_scene_item_by_action(current_scene_id, result["func"])
-                    #         if item:
-                    #             logger.bind(tag="BASE").info(f"item: {item.item_type}")
-                    #             result["target"] = item.item_id
-                    #             result["name"] = item.item_name
-                    #             result["label"] = item.label_name
-                    #         else:
-                    #             result["func"] = "idle"
+                            else:
+                                items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
+                                if len(items) > 0:
+                                    result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
+                                    result["target"] = items[0]["item_id"]
+                                    result["name"] = items[0]["item_name"]
+                                    result["label"] = items[0]["label_name"]
+                                    result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+                        # else:
+                        #     item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
+                        #     if item:
+                        #         logger.bind(tag="BASE").info(f"item type: {item.item_type}")
+                        #         if item.item_type != "":
+                        #             result["func"] = "stand"
+                        #             result["position"] = item.get_world_pos().tolist()
+                        #             result["position"][2] = 0.5
+                        #             result["name"] = item.item_name
+                        #             result["label"] = item.label_name
+                        #     else:
+                        #         item = SceneItemEntryManager().get_scene_item_by_action(current_scene_id, result["func"])
+                        #         if item:
+                        #             logger.bind(tag="BASE").info(f"item: {item.item_type}")
+                        #             result["target"] = item.item_id
+                        #             result["name"] = item.item_name
+                        #             result["label"] = item.label_name
+                        #         else:
+                        #             result["func"] = "idle"
                     char_status = {"action": {"current": result["func"], "target": result["target"]}}
                     view_matrix = char_instance_info.view_matrix if char_instance_info else None
                     projection_matrix = char_instance_info.projection_matrix if char_instance_info else None
@@ -224,7 +226,7 @@ class LLMActionActor(pykka.ThreadingActor):
         try:
             for prompt in prompts:
                 logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
-            chat_model = get_chat_model_by_type("pfc_action_planner")
+            chat_model = get_chat_model_by_type("focus_working_memory")
             self.final_response = ""
             logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
             async for chunk in chat_model.astream(prompts, extra_body={"thinking": {"type": "disabled"}}):

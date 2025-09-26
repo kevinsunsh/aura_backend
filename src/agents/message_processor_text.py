@@ -80,6 +80,16 @@ class StreamingTagParser:
             
         token = self.buffer[0]
         
+        # 过滤掉开头的/符号
+        if token.startswith('/'):
+            token = token[1:]
+            if not token:
+                # 如果过滤后token为空，移除并继续
+                self.buffer.pop(0)
+                return True
+            # 更新buffer中的token
+            self.buffer[0] = token
+        
         # 查找:或>的位置
         colon_pos = token.find(':')
         close_pos = token.find('>')

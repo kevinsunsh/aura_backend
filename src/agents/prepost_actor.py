@@ -231,8 +231,8 @@ class PrePostActor(pykka.ThreadingActor):
             )
             logger.bind(tag="BASE").info(f"generator: {generator}")
             prompts, token_usage = self._safe_async_generate(generator, GenerationType.ACTION)
-            for prompt in prompts:
-                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
+            # for prompt in prompts:
+            #     logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             # 通过回调把 prompts 交给 LLM+TTS Actor
             if self.output_callback and prompts:
                 logger.bind(tag="BASE").info("send prompts to ActionLLMRun")
