@@ -117,6 +117,7 @@ class LLMActionActor(pykka.ThreadingActor):
                             result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                             result["name"] = item.item_name
                             result["label"] = item.label_name
+                            result["description"] = item.description
                         else:
                             embedding_model = EmbeddingModel(
                                 model_name="doubao-embedding-large-text-250515",
@@ -130,6 +131,7 @@ class LLMActionActor(pykka.ThreadingActor):
                                 result["target"] = items[0]["item_id"]
                                 result["name"] = items[0]["item_name"]
                                 result["label"] = items[0]["label_name"]
+                                result["description"] = items[0]["description"]
                                 result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                             else:
                                 items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
@@ -138,6 +140,7 @@ class LLMActionActor(pykka.ThreadingActor):
                                     result["target"] = items[0]["item_id"]
                                     result["name"] = items[0]["item_name"]
                                     result["label"] = items[0]["label_name"]
+                                    result["description"] = items[0]["description"]
                                     result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                         # else:
                         #     item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])
