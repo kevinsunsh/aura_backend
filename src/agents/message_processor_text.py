@@ -80,6 +80,16 @@ class StreamingTagParser:
             
         token = self.buffer[0]
         
+        # 过滤掉开头的/符号
+        if token.startswith('/'):
+            token = token[1:]
+            if not token:
+                # 如果过滤后token为空，移除并继续
+                self.buffer.pop(0)
+                return True
+            # 更新buffer中的token
+            self.buffer[0] = token
+        
         # 查找:或>的位置
         colon_pos = token.find(':')
         close_pos = token.find('>')
@@ -406,6 +416,7 @@ class MessageProcessorText:
                         result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                         result["name"] = item.item_name
                         result["label"] = item.label_name
+                        result["description"] = item.description
                     else:
                         embedding_model = EmbeddingModel(
                             model_name="doubao-embedding-large-text-250515",
@@ -419,6 +430,7 @@ class MessageProcessorText:
                             result["target"] = items[0]["item_id"]
                             result["name"] = items[0]["item_name"]
                             result["label"] = items[0]["label_name"]
+                            result["description"] = items[0]["description"]
                             result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                         else:
                             items = SceneItemEntryManager().search_items_by_keywords(current_scene_id, result["target"], top_k=1)
@@ -427,6 +439,7 @@ class MessageProcessorText:
                                 result["target"] = items[0]["item_id"]
                                 result["name"] = items[0]["item_name"]
                                 result["label"] = items[0]["label_name"]
+                                result["description"] = items[0]["description"]
                                 result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
                     # else:
                     #     item = SceneItemEntryManager().get_scene_item_by_id(current_scene_id, result["target"])

@@ -143,8 +143,9 @@ class ActorMessageProcessor:
         # 处理其他E2E输出消息
         elif message.get("event") == ServerEvent.ASRResponse:
             # 直接转发到WebSocket
-            if self.websocket_send_callback:
-                self.websocket_send_callback(message)
+            if self.asr_is_started:
+                if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
             # 同步ASR文本到PrePost
             try:
                 payload = message.get("payload_msg", {})

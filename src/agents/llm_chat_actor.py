@@ -144,7 +144,7 @@ class LLMChatActor(pykka.ThreadingActor):
         try:
             for prompt in prompts:
                 logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
-            chat_model = get_chat_model_by_type("vlm")
+            chat_model = get_chat_model_by_type("pfc_action_planner")
             final_response = ""
             first_chunk = True
             logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
