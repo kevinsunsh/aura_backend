@@ -4,8 +4,8 @@ from agents.states.shared_state import (
     BaseState
 )
 
-class ThinkingTaskState(BaseState):
+class ActionTaskState(BaseState):
     """
     思考任务状态
     """
-    thinking_response: str
+    action_response: str

@@ -274,7 +274,6 @@ class TtsClient:
         try:
             if self.message_loop is not None and self.message_loop.done() == False:
                 self.message_loop.cancel()
-                await self.message_loop
             await self._connect()
             self.message_loop = asyncio.create_task(self.message_receive_loop())
         except Exception as e:

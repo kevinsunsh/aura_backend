@@ -1128,7 +1128,7 @@ class WebSocketTestSession:
         # 状态控制
         self.session_id = None
         # self.chat_id = "3ae1ed57-48fc-8d9d-430d-53a6292b3d6a"
-        self.chat_id = "30e5c474-45ff-444b-21c6-dcbdb745e7d4"
+        self.chat_id = "bd811afc-45e5-6f56-57bb-3bb1ac79a740"
         self.user_id = "2342342334"
         # self.user_id = "test_user_001"
         self.is_running = True
@@ -1414,7 +1414,7 @@ class WebSocketTestSession:
         self.tts_initialized = False
         logger.info("🎵 TTS播放进程已清理")
     
-    def handle_websocket_response(self, data: dict):
+    async def handle_websocket_response(self, data: dict):
         """处理WebSocket响应"""
         if "event" in data:
             event_id = data["event"]
@@ -1585,6 +1585,7 @@ class WebSocketTestSession:
                     logger.info(f"⏱️ ASREnded到第一个ChatEnvDescEnd延迟: {delay:.3f}秒")
             elif event_id == ServerEvent.ChatActionParams:  # ChatActionParams
                 logger.info(f"🎵 收到ChatActionParams事件: {payload_msg.get('params', {})}")
+                await self.send_char_status(payload_msg.get('params', {}).get('attribute', {}).get('func'), payload_msg.get('params', {}).get('attribute', {}).get('target'))
             elif event_id == ServerEvent.ChatEmotionParams:  # ChatEmotionParams
                 logger.info(f"🎵 收到ChatEmotionParams事件: {payload_msg.get('params', {})}")
             elif event_id == ServerEvent.ChatEnvDescParams:  # ChatEnvDescParams
@@ -1653,7 +1654,7 @@ class WebSocketTestSession:
                         # 使用run_in_executor来处理websocket.recv()
                         response_data = await self.websocket.recv()
                         data = client_parse_response(response_data)
-                        self.handle_websocket_response(data)
+                        await self.handle_websocket_response(data)
                         await asyncio.sleep(0.01)
                     except asyncio.TimeoutError:
                         continue
@@ -1773,6 +1774,29 @@ class WebSocketTestSession:
         await asyncio.sleep(timeout_seconds)
         logger.info(f"录制时间达到{timeout_seconds}秒，自动停止...")
         self.is_running = False
+    
+    async def send_char_status(self, action: str, target: str):
+        """发送角色状态消息"""
+        try:
+            event_id = 700
+            session_id = self.user_id
+            payload_data = {
+                "char_status": {"action": {"current": action, "target": target}}
+            }
+            request = client_generate_request(
+                payload_data=payload_data,
+                message_type=CLIENT_FULL_REQUEST,
+                message_type_specific_flags=MSG_WITH_EVENT,
+                serial_method=JSON,
+                compression_type=GZIP,
+                event=event_id,
+                session_id=session_id
+            )
+            await self.websocket.send(bytes(request))
+        except Exception as e:
+            logger.error(f"发送角色状态消息失败: {e}")
+            return False
+        return True
     
     async def send_control_message(self, action: str):
         """发送控制消息（连接、session等）"""

@@ -13,9 +13,14 @@ from .llm_chat_actor import LLMChatActor
 from .llm_action_actor import LLMActionActor
 from .tts_actor import TTSActor
 from .prepost_actor import PrePostActor
-from utils.utils import start_performance_point, end_performance_point, safe_call, atomic_compare_and_set
-from muttering_data.mutter_index import get_muttering_file_path, MutteringType
 from api_protocol.constant import *
+from agents.agent_memory.prompt_manager.prompt_manager import PromptManager
+from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
+from agents.agent_memory.prompt_manager.scene_info.manager import DBManager as SceneInfoManager
+from agents.agent_memory.prompt_manager.character.manager import DBManager as CharacterManager
+from agents.agent_memory.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
+from agents.agent_memory.prompt_manager.world_info.scanner import WorldInfoScanner
+from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 
 class ActorMessageProcessor:
     """
@@ -45,6 +50,7 @@ class ActorMessageProcessor:
         self.asr_result = ""
         self.asr_is_started = False
         self.process_timer = 0
+        self.prompt_manager = None
         # 启动所有Actor
         self._start_actors()
     
@@ -164,6 +170,10 @@ class ActorMessageProcessor:
             elif message.get("event") == ServerEvent.ChatEnded:
                 self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
                 self.prepost_actor.tell({"type": "postprocess", "data": message.get("payload_msg", {})})
+            elif message.get("event") == ServerEvent.ChatActionGoal:
+                self.llm_action_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+                self.llm_action_actor.tell({"type": "goal_input", "data": message.get("payload_msg", {})})
+                return
             # 透传到前端
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)
@@ -171,11 +181,11 @@ class ActorMessageProcessor:
             logger.bind(tag="BASE").info(f"处理Chat LLM输出失败: {message}")
     
     def _handle_llm_action_output(self, message):
-        """处理Action LLM输出"""
+        """处理Action LLM输出：仅透传与记录，用于前端展示或日志"""
         logger.bind(tag="BASE").debug(f"收到Action LLM输出: {message}")
         try:
-            if message.get("event") == ServerEvent.ChatActionEnd:
-                self.prepost_actor.tell({"type": "add_action_message", "data": message.get("payload_msg", {})})
+            if message.get("event") == ServerEvent.ChatActionResponse:
+                self.llm_chat_actor.tell({"type": "response_action_message", "data": message.get("payload_msg", {})})
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)
         except Exception:
@@ -209,11 +219,12 @@ class ActorMessageProcessor:
                 prompts.append({"role": "user", "content": self.asr_result})
                 self.llm_chat_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
                 self.llm_chat_actor.tell({"type": "run", "data": prompts})
-        elif isinstance(message, dict) and message.get("event") == "ActionLLMRun":
-            prompts = message.get("prompts")
-            if prompts and self.llm_action_actor:
-                self.llm_action_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
-                self.llm_action_actor.tell({"type": "run", "data": prompts})
+        # elif isinstance(message, dict) and message.get("event") == "ActionLLMRun":
+        #     # 先通过 Planning 生成执行计划，再交给 Action 执行
+        #     if  self.llm_action_actor:
+        #         # 将原 prompts 作为规划输入（包含场景/角色/世界信息）
+        #         self.llm_action_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
+        #         self.llm_action_actor.tell({"type": "user_input", "data": message.get("user_input")})
     
     def handle_message(self, message_data: Dict[str, Any]):
         """
@@ -277,6 +288,9 @@ class ActorMessageProcessor:
                 "type": "char_status",
                 "data": message_data.get("payload_msg", {}).get("char_status", "")
             })
+            action = message_data.get("payload_msg", {}).get("char_status", "").get("action", None)
+            if action:
+                self.llm_action_actor.tell({"type": "action_step_finished", "data": action})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     def start(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):
@@ -284,9 +298,31 @@ class ActorMessageProcessor:
         self.chat_id = chat_id
         self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
-        
         logger.info(f"ActorMessageProcessor启动开始: chat_id={self.chat_id}")
-        
+        prompt_manager = PromptManager.get_instance()
+        # 初始化运行期上下文（对齐 msg_preandpost_processor）
+        user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
+        # 用户可切换场景，这里以用户当前场景为准
+        char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
+        current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
+        current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
+        character = CharacterManager().get_character_by_id(current_scene_info.activated_char_id)
+        system_preset = SystemPresetManager().get_system_preset_by_id(current_scene_info.activated_system_preset_id)
+        system_preset_prompts = system_preset["prompts"]
+        system_preset_prompt_order = system_preset["prompt_order"]
+        world_info_scanner = WorldInfoScanner(activate_world_book_ids=current_scene_info.activated_world_book_ids)
+        # 激活世界书关键词
+        world_info_scanner.set_activate_keys(current_scene_info.activated_world_book_keys)
+        prompt_manager.update_instance(
+            chat_id=self.chat_id,
+            user_info=user_info,
+            scene_info=current_scene_info,
+            system_preset=system_preset,
+            system_preset_prompts=system_preset_prompts,
+            system_preset_prompt_order=system_preset_prompt_order,
+            character=character,
+            world_info_scanner=world_info_scanner
+        )
         # 启动所有Actor
         start_data = {"chat_id": self.chat_id, "user_id": self.user_id}
         
@@ -328,6 +364,5 @@ class ActorMessageProcessor:
             self.tts_actor.tell({"type": "stop"})
         if self.prepost_actor:
             self.prepost_actor.tell({"type": "stop"})
-        
         logger.info("ActorMessageProcessor清理完成")
         return {"success": True}

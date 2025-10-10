@@ -26,6 +26,23 @@ def random_10_percent() -> bool:
     """返回10%概率的随机布尔值"""
     return random.random() < 0.1
 
+def safe_async_call(func, *args, **kwargs):
+    try:
+        import asyncio
+        async def _run():
+            return await func(*args, **kwargs)
+        return asyncio.run(_run())
+    except RuntimeError:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(func(*args, **kwargs))
+        finally:
+            loop.close()
+    except Exception as e:
+        return None
+
 @dataclass
 class PerformancePoint:
     """性能统计点"""

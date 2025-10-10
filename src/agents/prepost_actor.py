@@ -56,8 +56,6 @@ class PrePostActor(pykka.ThreadingActor):
                 return self._preprocess()
             elif msg_type == "postprocess":
                 return self._postprocess(message.get("data"))
-            elif msg_type == "add_action_message":
-                return self._add_action_message(message.get("data"))
             elif msg_type == "change_bot_name":
                 return self._change_bot_name(message.get("data"))
             elif msg_type == "change_scene_name":
@@ -106,22 +104,7 @@ class PrePostActor(pykka.ThreadingActor):
             if not self.chat_id or not self.user_id:
                 return {"success": False, "error": "Missing chat_id or user_id"}
             
-            # 初始化运行期上下文（对齐 msg_preandpost_processor）
-            self.user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
-            # 用户可切换场景，这里以用户当前场景为准
-            char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
-            current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
-            self.current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
-            self.character = CharacterManager().get_character_by_id(self.current_scene_info.activated_char_id)
-            self.bot_name = self.character.name
-            self.system_preset = SystemPresetManager().get_system_preset_by_id(self.current_scene_info.activated_system_preset_id)
-            self.system_preset_prompts = self.system_preset["prompts"]
-            self.system_preset_prompt_order = self.system_preset["prompt_order"]
-            self.world_info_scanner = WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids)
-            # 激活世界书关键词
-            self.world_info_scanner.set_activate_keys(self.current_scene_info.activated_world_book_keys)
             self.is_running = True
-            
             logger.bind(tag="BASE").info(f"PrePost Actor启动成功: chat_id={self.chat_id}, user_id={self.user_id}")
             return {"success": True}
         except Exception as e:
@@ -131,7 +114,7 @@ class PrePostActor(pykka.ThreadingActor):
     def _stop_process(self):
         """停止预处理和后处理器"""
         try:
-            self.is_running = False
+            # self.is_running = False
             
             logger.info("PrePost Actor停止成功")
             return {"success": True}
@@ -148,17 +131,8 @@ class PrePostActor(pykka.ThreadingActor):
         try:
             logger.info("执行预处理")
             # 生成 prompts
-            generator = PromptManager(
-                chat_id=self.chat_id,
-                user_info=self.user_info,
-                scene_info=self.current_scene_info,
-                system_preset=self.system_preset,
-                system_preset_prompts=self.system_preset_prompts,
-                system_preset_prompt_order=self.system_preset_prompt_order,
-                character=self.character,
-                world_info_scanner=self.world_info_scanner
-            )
-            prompts, token_usage = self._safe_async_generate(generator, GenerationType.CHAT)
+            prompt_manager = PromptManager.get_instance()
+            prompts, token_usage = self._safe_async_generate(prompt_manager, GenerationType.CHAT)
             # 延迟日志
             if self.process_timer:
                 logger.bind(tag="DELAY").info(f"Preprocess delay: {int((time.time() - self.process_timer) * 1000)}ms")
@@ -184,8 +158,13 @@ class PrePostActor(pykka.ThreadingActor):
                     created_at=int(datetime.now().timestamp() * 1000)
                 )
                 MessageStore.get_instance().add_message(message)
+            # # 通过回调把 prompts 交给 LLM+TTS Actor
+            # if self.output_callback and prompts:
+            #     self.output_callback({
+            #         "event": "ActionLLMRun",
+            #         "user_input": self.asr_result
+            #     })
             return {"success": True, "prompts_count": len(prompts) if prompts else 0}
-            
         except Exception as e:
             logger.error(f"预处理失败: {e}")
             return {"success": False, "error": str(e)}
@@ -216,30 +195,30 @@ class PrePostActor(pykka.ThreadingActor):
             # chat stream 心跳
             ChatStreamManager.get_instance().update_chat_stream_checked_at(self.chat_id)
             # 延迟日志
-            if self.process_timer:
-                logger.bind(tag="DELAY").info(f"Postprocess delay: {int((time.time() - self.process_timer) * 1000)}ms")
-            # 生成 prompts
-            generator = PromptManager(
-                chat_id=self.chat_id,
-                user_info=self.user_info,
-                scene_info=self.current_scene_info,
-                system_preset=self.system_preset,
-                system_preset_prompts=self.system_preset_prompts,
-                system_preset_prompt_order=self.system_preset_prompt_order,
-                character=self.character,
-                world_info_scanner=self.world_info_scanner
-            )
-            logger.bind(tag="BASE").info(f"generator: {generator}")
-            prompts, token_usage = self._safe_async_generate(generator, GenerationType.ACTION)
-            for prompt in prompts:
-                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
-            # 通过回调把 prompts 交给 LLM+TTS Actor
-            if self.output_callback and prompts:
-                logger.bind(tag="BASE").info("send prompts to ActionLLMRun")
-                self.output_callback({
-                    "event": "ActionLLMRun",
-                    "prompts": prompts
-                })
+            # if self.process_timer:
+            #     logger.bind(tag="DELAY").info(f"Postprocess delay: {int((time.time() - self.process_timer) * 1000)}ms")
+            # # 生成 prompts
+            # generator = PromptManager(
+            #     chat_id=self.chat_id,
+            #     user_info=self.user_info,
+            #     scene_info=self.current_scene_info,
+            #     system_preset=self.system_preset,
+            #     system_preset_prompts=self.system_preset_prompts,
+            #     system_preset_prompt_order=self.system_preset_prompt_order,
+            #     character=self.character,
+            #     world_info_scanner=self.world_info_scanner
+            # )
+            # logger.bind(tag="BASE").info(f"generator: {generator}")
+            # prompts, token_usage = self._safe_async_generate(generator, GenerationType.ACTION)
+            # for prompt in prompts:
+            #     logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
+            # # 通过回调把 prompts 交给 LLM+TTS Actor
+            # if self.output_callback and prompts:
+            #     logger.bind(tag="BASE").info("send prompts to ActionLLMRun (will plan first)")
+            #     self.output_callback({
+            #         "event": "ActionLLMRun",
+            #         "prompts": prompts
+            #     })
             # 任务调度
             # self._handle_tasks(bot_response)
             # # build_summary_mem
@@ -257,32 +236,6 @@ class PrePostActor(pykka.ThreadingActor):
             logger.error(f"后处理失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def _add_action_message(self, data):
-        """执行后处理"""
-        if not self.is_running:
-            return {"success": False, "error": "PrePost Actor未运行"}
-        
-        try:
-            bot_response = data or {}
-            content = bot_response.get("content", "")
-            tokens = count_tokens_openai(content)
-            message = MessageModel(
-                msg_id=str(uuid.uuid4()),
-                chat_id=self.chat_id,
-                user_id=self.bot_name or "assistant",
-                platform="default",
-                role="assistant",
-                m_type="action",
-                content=content,
-                tokens=tokens,
-                data={},
-                created_at=int(datetime.now().timestamp() * 1000)
-            )
-            MessageStore.get_instance().add_message(message)
-        except Exception as e:
-            logger.error(f"添加动作消息失败: {e}")
-            return {"success": False, "error": str(e)}
-    
     def _change_bot_name(self, bot_name):
         """更改机器人名称"""
         try:
@@ -291,7 +244,9 @@ class PrePostActor(pykka.ThreadingActor):
                 self.bot_name = bot_name
                 # 同步角色信息（若存在同名角色）
                 try:
-                    self.character = CharacterManager().get_character_by_name(self.bot_name) or self.character
+                    character = CharacterManager().get_character_by_name(self.bot_name) or self.character
+                    prompt_manager = PromptManager.get_instance()
+                    prompt_manager.update_instance(character=character)
                 except Exception:
                     pass
             return {"success": True}
@@ -327,9 +282,8 @@ class PrePostActor(pykka.ThreadingActor):
             else:
                 sp = None
             if sp:
-                self.system_preset = sp
-                self.system_preset_prompts = sp["prompts"]
-                self.system_preset_prompt_order = sp["prompt_order"]
+                prompt_manager = PromptManager.get_instance()
+                prompt_manager.update_instance(system_preset=sp, system_preset_prompts=sp["prompts"], system_preset_prompt_order=sp["prompt_order"])
             return {"success": True}
             
         except Exception as e:
@@ -341,11 +295,14 @@ class PrePostActor(pykka.ThreadingActor):
         try:
             logger.info(f"更改世界信息激活键: {keys}")
             if not self.world_info_scanner:
-                self.world_info_scanner = WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids)
+                prompt_manager = PromptManager.get_instance()
+                prompt_manager.update_instance(world_info_scanner=WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids))
             if isinstance(keys, list):
-                self.world_info_scanner.set_activate_keys(keys)
+                prompt_manager = PromptManager.get_instance()
+                prompt_manager.update_instance(world_info_scanner=WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids))
             elif isinstance(keys, dict) and keys.get("activate_keys"):
-                self.world_info_scanner.set_activate_keys(keys.get("activate_keys"))
+                prompt_manager = PromptManager.get_instance()
+                prompt_manager.update_instance(world_info_scanner=WorldInfoScanner(activate_world_book_ids=self.current_scene_info.activated_world_book_ids))
             return {"success": True}
             
         except Exception as e:
