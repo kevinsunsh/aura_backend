@@ -159,7 +159,7 @@ class ActorMessageProcessor:
     
     def _handle_llm_chat_output(self, message):
         """处理Chat LLM输出，并将内容转发给TTSActor"""
-        logger.bind(tag="BASE").info(f"收到Chat LLM输出: {message}")
+        # logger.bind(tag="BASE").info(f"收到Chat LLM输出: {message}")
         try:
             if message.get("event") == ServerEvent.ChatResponse:
                 content = message.get("payload_msg", {}).get("content", "")
@@ -299,10 +299,11 @@ class ActorMessageProcessor:
         self.chat_id = chat_id
         self.user_id = user_id
         self.websocket_send_callback = websocket_send_callback
-        logger.info(f"ActorMessageProcessor启动开始: chat_id={self.chat_id}")
+        logger.bind(tag="BASE").info(f"ActorMessageProcessor启动开始: chat_id={self.chat_id}")
         prompt_manager = PromptManager.get_instance()
         # 初始化运行期上下文（对齐 msg_preandpost_processor）
         user_info = UserInfoManager().get_user_info_by_user_id(self.user_id)
+        logger.bind(tag="BASE").info(f"user_info: {user_info}")
         # 用户可切换场景，这里以用户当前场景为准
         char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
         current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"

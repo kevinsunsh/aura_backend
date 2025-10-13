@@ -305,7 +305,7 @@ class TtsClient:
 
     async def _tts_send_text(self, ws, speaker: str, text: str, session_id, mood_code='neutral', mood_level=3, speech_rate=3):
         """TTS发送文本"""
-        logger.bind(tag="TTS").info(f"===========TTS发送文本: {text} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
+        # logger.bind(tag="TTS").info(f"===========TTS发送文本: {text} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()

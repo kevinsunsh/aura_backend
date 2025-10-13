@@ -5,7 +5,6 @@
 
 import json
 import numpy as np
-from turtle import goto
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -14,6 +13,7 @@ from langchain.chat_models import init_chat_model
 from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langgraph.types import interrupt, Command
+from agents.agent_memory.prompt_manager import char_instance_info
 from agents.states.agent_flow_state import AgentFlowState, NextAction, FeedbackAnalysis
 from agents.prompts.agent_flow_prompts import (
     ACTION_PLANNING_PROMPT,
@@ -126,7 +126,9 @@ def prepare_data(state: AgentFlowState, config: RunnableConfig) -> Dict[str, Any
             api_base="https://ark.cn-beijing.volces.com/api/v3",
         )
         desc_vec = embedding_model.embed(action_goal)
-        scene_id = PromptManager.get_instance().scene_info.scene_id
+        user_id = state.get("user_id", "")
+        chat_id = state.get("chat_id", "")
+        scene_id = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(user_id, chat_id).current_scene_id
         character_description = PromptManager.get_instance().character.description
         bot_name = PromptManager.get_instance().character.name
         items = SceneItemEntryManager().search_items_by_description_vector(scene_id, desc_vec, top_k=20)

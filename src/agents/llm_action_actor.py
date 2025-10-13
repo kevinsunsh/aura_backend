@@ -43,6 +43,7 @@ class LLMActionActor(pykka.ThreadingActor):
         self.planning_interval = 30  # 规划间隔（秒）
         self.is_planning = False  # 是否正在规划中
         self.bot_name = None
+        self.start_action = False
     
     def on_receive(self, message):
         try:
@@ -227,9 +228,17 @@ class LLMActionActor(pykka.ThreadingActor):
     
     def _action_step_finished(self, execution_result: Dict[str, Any]):
         try:
+            current_action = execution_result.get("current", "").strip()
+            current_target = execution_result.get("target", "").strip()
+            if not current_action or not current_target:
+                return {"success": True}
+            if self.start_action == False:
+                logger.bind(tag="BASE").info(f"start_action is False, skip")
+                return {"success": True}
+            self.start_action = False
             input_data = {
-                "current_action": execution_result.get("current", ""),
-                "current_target": execution_result.get("target", "")
+                "current_action": current_action,
+                "current_target": current_target
             }
             logger.bind(tag="BASE").info(f"input data: {input_data}")
             action_message = f"executed {input_data['current_action']} with {input_data['current_target']}."
@@ -362,11 +371,12 @@ class LLMActionActor(pykka.ThreadingActor):
                                 result["name"] = items[0]["item_name"]
                                 result["label"] = items[0]["label_name"]
                                 result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                logger.bind(tag="BASE").info(f"action result: {result}")
                 action_message = f'planned to {action["cmd"]} with {action["id"]}. reason: {action["reasoning"]}'
                 self.bot_name = action["bot_name"]
                 action_data = {'content': action_message, 'bot_name': self.bot_name}
                 self._add_action_message(action_data)
+                self.start_action = True
+                logger.bind(tag="BASE").info(f"action result: {result}, start_action: {self.start_action}")
                 if self.output_callback:
                     self._run_async(safe_call(self.output_callback, {
                         "event": ServerEvent.ChatActionParams,
