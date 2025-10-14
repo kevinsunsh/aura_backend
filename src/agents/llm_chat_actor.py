@@ -24,7 +24,8 @@ class LLMChatActor(pykka.ThreadingActor):
         self.process_timer = 0
         self.is_interruption = False
         self.action_content = ""
-
+        self.action_tag_start = False
+    
     def on_receive(self, message):
         try:
             msg_type = message.get("type")
@@ -117,17 +118,20 @@ class LLMChatActor(pykka.ThreadingActor):
                     })
         elif payload["tag"] == "action":
             if payload["status"] == "start":
+                self.action_tag_start = True
                 self.action_content = ""
             elif payload["status"] == "streaming":
                 self.action_content += payload["content"]
             elif payload["status"] == "end":
                 if self.output_callback:
-                    await safe_call(self.output_callback, {
-                        "event": ServerEvent.ChatActionGoal,
-                        "payload_msg": {
-                            "content": self.action_content
-                        }
-                    })
+                    if self.action_tag_start:
+                        self.action_tag_start = False
+                        await safe_call(self.output_callback, {
+                            "event": ServerEvent.ChatActionGoal,
+                            "payload_msg": {
+                                "content": self.action_content
+                            }
+                        })
     
     def _run_async(self, coro):
         try:
@@ -142,8 +146,8 @@ class LLMChatActor(pykka.ThreadingActor):
     
     async def handle_message(self, prompts: list[dict]) -> Dict[str, Any]:
         try:
-            for prompt in prompts:
-                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
+            # for prompt in prompts:
+            #     logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             chat_model = get_chat_model_by_type("pfc_action_planner")
             final_response = ""
             first_chunk = True
@@ -178,6 +182,8 @@ class LLMChatActor(pykka.ThreadingActor):
             prompts, token_usage = await PromptManager.get_instance().generate(GenerationType.ACTION_RESPONSE)
             action_response_format_prompt = ACTION_RESPONSE_FORMAT_PROMPT.format(action_message=action_message)
             prompts.append({"role": "system", "content": action_response_format_prompt})
+            for prompt in prompts:
+                logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
             chat_model = get_chat_model_by_type("vlm")
             final_response = ""
             first_chunk = True

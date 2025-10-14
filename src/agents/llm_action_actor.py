@@ -44,6 +44,7 @@ class LLMActionActor(pykka.ThreadingActor):
         self.is_planning = False  # 是否正在规划中
         self.bot_name = None
         self.start_action = False
+        self.current_action = ""
     
     def on_receive(self, message):
         try:
@@ -237,13 +238,13 @@ class LLMActionActor(pykka.ThreadingActor):
                 return {"success": True}
             self.start_action = False
             input_data = {
-                "current_action": current_action,
-                "current_target": current_target
+                "current_action": self.current_action,
+                "current_target": self.current_target
             }
             logger.bind(tag="BASE").info(f"input data: {input_data}")
-            action_message = f"executed {input_data['current_action']} with {input_data['current_target']}."
+            action_message = f"finished executing {self.current_action} with {self.current_target}."
             action_data = {'content': action_message, 'bot_name': self.bot_name}
-            self._add_action_message(action_data)
+            self._add_action_message(action_data, self.start_action)
             for event in self.graph.stream(Command(resume=True, update=input_data), self.thread, stream_mode="updates"):
                 try:
                     self._publish_event(event)
@@ -291,7 +292,7 @@ class LLMActionActor(pykka.ThreadingActor):
             finally:
                 loop.close()
     
-    def _add_action_message(self, data):
+    def _add_action_message(self, data, start_action: bool):
         """执行后处理"""
         logger.bind(tag="BASE").info(f"添加动作消息: {data}")
         # if not self.is_running:
@@ -302,17 +303,18 @@ class LLMActionActor(pykka.ThreadingActor):
             content = bot_response.get("content", "")
             bot_name = bot_response.get("bot_name", "")
             # tokens = count_tokens_openai(content)
-            if self.output_callback:
-                self._run_async(safe_call(self.output_callback, {
-                    "event": ServerEvent.ChatActionResponse,
-                    "payload_msg": {
-                        "params": {
-                            "attribute": {
-                                "content": content
+            if start_action == False:
+                if self.output_callback:
+                    self._run_async(safe_call(self.output_callback, {
+                        "event": ServerEvent.ChatActionResponse,
+                        "payload_msg": {
+                            "params": {
+                                "attribute": {
+                                    "content": content
+                                }
                             }
                         }
-                    }
-                }))
+                    }))
             message = MessageModel(
                 msg_id=str(uuid.uuid4()),
                 chat_id=self.chat_id,
@@ -338,6 +340,8 @@ class LLMActionActor(pykka.ThreadingActor):
                     "func": action["cmd"],
                     "target": action["id"]
                 }
+                self.current_action = action["cmd"]
+                self.current_target = action["id"]
                 logger.bind(tag="BASE").info(f"output result: {result}")
                 if action["id"] != "self":
                     item = SceneItemEntryManager().get_scene_item_by_id(action["scene_id"], result["target"])
@@ -371,11 +375,11 @@ class LLMActionActor(pykka.ThreadingActor):
                                 result["name"] = items[0]["item_name"]
                                 result["label"] = items[0]["label_name"]
                                 result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                action_message = f'planned to {action["cmd"]} with {action["id"]}. reason: {action["reasoning"]}'
+                action_message = f'planned to {self.current_action} with {self.current_target}. reason: {action["reasoning"]}'
                 self.bot_name = action["bot_name"]
                 action_data = {'content': action_message, 'bot_name': self.bot_name}
-                self._add_action_message(action_data)
                 self.start_action = True
+                self._add_action_message(action_data, self.start_action)
                 logger.bind(tag="BASE").info(f"action result: {result}, start_action: {self.start_action}")
                 if self.output_callback:
                     self._run_async(safe_call(self.output_callback, {
@@ -398,12 +402,16 @@ class LLMActionActor(pykka.ThreadingActor):
                                 "content": action_message
                             }
                         }))
+                if action["cmd"] == "idle":
+                    self.tell({"type": "action_step_finished", "data": {"current": "idle", "target": "self"}})
             elif 'execute_action' in event:
                 data = event["execute_action"]
                 if "current_result" in data:
-                    action_message = f'finished the goal {data["action_goal"]} with {data["current_result"]}'
-                    action_data = {'content': action_message, 'bot_name': self.bot_name}
-                    self._add_action_message(action_data)
+                    if len(data["current_result"]) > 0:
+                        logger.bind(tag="BASE").info(f"current_result: {data["current_result"]}")
+                        action_message = f'finished the goal {data["action_goal"]} with {data["current_result"]}'
+                        action_data = {'content': action_message, 'bot_name': self.bot_name}
+                        self._add_action_message(action_data, False)
         except Exception as e:
             logger.error(f"Failed to publish event to Redis: {str(e)}")
             raise

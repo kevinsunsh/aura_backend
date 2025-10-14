@@ -119,6 +119,7 @@ class ActorMessageProcessor:
             if not self.asr_is_started:
                 self.asr_is_started = True
                 logger.bind(tag="BASE").info("E2E检测到语音开始")
+                self.asr_result = ""
                 # 发送中断信号给其他Actor
                 # 同上
                 # 发送ASRInfo事件到WebSocket

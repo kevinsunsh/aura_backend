@@ -25,8 +25,8 @@ class NextAction(BaseModel):
     )
 
 class FeedbackAnalysis(BaseModel):
-    analysis_result_type: Literal["goal_archived", "regenerate_goal", "plan_next_action"] = Field(
-        description="Type of the analysis result. goal_archived: the goal is archived and no more goal needed to be achieved, regenerate_goal: regenerate the goal, found we need adjust the goal to be more precise, plan_next_action: the goal is still not achieved, we need plan the next action to continue.",
+    analysis_result_type: Literal["goal_archived", "plan_next_action"] = Field(
+        description="Type of the analysis result. goal_archived: the goal is archived and no more goal needed to be achieved, plan_next_action: the goal is still not achieved, we need plan the next action to continue.",
     )
     analysis_result_reasoning: str = Field(
         description="Analysis result reasoning.",
@@ -55,5 +55,7 @@ class AgentFlowState(TypedDict):
     feedback_reasoning: str
     # 角色描述
     character_description: str
+    # 行动步骤计数
+    action_step_count: int
     # 执行结果
     current_result: str

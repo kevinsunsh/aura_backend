@@ -139,7 +139,9 @@ def prepare_data(state: AgentFlowState, config: RunnableConfig) -> Dict[str, Any
             "related_items": related_items_str,
             "character_description": character_description,
             "scene_id": scene_id,
-            "bot_name": bot_name
+            "bot_name": bot_name,
+            "current_result": "",
+            "action_step_count": 0
         }
         return update_data
     except Exception as e:
@@ -157,6 +159,7 @@ def plan_action(state: AgentFlowState, config: RunnableConfig) -> Dict[str, Any]
         character_description = state.get("character_description", "")
         related_items = state.get("related_items", "")
         goal_timestamp = state.get("goal_timestamp", 0)
+        action_step_count = state.get("action_step_count")
         current_timestamp = int(datetime.now().timestamp() * 1000)
         duration = current_timestamp - goal_timestamp
         chat_history = MessageStore.get_instance().get_messages_in_recent_time(milliseconds=duration, chat_id=chat_id, m_type="action")
@@ -179,14 +182,18 @@ def plan_action(state: AgentFlowState, config: RunnableConfig) -> Dict[str, Any]
             related_items=related_items,
             format=plan_format
         )
+        # logger.bind(tag="BASE").info(f"plan_action system instructions: {system_instructions}")
         # Generate plan
         next_action: NextAction = structured_llm.invoke([
             SystemMessage(content=system_instructions)
-        ])
+        ],
+        extra_body={"thinking": {"type": "disabled"}})
         update_data = {
             "action_target_id": next_action.action_target_id,
             "action_cmd": next_action.action_cmd,
             "next_action_reasoning": next_action.next_action_reasoning,
+            "current_result": "",
+            "action_step_count": action_step_count + 1
         }
         return update_data
     except Exception as e:
@@ -201,12 +208,15 @@ def execute_action(state: AgentFlowState, config: RunnableConfig) -> Dict[str, A
     scene_id = state.get("scene_id", "")
     bot_name = state.get("bot_name", "")
     goal_timestamp = state.get("goal_timestamp", 0)
+    action_step_count = state.get("action_step_count")
     current_timestamp = int(datetime.now().timestamp() * 1000)
     duration = current_timestamp - goal_timestamp
     character_description = state.get("character_description", "")
     interrupt_message = json.dumps({"id": action_target_id, "cmd": action_cmd, "reasoning": action_reasoning, "scene_id": scene_id, "bot_name": bot_name}, ensure_ascii=False, indent=2)
-    logger.bind(tag="BASE").info(f"interrupt message: {interrupt_message}")
     feedback = interrupt(interrupt_message)
+    if action_step_count > 10:
+        logger.bind(tag="BASE").info(f"目标执行次数超过10次，结束流程")
+        return Command(goto=END, update={"action_goal": action_goal, "current_result": "目标执行次数超过10次，需要重新制定目标"})
     try:
         planner = get_chat_model_by_type("pfc_action_planner")
         # 格式化输入数据
@@ -235,17 +245,19 @@ def execute_action(state: AgentFlowState, config: RunnableConfig) -> Dict[str, A
             action_history=chat_history_str,
             format=feedback_format
         )
+        # logger.bind(tag="BASE").info(f"execute_action system instructions: {system_instructions}")
         # Generate plan
         feedback_analysis: FeedbackAnalysis = structured_llm.invoke([
             SystemMessage(content=system_instructions)
-        ])
+        ],
+        extra_body={"thinking": {"type": "disabled"}})
         if feedback_analysis.analysis_result_type == "goal_archived":
             logger.bind(tag="BASE").info(f"目标已实现")
             return Command(goto=END, update={"action_goal": action_goal, "current_result": feedback_analysis.analysis_result_reasoning})
-        elif feedback_analysis.analysis_result_type == "plan_next_action":
-            logger.bind(tag="BASE").info(f"规划下一步行动: {feedback_analysis.analysis_result_reasoning}")
-            return Command(goto="plan_action", 
-                update={"feedback_reasoning": feedback_analysis.analysis_result_reasoning})
+        # elif feedback_analysis.analysis_result_type == "plan_next_action":
+        # logger.bind(tag="BASE").info(f"规划下一步行动: {feedback_analysis.analysis_result_reasoning}")
+        return Command(goto="plan_action", 
+            update={"action_goal": action_goal, "current_result": "", "feedback_reasoning": feedback_analysis.analysis_result_reasoning})
     except Exception as e:
         logger.bind(tag="BASE").info(f"执行行动时出错: {str(e)}")
         return Command(goto=END)
