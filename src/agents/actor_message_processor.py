@@ -13,6 +13,7 @@ from .llm_chat_actor import LLMChatActor
 from .llm_action_actor import LLMActionActor
 from .tts_actor import TTSActor
 from .prepost_actor import PrePostActor
+from .loop_actor import LoopActor
 from api_protocol.constant import *
 from agents.agent_memory.prompt_manager.prompt_manager import PromptManager
 from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
@@ -42,6 +43,7 @@ class ActorMessageProcessor:
         # Actor引用
         self.vad_actor = None
         self.e2e_actor = None
+        self.loop_actor = None
         self.llm_chat_actor = None
         self.llm_action_actor = None
         self.tts_actor = None
@@ -60,6 +62,7 @@ class ActorMessageProcessor:
             # 创建所有Actor实例
             self.vad_actor = VADActor.start()
             self.e2e_actor = E2EActor.start()
+            self.loop_actor = LoopActor.start()
             # self.llm_actor = LLMActor.start()
             self.llm_chat_actor = LLMChatActor.start()
             self.llm_action_actor = LLMActionActor.start()
@@ -68,6 +71,7 @@ class ActorMessageProcessor:
             # 设置输出回调
             self.vad_actor.tell({"type": "set_callback", "callback": self._handle_vad_output})
             self.e2e_actor.tell({"type": "set_callback", "callback": self._handle_e2e_output})
+            self.loop_actor.tell({"type": "set_callback", "callback": self._handle_loop_output})
             # self.llm_actor.tell({"type": "set_callback", "callback": self._handle_llm_output})
             self.llm_chat_actor.tell({"type": "set_callback", "callback": self._handle_llm_chat_output})
             self.llm_action_actor.tell({"type": "set_callback", "callback": self._handle_llm_action_output})
@@ -157,6 +161,15 @@ class ActorMessageProcessor:
                         self.prepost_actor.tell({"type": "set_asr_result", "asr_result": content})
             except Exception:
                 pass
+    
+    def _handle_loop_output(self, message):
+        """处理Loop输出"""
+        try:
+            logger.debug(f"收到Loop输出: {message}")
+            if self.websocket_send_callback:
+                    self.websocket_send_callback(message)
+        except Exception:
+            logger.bind(tag="BASE").info(f"处理Loop输出失败: {message}")
     
     def _handle_llm_chat_output(self, message):
         """处理Chat LLM输出，并将内容转发给TTSActor"""
@@ -251,6 +264,8 @@ class ActorMessageProcessor:
             self.vad_actor.tell({"type": "input", "data": payload_msg})
             # 发送到E2E Actor
             self.e2e_actor.tell({"type": "input", "data": payload_msg})
+            # 发送到Loop Actor
+            self.loop_actor.tell({"type": "input"})
         elif message_data.get("event") == ClientEvent.SpeakEnded:
             if self.asr_is_started:
                 self.asr_is_started = False
@@ -332,6 +347,7 @@ class ActorMessageProcessor:
         # 使用ask方法等待所有Actor启动完成
         vad_result = self.vad_actor.ask({"type": "start", "data": start_data}, timeout=5)
         e2e_result = self.e2e_actor.ask({"type": "start", "data": start_data}, timeout=5)
+        loop_result = self.loop_actor.ask({"type": "start", "data": start_data}, timeout=5)
         # llm_result = self.llm_actor.ask({"type": "start", "data": start_data}, timeout=5)
         llm_chat_result = self.llm_chat_actor.ask({"type": "start", "data": start_data}, timeout=5)
         llm_action_result = self.llm_action_actor.ask({"type": "start", "data": start_data}, timeout=5)
@@ -340,7 +356,7 @@ class ActorMessageProcessor:
         
         # 检查启动结果
         if (vad_result.get("success") and e2e_result.get("success") and 
-            llm_chat_result.get("success") and llm_action_result.get("success") and tts_result.get("success") and prepost_result.get("success")):
+            loop_result.get("success") and llm_chat_result.get("success") and llm_action_result.get("success") and tts_result.get("success") and prepost_result.get("success")):
             logger.bind(tag="BASE").info("ActorMessageProcessor启动完成")
             return True
         else:
@@ -359,6 +375,8 @@ class ActorMessageProcessor:
             self.vad_actor.tell({"type": "stop"})
         if self.e2e_actor:
             self.e2e_actor.tell({"type": "stop"})
+        if self.loop_actor:
+            self.loop_actor.tell({"type": "stop"})
         if self.llm_chat_actor:
             self.llm_chat_actor.tell({"type": "stop"})
         if self.llm_action_actor:
