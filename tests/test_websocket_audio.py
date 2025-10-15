@@ -1088,6 +1088,10 @@ async def sse_listener(sse_url, session):
                             logger.info("🎤 ASR结束")
                             session.asr_ended_time = time.time()
                             logger.debug(f"⏱️ ASREnded时间戳: {session.asr_ended_time}")
+                        elif data.get("event") == 1001:  # EnvStatus
+                            logger.info("🎤 收到EnvStatus事件(1001)")
+                            session.env_status = data.get("payload_msg").get("status", "")
+                            logger.debug(f"🎤 EnvStatus: {session.env_status}")
                     except Exception as e:
                         logger.error(f"解析SSE消息失败: {e}")
     except Exception as e:
@@ -1596,7 +1600,8 @@ class WebSocketTestSession:
                 logger.error(f"发生错误: {data.get('message', '未知错误')}")
                 # 发生错误时也设置响应完成标志
                 self.response_completed = True
-
+            elif data.get("event") == 1001:  # EnvStatus
+                logger.info(f"🎵 收到EnvStatus事件: {payload_msg.get('items', {})}")
     def _is_websocket_closed(self) -> bool:
         """检查WebSocket是否已关闭，兼容不同版本的websockets库"""
         try:

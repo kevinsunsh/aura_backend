@@ -165,7 +165,7 @@ class ActorMessageProcessor:
     def _handle_loop_output(self, message):
         """处理Loop输出"""
         try:
-            logger.debug(f"收到Loop输出: {message}")
+            logger.bind(tag="BASE").info(f"收到Loop输出: {message}")
             if self.websocket_send_callback:
                     self.websocket_send_callback(message)
         except Exception:
