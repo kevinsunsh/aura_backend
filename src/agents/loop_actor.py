@@ -80,7 +80,7 @@ class LoopActor(pykka.ThreadingActor):
         char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
         current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
         result = SceneItemEntryManager().get_scene_items_by_timestamp(self.last_timestamp, current_scene_id)
-        self.last_timestamp = result["latest_timestamp"]
+        self.last_timestamp = result["latest_timestamp"] + 1
         items = result["items"]
         try:
             self._run_async(safe_call(self.output_callback,{
