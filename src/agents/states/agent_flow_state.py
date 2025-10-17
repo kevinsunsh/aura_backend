@@ -20,6 +20,12 @@ class NextAction(BaseModel):
     action_cmd: str = Field(
         description="Action cmd should the command of the action that the target item can accept.",
     )
+    look_for_item_type: str = Field(
+        description="Look for item type should be the type of the item that needs to be found with vision after action is executed. If no item needs to be found, set it to None.",
+    )
+    look_for_item_description: str = Field(
+        description="Look for item description should be the description of the item that needs to be found with vision after action is executed. If no item needs to be found, set it to None.",
+    )
     next_action_reasoning: str = Field(
         description="Next action reasoning.",
     )
@@ -50,6 +56,8 @@ class AgentFlowState(TypedDict):
     # 行为规划
     action_target_id: str
     action_cmd: str
+    look_for_item_type: str
+    look_for_item_description: str
     next_action_reasoning: str
     # 执行相关
     feedback_reasoning: str

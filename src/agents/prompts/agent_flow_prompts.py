@@ -62,8 +62,9 @@ ACTION_PLANNING_PROMPT = """
 <Rules>
 补充规则：
 1. <Related Items>里任何常识上可以坐的物品，都可以接受"sit"动作，除此之外只能接受可接受动作列表里的动作
-2. 可以选择"turn"动作,在认为需要观察周围环境时使用，选择"turn"动作时, action_target_id为"self"
-3. move_to动作是指移动自己到目标物品所在位置 
+2. move_to动作是指移动自己到目标物品所在位置
+3. 额外可以选择"turn"动作,在人物需要观察周围环境时使用，选择"turn"动作时, action_target_id为["left", "right", "back"], action_target_description为"None"
+4. 额外可以选择"move_forward"动作,在人物需要移动自己向前时使用，选择"move_forward"动作时, action_target_id为"self", action_target_description为"None"
 </Rules>
 
 <Format>
@@ -94,4 +95,8 @@ FEEDBACK_ANALYSIS_PROMPT = """
 Call the FeedbackAnalysis tool with the following format:
 {format}
 </Format>
+"""
+
+EXAMINE_PROMPT = """
+框出所有符合{target_description}描述的位置，输出对应的 bounding box 的坐标
 """

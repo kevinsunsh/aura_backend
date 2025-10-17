@@ -1132,7 +1132,7 @@ class WebSocketTestSession:
         # 状态控制
         self.session_id = None
         # self.chat_id = "3ae1ed57-48fc-8d9d-430d-53a6292b3d6a"
-        self.chat_id = "bd811afc-45e5-6f56-57bb-3bb1ac79a740"
+        self.chat_id = "2a014e40-4bb3-b82a-082c-21950aa35196"
         self.user_id = "2342342334"
         # self.user_id = "test_user_001"
         self.is_running = True
@@ -1951,8 +1951,8 @@ class WebSocketTestSession:
             # 添加WebSocket连接配置，解决ping timeout问题
             async with websockets.connect(
                 self.base_uri + "/ws/stream",
-                ping_interval=5,        # 更频繁的 ping（原来是 120s）
-                ping_timeout=3,         # 更短的超时（原来是 60s）
+                ping_interval=20,        # 更频繁的 ping（原来是 120s）
+                ping_timeout=60,         # 更短的超时（原来是 60s）
                 close_timeout=2,        # 更短的关闭超时
                 max_queue=1024,         # 增大队列（原来是 32）
                 compression=None,        # 已禁用压缩
