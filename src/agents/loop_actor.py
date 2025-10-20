@@ -9,7 +9,6 @@ from agents.agent_memory.prompt_manager.char_instance_info.manager import DBMana
 
 class LoopActor(pykka.ThreadingActor):
     """Loop Actor - 事件循环"""
-    
     def __init__(self, output_callback: Optional[Callable] = None):
         super().__init__()
         self.output_callback = output_callback
@@ -22,13 +21,14 @@ class LoopActor(pykka.ThreadingActor):
         """处理接收到的消息"""
         try:
             msg_type = message.get("type")
-            
             if msg_type == "start":
                 return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
                 return self._stop_process()
             elif msg_type == "input":
                 return self._update()
+            elif msg_type == "change_scene":
+                return self._change_scene()
             elif msg_type == "set_callback":
                 self.output_callback = message.get("callback")
                 return {"success": True}
@@ -92,4 +92,13 @@ class LoopActor(pykka.ThreadingActor):
             return {"success": True}
         except Exception as e:
             logger.error(f"Loop处理音频失败: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _change_scene(self):
+        """切换场景"""
+        try:
+            self.last_timestamp = 0
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"切换场景失败: {e}")
             return {"success": False, "error": str(e)}

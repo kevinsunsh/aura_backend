@@ -290,6 +290,7 @@ class ActorMessageProcessor:
                     "type": "change_scene_name",
                     "data": message_data.get("payload_msg", {}).get("scene_name", "")
                 })
+                self.loop_actor.tell({"type": "change_scene"})
         elif message_data.get("event") == ClientEvent.ChangeBotID:
             self.prepost_actor.tell({
                 "type": "change_bot_name",

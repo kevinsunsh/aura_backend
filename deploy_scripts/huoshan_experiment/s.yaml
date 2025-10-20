@@ -6,7 +6,7 @@ vars:
   sid: "aurabkexp"
   region: "cn-beijing"
   functionName: "aura-backend-function-experiment"
-  version: "0.1.84"
+  version: "0.1.87"
 
 resources:
   aura_backend_experiment:
