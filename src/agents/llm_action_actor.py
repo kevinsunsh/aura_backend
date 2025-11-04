@@ -18,8 +18,8 @@ from utils.utils import safe_call
 from agents.agent_memory.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
 # 移除 agent_flow_manager 依赖
 from agents.agent_memory.message_store import MessageStore
-from agents.graphs.agent_flow_graph import (
-    builder
+from agents.graphs.action_agent_graph import (
+    action_agent_builder
 )
 from langgraph.types import Command, Interrupt
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -84,7 +84,7 @@ class LLMActionActor(pykka.ThreadingActor):
             pool = ConnectionPool(conninfo=db_conn_string)
             checkpointer = PostgresSaver(pool)
             checkpointer.setup()
-            self.graph = builder.compile(checkpointer=checkpointer)
+            self.graph = action_agent_builder.compile(checkpointer=checkpointer)
             self.is_running = True
             logger.bind(tag="BASE").info(f"LLMActionActor启动成功: chat_id={self.chat_id}, user_id={self.user_id}")
             return {"success": True}
@@ -264,10 +264,9 @@ class LLMActionActor(pykka.ThreadingActor):
             
             logger.bind(tag="BASE").info(f"收到目标输入: {goal_input}")
             input_data = {
-                "chat_id": self.chat_id,
-                "user_id": self.user_id,
+                "session_id": self.chat_id,
                 "action_goal": goal_input,
-                "goal_timestamp": int(datetime.now().timestamp() * 1000)
+                "plan_iterations": 0
             }
             for event in self.graph.stream(input_data, self.thread, stream_mode="updates"):
                 try:
@@ -334,54 +333,20 @@ class LLMActionActor(pykka.ThreadingActor):
     
     def _publish_event(self, event):
         try:
+            # if 'execute_action' in event:
+            #     data = event['execute_action']
+            #     action_cmd = data.get("action_cmd", "")
+            #     entity_id = data.get("entity_id", "")
+            #     logger.bind(tag="BASE").info(f"execute_action: {action_cmd}, entity_id: {entity_id}")
             if '__interrupt__' in event:
-                action = json.loads(event['__interrupt__'][0].value)
+                data = event['__interrupt__'][0].value
+                logger.bind(tag="BASE").info(f"execute_action: {data}")
                 result = {
-                    "func": action["cmd"],
-                    "target": action["id"]
+                    "func": data.get("action_cmd", ""),
+                    "target": data["entity_id"]
                 }
-                self.current_action = action["cmd"]
-                self.current_target = action["id"]
-                logger.bind(tag="BASE").info(f"output result: {result}")
-                if action["id"] != "self":
-                    item = SceneItemEntryManager().get_scene_item_by_id(action["scene_id"], result["target"])
-                    if item:
-                        logger.bind(tag="BASE").info(f"item: {item.item_type}")
-                        if item.item_type != "":
-                            result["position"] = item.get_world_pos().tolist()
-                            result["position"][2] = 0.5
-                        result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                        result["name"] = item.item_name
-                        result["label"] = item.label_name
-                    else:
-                        embedding_model = EmbeddingModel(
-                            model_name="doubao-embedding-large-text-250515",
-                            api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
-                            api_base="https://ark.cn-beijing.volces.com/api/v3",
-                        )
-                        desc_vec = embedding_model.embed(result["target"])
-                        items = SceneItemEntryManager().search_items_by_description_vector(action["scene_id"], desc_vec, top_k=1)
-                        if len(items) > 0:
-                            result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
-                            result["target"] = items[0]["item_id"]
-                            result["name"] = items[0]["item_name"]
-                            result["label"] = items[0]["label_name"]
-                            result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                        else:
-                            items = SceneItemEntryManager().search_items_by_keywords(action["scene_id"], result["target"], top_k=1)
-                            if len(items) > 0:
-                                result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
-                                result["target"] = items[0]["item_id"]
-                                result["name"] = items[0]["item_name"]
-                                result["label"] = items[0]["label_name"]
-                                result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
-                action_message = f'planned to {self.current_action} with {self.current_target}. reason: {action["reasoning"]}'
-                self.bot_name = action["bot_name"]
-                action_data = {'content': action_message, 'bot_name': self.bot_name}
-                self.start_action = True
-                self._add_action_message(action_data, self.start_action)
-                logger.bind(tag="BASE").info(f"action result: {result}, start_action: {self.start_action}")
-                if self.output_callback:
+                action_message = f'planned to {result["func"]} with {result["target"]}. reason: {data["reasoning"]}'
+                if data.get("type") == "execute_action_tool":
                     self._run_async(safe_call(self.output_callback, {
                         "event": ServerEvent.ChatActionParams,
                         "payload_msg": {
@@ -393,7 +358,7 @@ class LLMActionActor(pykka.ThreadingActor):
                     self._run_async(safe_call(self.output_callback, {
                         "event": ServerEvent.ChatAction,
                         "payload_msg": {
-                            "content": action["reasoning"]
+                            "content": data["reasoning"]
                         }
                     }))
                     self._run_async(safe_call(self.output_callback,{
@@ -402,16 +367,83 @@ class LLMActionActor(pykka.ThreadingActor):
                                 "content": action_message
                             }
                         }))
-                if action["cmd"] == "idle":
-                    self.tell({"type": "action_step_finished", "data": {"current": "idle", "target": "self"}})
-            elif 'execute_action' in event:
-                data = event["execute_action"]
-                if "current_result" in data:
-                    if len(data["current_result"]) > 0:
-                        logger.bind(tag="BASE").info(f"current_result: {data["current_result"]}")
-                        action_message = f'finished the goal {data["action_goal"]} with {data["current_result"]}'
-                        action_data = {'content': action_message, 'bot_name': self.bot_name}
-                        self._add_action_message(action_data, False)
+            #     action = json.loads(event['__interrupt__'][0].value)
+            #     result = {
+            #         "func": action["cmd"],
+            #         "target": action["id"]
+            #     }
+            #     self.current_action = action["cmd"]
+            #     self.current_target = action["id"]
+            #     logger.bind(tag="BASE").info(f"output result: {result}")
+            #     if action["id"] != "self":
+            #         item = SceneItemEntryManager().get_scene_item_by_id(action["scene_id"], result["target"])
+            #         if item:
+            #             logger.bind(tag="BASE").info(f"item: {item.item_type}")
+            #             if item.item_type != "":
+            #                 result["position"] = item.get_world_pos().tolist()
+            #                 result["position"][2] = 0.5
+            #             result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+            #             result["name"] = item.item_name
+            #             result["label"] = item.label_name
+            #         else:
+            #             embedding_model = EmbeddingModel(
+            #                 model_name="doubao-embedding-large-text-250515",
+            #                 api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+            #                 api_base="https://ark.cn-beijing.volces.com/api/v3",
+            #             )
+            #             desc_vec = embedding_model.embed(result["target"])
+            #             items = SceneItemEntryManager().search_items_by_description_vector(action["scene_id"], desc_vec, top_k=1)
+            #             if len(items) > 0:
+            #                 result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
+            #                 result["target"] = items[0]["item_id"]
+            #                 result["name"] = items[0]["item_name"]
+            #                 result["label"] = items[0]["label_name"]
+            #                 result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+            #             else:
+            #                 items = SceneItemEntryManager().search_items_by_keywords(action["scene_id"], result["target"], top_k=1)
+            #                 if len(items) > 0:
+            #                     result["position"] = [items[0]["world_pos_x"], items[0]["world_pos_y"], 0.5]
+            #                     result["target"] = items[0]["item_id"]
+            #                     result["name"] = items[0]["item_name"]
+            #                     result["label"] = items[0]["label_name"]
+            #                     result["func"] = result["func"] if result["func"] in ["sit", "stand"] else "stand"
+            #     action_message = f'planned to {self.current_action} with {self.current_target}. reason: {action["reasoning"]}'
+            #     self.bot_name = action["bot_name"]
+            #     action_data = {'content': action_message, 'bot_name': self.bot_name}
+            #     self.start_action = True
+            #     self._add_action_message(action_data, self.start_action)
+            #     logger.bind(tag="BASE").info(f"action result: {result}, start_action: {self.start_action}")
+            #     if self.output_callback:
+            #         self._run_async(safe_call(self.output_callback, {
+            #             "event": ServerEvent.ChatActionParams,
+            #             "payload_msg": {
+            #                 "params": {
+            #                     "attribute": result
+            #                 }
+            #             }
+            #         }))
+            #         self._run_async(safe_call(self.output_callback, {
+            #             "event": ServerEvent.ChatAction,
+            #             "payload_msg": {
+            #                 "content": action["reasoning"]
+            #             }
+            #         }))
+            #         self._run_async(safe_call(self.output_callback,{
+            #                 "event": ServerEvent.ChatActionEnd,
+            #                 "payload_msg": {
+            #                     "content": action_message
+            #                 }
+            #             }))
+            #     if action["cmd"] == "idle":
+            #         self.tell({"type": "action_step_finished", "data": {"current": "idle", "target": "self"}})
+            # elif 'execute_action' in event:
+            #     data = event["execute_action"]
+            #     if "current_result" in data:
+            #         if len(data["current_result"]) > 0:
+            #             logger.bind(tag="BASE").info(f"current_result: {data["current_result"]}")
+            #             action_message = f'finished the goal {data["action_goal"]} with {data["current_result"]}'
+            #             action_data = {'content': action_message, 'bot_name': self.bot_name}
+            #             self._add_action_message(action_data, False)
         except Exception as e:
             logger.error(f"Failed to publish event to Redis: {str(e)}")
             raise

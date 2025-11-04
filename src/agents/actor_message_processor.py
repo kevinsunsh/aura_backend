@@ -309,6 +309,13 @@ class ActorMessageProcessor:
             action = message_data.get("payload_msg", {}).get("char_status", "").get("action", None)
             if action:
                 self.llm_action_actor.tell({"type": "action_step_finished", "data": action})
+        elif message_data.get("event") == ClientEvent.ChangeSence:
+            if len(message_data.get("payload_msg", {}).get("scene_data", "")) > 0:
+                self.prepost_actor.tell({
+                    "type": "change_scene_name",
+                    "data": message_data.get("payload_msg", {}).get("scene_data", {}).get("scene_name", "")
+                })
+                self.loop_actor.tell({"type": "change_scene", "data": message_data.get("payload_msg", {}).get("scene_data", {}).get("navmesh_triangles", "")})
         return {"success": True, "action": "audio_task_started", "chat_id": self.chat_id}
     
     def start(self, chat_id: str, user_id: str, websocket_send_callback: Callable[[Dict[str, Any]], None] = None):

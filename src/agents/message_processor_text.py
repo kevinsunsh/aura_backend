@@ -325,7 +325,6 @@ class StreamingTagParser:
 
 class MessageProcessorText:
     """文本消息处理器，负责处理文本消息并启动aura聊天任务"""
-
     def __init__(self, 
                  websocket_send_callback: Callable[[Dict[str, Any]], None] = None,
                  process_timer: Any = None):
