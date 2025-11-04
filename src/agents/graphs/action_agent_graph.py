@@ -462,6 +462,7 @@ def search_team_node(
         logger.bind(tag="BASE").info("所有步骤已完成，返回规划节点")
         for step in current_plan.steps: 
             search_result = f"任务目标: {step.step_goal} 执行结果: {step.result}"
+            logger.bind(tag="BASE").info(f"搜索结果: {search_result}")
             plan_history.append(search_result)
         return Command(goto="planner", update={"plan_history": plan_history})
     
@@ -639,7 +640,7 @@ def reporter_node(state: ActionFlowState) -> Dict[str, Any]:
     else:
         result += "✗ 目标未达成\n"
     
-    logger.bind(tag="BASE").info(f"生成最终报告: {result[:200]}...")
+    logger.bind(tag="BASE").info(f"生成最终报告: {result}")
     
     return {"action_result": result}
 

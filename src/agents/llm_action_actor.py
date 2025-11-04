@@ -341,12 +341,15 @@ class LLMActionActor(pykka.ThreadingActor):
             if '__interrupt__' in event:
                 data = event['__interrupt__'][0].value
                 logger.bind(tag="BASE").info(f"execute_action: {data}")
+                self.current_action = data.get("action_cmd", "")
+                self.current_target = data["entity_id"]
                 result = {
-                    "func": data.get("action_cmd", ""),
-                    "target": data["entity_id"]
+                    "func": self.current_action,
+                    "target": self.current_target
                 }
                 action_message = f'planned to {result["func"]} with {result["target"]}. reason: {data["reasoning"]}'
                 if data.get("type") == "execute_action_tool":
+                    self.start_action = True
                     self._run_async(safe_call(self.output_callback, {
                         "event": ServerEvent.ChatActionParams,
                         "payload_msg": {
