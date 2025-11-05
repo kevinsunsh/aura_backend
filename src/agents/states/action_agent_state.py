@@ -109,6 +109,11 @@ class Plan(BaseModel):
         default_factory=list,
         description="The steps of the plan",
     )
+    def plan_steps_to_string(self) -> str:
+        plan_steps_string = f"计划执行情况: "
+        for step in self.steps:
+            plan_steps_string += f"步骤: {step.step_goal}\n执行结果: {step.result}\n"
+        return plan_steps_string
 
 class Observation(BaseModel):
     entity_id: str = Field(..., description="The entity ID")
@@ -128,6 +133,7 @@ class QueryRegion(BaseModel):
     query: str = Field(..., description="说明查询的区域描述，比如预期找什么样的区域等，描述的越详细，查询到的区域信息越准确。")
 
 class SearchResult(BaseModel):
+    search_task: str = Field(..., description="The search task")
     search_result: str = Field(..., description="The search result of the task")
     follow_up_search_suggestion: str = Field(..., description="The follow up search suggestion")
 
@@ -145,7 +151,7 @@ class SearchDecision(BaseModel):
     action_cmd: str | None = Field(default=None, description="执行动作命令，如 move_to/examine")
     reasoning: str | None = Field(default=None, description="动作或观察的原因")
     # report 参数
-    search_result: str | None = Field(default=None, description="报告的搜索结果")
+    search_result: str | None = Field(default=None, description="总结性的搜索结果")
     follow_up_search_suggestion: str | None = Field(default=None, description="后续搜索建议")
 
 class ActionFlowState(MessagesState):

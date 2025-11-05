@@ -350,6 +350,8 @@ class LLMActionActor(pykka.ThreadingActor):
                 action_message = f'planned to {result["func"]} with {result["target"]}. reason: {data["reasoning"]}'
                 if data.get("type") == "execute_action_tool":
                     self.start_action = True
+                    action_data = {'content': action_message, 'bot_name': self.bot_name}
+                    self._add_action_message(action_data, self.start_action)
                     self._run_async(safe_call(self.output_callback, {
                         "event": ServerEvent.ChatActionParams,
                         "payload_msg": {
@@ -370,6 +372,9 @@ class LLMActionActor(pykka.ThreadingActor):
                                 "content": action_message
                             }
                         }))
+            elif "reporter" in event:
+                action_data = {'content': event["reporter"]["action_result"], 'bot_name': self.bot_name}
+                self._add_action_message(action_data, False)
             #     action = json.loads(event['__interrupt__'][0].value)
             #     result = {
             #         "func": action["cmd"],

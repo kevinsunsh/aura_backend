@@ -20,6 +20,7 @@ from agents.prompts.action_agent_prompts import (
     ACTION_PLANNING_PROMPT,
     SEARCH_AGENT_PROMPT,
     SEARCH_REPORT_PROMPT,
+    ACTION_REPORT_PROMPT,
     FIX_PLAN_PROMPT
 )
 from agents.agent_memory.configuration import get_chat_model_by_type
@@ -244,63 +245,64 @@ def query_region(
 
 @tool(return_direct=True, args_schema=SearchResult)
 def report_search_result(
+    search_task: str,
     search_result: str,
     follow_up_search_suggestion: str
 ) -> str:
     """当完成任务后，调用此工具报告
     
     Args:
+        search_task: 搜索任务
         search_result: 搜索结果
         follow_up_search_suggestion: 后续搜索建议
     Returns:
         搜索任务结果和后续搜索建议
     """
-    result_str = f"搜索任务结果: {search_result}, 后续搜索建议: {follow_up_search_suggestion}"
-    logger.bind(tag="BASE").info(f"报告搜索结果: {result_str}")
+    result_str = f"搜索任务: {search_task}, 搜索结果: {search_result}, 后续搜索建议: {follow_up_search_suggestion}"
     return result_str
 
-# @tool
-# def execute_action(
-#     session_id: str,
-#     entity_id: str, 
-#     action_cmd: str,
-#     reasoning: str = ""
-# ) -> str:
-#     """能移动位置的动作，可以通过和特定物品交互来移动到目标物品位置，然后就有机会在后续的观察动作中获得更多物品的新位置，才能观察到的物品信息。
+@tool
+def execute_action(
+    session_id: str,
+    entity_id: str, 
+    action_cmd: str,
+    reasoning: str = ""
+) -> str:
+    """能移动位置的动作，可以通过和特定物品交互来移动到目标物品位置，然后就有机会在后续的观察动作中获得更多物品的新位置，才能观察到的物品信息。
     
-#     Args:
-#         entity_id: 目标物品的entity_id
-#         action_cmd: 在目标物品acceptable_actions中选择一个要执行的动作命令，比如 "move_to", "examine"等
-#         reasoning: 执行动作的原因说明
+    Args:
+        entity_id: 目标物品的entity_id
+        action_cmd: 在目标物品acceptable_actions中选择一个要执行的动作命令，比如 "move_to", "examine"等
+        reasoning: 执行动作的原因说明
     
-#     Returns:
-#         执行动作的结果反馈
-#     """
-#     logger.bind(tag="BASE").info(f"执行动作: {action_cmd} -> {entity_id}, 原因: {reasoning}, session_id: {session_id}")
-#     result_str = f"执行动作 {action_cmd} -> {entity_id} 成功"
-#     if action_cmd in ["move_to", "examine"]:
-#         target_entity = SpatialEntityManager().get_instance().query_items_by_entity_id(
-#             scene_id="894a42a7-a517-4479-8233-75b0642d1aa6",
-#             entity_id=entity_id
-#         )
-#         if target_entity:
-#             # execute_action_data = {
-#             #     "type": "execute_action_tool",
-#             #     "action_cmd": action_cmd,
-#             #     "entity_id": entity_id
-#             # }
-#             # interrupt(execute_action_data)
-#             SpatialEntityManager().get_instance().update_item_position(
-#                 session_id="static",
-#                 scene_id="894a42a7-a517-4479-8233-75b0642d1aa6",
-#                 entity_id="Aura_0",
-#                 position=np.array([target_entity["anchor_point_3d"][0], target_entity["anchor_point_3d"][1], target_entity["anchor_point_3d"][2]])
-#             )
-#             if action_cmd == "examine":
-#                 result_str = result_str + f"，物品描述为: {target_entity['description']}"
-#         else:
-#             result_str = f"执行动作 {action_cmd} -> {entity_id} 失败，没有指定正确的物品entity_id"
-#     return result_str
+    Returns:
+        执行动作的结果反馈
+    """
+    logger.bind(tag="BASE").info(f"执行动作: {action_cmd} -> {entity_id}, 原因: {reasoning}, session_id: {session_id}")
+    result_str = f"执行动作 {action_cmd} -> {entity_id} 成功"
+    if action_cmd in ["move_to", "examine"]:
+        target_entity = SpatialEntityManager().get_instance().query_items_by_entity_id(
+            scene_id="894a42a7-a517-4479-8233-75b0642d1aa6",
+            entity_id=entity_id
+        )
+        if target_entity:
+            # execute_action_data = {
+            #     "type": "execute_action_tool",
+            #     "action_cmd": action_cmd,
+            #     "entity_id": entity_id
+            # }
+            # interrupt(execute_action_data)
+            SpatialEntityManager().get_instance().update_item_position(
+                session_id="static",
+                scene_id="894a42a7-a517-4479-8233-75b0642d1aa6",
+                entity_id="Aura_0",
+                position=np.array([target_entity["anchor_point_3d"][0], target_entity["anchor_point_3d"][1], target_entity["anchor_point_3d"][2]])
+            )
+            if action_cmd == "examine":
+                result_str = result_str + f"，物品描述为: {target_entity['description']}"
+        else:
+            result_str = f"执行动作 {action_cmd} -> {entity_id} 失败，没有指定正确的物品entity_id"
+    return result_str
 
 # ==========================================
 # 辅助函数
@@ -349,7 +351,6 @@ def planner_node(
     
     # 获取必要信息
     action_goal = state.get("action_goal", "")
-    character_description = state.get("character_description", "")
     
     # 获取模型
     planner_model_config = get_chat_model_by_type("pfc_action")
@@ -371,7 +372,6 @@ def planner_node(
     for i, plan_content in enumerate(plan_history):
         plan_history_text += f"步骤{i+1}: {plan_content}\n"
     system_instructions = ACTION_PLANNING_PROMPT.format(
-        character_description=character_description,
         current_goal=action_goal,
         executed_steps=plan_history_text,
         format=format_instructions
@@ -444,6 +444,7 @@ def search_team_node(
     logger.bind(tag="BASE").info("Search Team 分配任务")
     
     current_plan = state.get("current_plan")
+    current_goal = state.get("action_goal", "")
     plan_history = state.get("plan_history", [])
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
@@ -460,10 +461,22 @@ def search_team_node(
     if not next_step:
         # 所有步骤都已完成
         logger.bind(tag="BASE").info("所有步骤已完成，返回规划节点")
-        for step in current_plan.steps: 
-            search_result = f"任务目标: {step.step_goal} 执行结果: {step.result}"
-            logger.bind(tag="BASE").info(f"搜索结果: {search_result}")
-            plan_history.append(search_result)
+        planner_model_config = get_chat_model_by_type("pfc_action")
+        planner_model = init_chat_model(
+            model="doubao-seed-1-6-251015",
+            model_provider=planner_model_config.model_provider,
+            api_key=planner_model_config.api_key,
+            base_url=planner_model_config.api_base
+        )
+        # 构建提示词（加入最近观察，避免重复观察）
+        system_instructions = SEARCH_REPORT_PROMPT.format(
+            plan_goal=current_goal,
+            plan_execution_result=current_plan.plan_steps_to_string(),
+        )
+        messages = [SystemMessage(content=system_instructions)]
+        result = planner_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+        logger.bind(tag="BASE").info(f"报告搜索结果: {result.content}")
+        plan_history.append(result.content)
         return Command(goto="planner", update={"plan_history": plan_history})
     
     # 根据步骤类型分发到不同的节点
@@ -582,6 +595,12 @@ def _search_tool_execute_action_node(
         "action_cmd": action_cmd,
         "reasoning": reasoning,
     })
+    # result = execute_action.invoke({
+    #     "session_id": session_id,
+    #     "entity_id": entity_id,
+    #     "action_cmd": action_cmd,
+    #     "reasoning": reasoning,
+    # })
     search_steps = state.get("search_steps", [])
     search_steps.append(f"执行: {action_cmd} -> {entity_id}\n结果: {result}")
     return Command(update={"search_steps": search_steps}, goto="search_decide")
@@ -596,19 +615,20 @@ def _search_tool_report_node(
         logger.warning("缺少报告参数，直接返回")
         return Command(goto=END)
     try:
-        result = report_search_result.invoke({
-            "search_result": decision.search_result,
-            "follow_up_search_suggestion": decision.follow_up_search_suggestion,
-        })
         # 写入当前步骤结果
         current_plan = state.get("current_plan")
+        search_steps = state.get("search_steps", [])
         if current_plan and getattr(current_plan, "steps", None):
             for step in current_plan.steps:
                 if not step.result:
+                    result = report_search_result.invoke({
+                        "search_task": step.step_goal,
+                        "search_result": decision.search_result,
+                        "follow_up_search_suggestion": decision.follow_up_search_suggestion,
+                    })
                     step.result = result
+                    search_steps.append(f"报告结果: {result}")
                     break
-        search_steps = state.get("search_steps", [])
-        search_steps.append(f"报告结果: {result}")
         return Command(update={"search_steps": search_steps, "next_search_decision": None}, goto=END)
     except Exception as e:
         logger.error(f"报告结果失败: {e}")
@@ -617,33 +637,36 @@ def _search_tool_report_node(
 def reporter_node(state: ActionFlowState) -> Dict[str, Any]:
     """报告节点：生成最终结果"""
     logger.bind(tag="BASE").info("Reporter 生成最终报告")
-    
     current_plan = state.get("current_plan", None)
     plan_history = state.get("plan_history", [])
     action_goal = state.get("action_goal", "")
-    
     # 构建最终结果
-    result = f"""
-# 任务执行报告
-
-## 目标
-{action_goal}
-
-## 执行步骤
-"""
+    result = "## 执行步骤"
     for i, plan_content in enumerate(plan_history):
         result += f"\n### 步骤 {i+1}: {plan_content}\n"
-    
     result += "\n## 状态\n"
     if current_plan and current_plan.has_achieved_goal:
         result += "✓ 目标已达成\n"
     else:
         result += "✗ 目标未达成\n"
-    
-    logger.bind(tag="BASE").info(f"生成最终报告: {result}")
-    
-    return {"action_result": result}
-
+    # 所有步骤都已完成
+    logger.bind(tag="BASE").info("所有步骤已完成，返回规划节点")
+    planner_model_config = get_chat_model_by_type("pfc_action")
+    planner_model = init_chat_model(
+        model="doubao-seed-1-6-251015",
+        model_provider=planner_model_config.model_provider,
+        api_key=planner_model_config.api_key,
+        base_url=planner_model_config.api_base
+    )
+    # 构建提示词（加入最近观察，避免重复观察）
+    system_instructions = ACTION_REPORT_PROMPT.format(
+        task_goal=action_goal,
+        task_execution_report=result
+    )
+    messages = [SystemMessage(content=system_instructions)]
+    result = planner_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+    logger.bind(tag="BASE").info(f"生成最终报告: {result.content}")
+    return {"action_result": result.content}
 
 # ==========================================
 # Graph 构建
@@ -713,7 +736,7 @@ if __name__ == "__main__":
     
     # 构造测试状态
     test_state = ActionFlowState(
-        action_goal="Check the wooden chair for any hidden compartments or symbols",
+        action_goal="数一数房间里有多少个凳子",
         action_result="",
         observations=[],
         plan_iterations=0,

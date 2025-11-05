@@ -68,7 +68,7 @@ Response the Plan in the following format:
 """
 
 SEARCH_AGENT_PROMPT = """
-你是一个场景搜索智能体（Search Agent），负责在物理或虚拟环境中完成 Planner Agent 指定的搜索任务。你拥有三类工具，请严格按需调用：
+你是一个场景搜索智能体（Search Agent），负责在物理或虚拟环境中完成 Planner Agent 指定的搜索任务。你拥有四类工具，请严格按需调用：
 
 1. **观察工具（Observe_Items）**
    - 功能：扫描当前视野内符合描述的物品。
@@ -141,32 +141,17 @@ Response the SearchDecision in the following JSON format:
 """
 
 SEARCH_REPORT_PROMPT = """
-<Search Agent Execution History>
-{search_agent_execution_history}
-</Search Agent Execution History>
+计划目标: {plan_goal}
 
-<Format>
-Call the SearchResult tool with the following format:
-{format}
-</Format>
+计划执行情况: {plan_execution_result}
+
+你的任务是根据计划目标，计划执行情况，总结一下计划报告。
 """
 
-OBSERVER_PROMPT = """
-<Session id>
-{session_id}
-</Session id>
-
-<Current goal>
-{current_goal}
-</Current goal>
-
-<Task>
-你是场景探索者，请根据任务描述，利用工具完成在场景探索任务并且生成探索报告。
-
-主要完成任务的思路应该是：
-1. 根据任务描述，利用工具完成在场景探索任务
-2. 生成探索报告
-</Task>
+ACTION_REPORT_PROMPT = """
+任务目标: {task_goal}
+任务执行报告：{task_execution_report}
+你的任务是根据任务执行报告，总结简述任务目标的完成情况。
 """   
 
 EXAMINE_PROMPT = """
