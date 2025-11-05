@@ -226,9 +226,10 @@ def query_region(
             item_entity_id="Aura_0",
             session_id="static"
         )
-        all_region = SpatialEntityManager().get_instance().query_region(
+        all_region = SpatialEntityManager().get_instance().query_region_connected_with_current_region(
             scene_id=char_instance_info.current_scene_id,
             session_id="static",
+            region_entity_id=current_region["entity_id"],
             limit=15,
         )
         return format_region_result(current_region, all_region)
