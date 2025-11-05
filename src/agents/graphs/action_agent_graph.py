@@ -81,8 +81,10 @@ def query_spatial_memory(
 def format_observation_result(feedback) -> str:
     """格式化观察结果"""
     logger.info(f"格式化观察结果: {feedback}")
-    content = ["以下是观察到的物品信息："]
+    content = [f"以下是你在当前区域：{feedback['current_region']}观察到的物品信息："]
     for key, value in feedback.items():
+        if key == "current_region":
+            continue
         for entity_id, entity in value.items():
             if entity_id == "Aura_0":
                 continue
@@ -90,19 +92,25 @@ def format_observation_result(feedback) -> str:
     result = "\n".join(content)
     return result
 
-def format_region_result(region_list) -> str:
+def format_region_result(current_region, region_list) -> str:
     """格式化区域结果"""
-    logger.info(f"格式化区域结果: {region_list}")
     content = ["以下是查询到的区域信息："]
-    for entity in region_list:
-        content.append(f"区域entity_id为:{entity['entity_id']}, 描述为:{entity['description']}, 可执行动作有{entity['acceptable_actions']}")
+    content.append(f"人物当前所属区域entity_id为:{current_region['entity_id']}")
+    content.append(f"周围其它区域有：")
+    for region in region_list:
+        if region["entity_id"] == current_region["entity_id"]:
+            continue
+        content.append(f"entity_id为:{region['entity_id']}")
+    content.append(f"可以对历史记录里未观察的区域move_to过去，然后观察周围物品，这样可以遍历所有区域，不遗漏掉要找的东西。")
     result = "\n".join(content)
+    logger.info(f"格式化区域结果: {result}")
     return result
 
 @tool(args_schema=ObserveNearbyItems)
 def observe_nearby_items(
     session_id: str,
-    query: str
+    query_item_name: str,
+    query_item_description: str
 ) -> str:
     """不能移动位置的动作，只能观察附近10米空间的物品，用不同的query可以观察到不同的物品，同样的query只能观察到一样的物品，所以相同query不要多次调用（没有意义），否则会返回同样的物品信息。
     
@@ -128,22 +136,22 @@ def observe_nearby_items(
             api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
             api_base="https://ark.cn-beijing.volces.com/api/v3"
         )
-        query_vector = embedding_model.embed(query, embedding_size=1024)
-        # current_region = SpatialEntityManager().get_instance().query_region_of_item(
-        #     scene_id=char_instance_info.current_scene_id,
-        #     target_entity_id="Aura_0",
-        #     session_id="static"
-        # )
-        entities = SpatialEntityManager().get_instance().query_nearby_items(
+        query_vector = embedding_model.embed(f"{query_item_name} {query_item_description}", embedding_size=1024)
+        current_region = SpatialEntityManager().get_instance().query_region_include_item(
             scene_id=char_instance_info.current_scene_id,
+            item_entity_id="Aura_0",
+            session_id="static"
+        )
+        entities = SpatialEntityManager().get_instance().query_items_in_region(
+            scene_id=char_instance_info.current_scene_id,
+            region_entity_id=current_region["entity_id"],
             session_id="static",
-            agent_pos=self_entity["anchor_point_3d"],
-            radius=8000.0,
-            limit=5,
             description_vector=query_vector,
-            description_similarity_threshold=0.1
+            description_similarity_threshold=0.3,
+            limit=10
         )
         feedback = {}
+        feedback["current_region"] = current_region["entity_id"]
         feedback["forward"] = {}
         feedback["backward"] = {}
         feedback["left"] = {}
@@ -199,8 +207,7 @@ def observe_nearby_items(
 
 @tool(args_schema=QueryRegion)
 def query_region(
-    session_id: str,
-    query: str
+    session_id: str
 ) -> str:
     """可以移动位置的动作，查询周围的区域，区域是符合描述的物品的集合。
     
@@ -214,32 +221,17 @@ def query_region(
     # TODO: 实现实际的观察逻辑
     try:
         char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
-        embedding_model = EmbeddingModel(
-            model_name="doubao-embedding-large-text-250515",
-            api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
-            api_base="https://ark.cn-beijing.volces.com/api/v3"
+        current_region = SpatialEntityManager().get_instance().query_region_include_item(
+            scene_id=char_instance_info.current_scene_id,
+            item_entity_id="Aura_0",
+            session_id="static"
         )
-        query_vector = embedding_model.embed(query, embedding_size=1024)
-        # current_region = SpatialEntityManager().get_instance().query_region_of_item(
-        #     scene_id=char_instance_info.current_scene_id,
-        #     target_entity_id="Aura_0",
-        #     session_id="static"
-        # )
-        entities = SpatialEntityManager().get_instance().query_region(
+        all_region = SpatialEntityManager().get_instance().query_region(
             scene_id=char_instance_info.current_scene_id,
             session_id="static",
             limit=15,
-            description_vector=query_vector,
-            description_similarity_threshold=0.1
         )
-        feedback = []
-        for entity in entities:
-            feedback.append({
-                "entity_id": entity["entity_id"],
-                "description": entity["description"],
-                "acceptable_actions": ["move_to"]
-            })
-        return format_region_result(feedback)
+        return format_region_result(current_region, all_region)
     except Exception as e:
         logger.error(f"观察附近物品失败: {e}")
 
@@ -542,14 +534,15 @@ def _search_tool_observe_items_node(
     """搜索子图-观察工具节点"""
     decision: SearchDecision | None = state.get("next_search_decision")
     session_id = decision.session_id or state.get("session_id", "") if decision else state.get("session_id", "")
-    query = decision.query if decision else None
-    if not query:
-        logger.warning("缺少观察参数query，回到决策")
+    query_item_name = decision.query_item_name if decision else None
+    query_item_description = decision.query_item_description if decision else None
+    if not query_item_name or not query_item_description:
+        logger.warning("缺少观察参数query_item_name或query_item_description，回到决策")
         return Command(goto="search_decide")
     try:
-        result = observe_nearby_items.invoke({"session_id": session_id, "query": query})
+        result = observe_nearby_items.invoke({"session_id": session_id, "query_item_name": query_item_name, "query_item_description": query_item_description})
         search_steps = state.get("search_steps", [])
-        search_steps.append(f"观察: {query}\n结果: {result}")
+        search_steps.append(f"观察: {query_item_name} {query_item_description}\n结果: {result}")
         return Command(update={"search_steps": search_steps}, goto="search_decide")
     except Exception as e:
         logger.error(f"执行观察失败: {e}")
@@ -562,14 +555,10 @@ def _search_tool_query_region_node(
     """搜索子图-查询区域工具节点"""
     decision: SearchDecision | None = state.get("next_search_decision")
     session_id = decision.session_id or state.get("session_id", "") if decision else state.get("session_id", "")
-    query = decision.query if decision else None
-    if not query:
-        logger.warning("缺少查询参数query，回到决策")
-        return Command(goto="search_decide")
     try:
-        result = query_region.invoke({"session_id": session_id, "query": query})
+        result = query_region.invoke({"session_id": session_id})
         search_steps = state.get("search_steps", [])
-        search_steps.append(f"查询区域: {query}\n结果: {result}")
+        search_steps.append(f"查询区域: {result}")
         return Command(update={"search_steps": search_steps}, goto="search_decide")
     except Exception as e:
         logger.error(f"查询区域失败: {e}")
@@ -588,21 +577,32 @@ def _search_tool_execute_action_node(
     if not (entity_id and action_cmd):
         logger.warning("缺少执行参数，回到决策")
         return Command(goto="search_decide")
-    result = interrupt({
-        "type": "execute_action_tool",
-        "session_id": session_id,
-        "entity_id": entity_id,
-        "action_cmd": action_cmd,
-        "reasoning": reasoning,
-    })
-    # result = execute_action.invoke({
-    #     "session_id": session_id,
-    #     "entity_id": entity_id,
-    #     "action_cmd": action_cmd,
-    #     "reasoning": reasoning,
-    # })
+    session_id = state.get("session_id", "")
+    char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
+    spatial_entity = SpatialEntityManager().get_instance().query_items_by_entity_id(
+        scene_id=char_instance_info.current_scene_id,
+        entity_id=entity_id
+    )
     search_steps = state.get("search_steps", [])
-    search_steps.append(f"执行: {action_cmd} -> {entity_id}\n结果: {result}")
+    if spatial_entity:
+        position = spatial_entity["anchor_point_3d"]
+        result = interrupt({
+            "type": "execute_action_tool",
+            "session_id": session_id,
+            "entity_id": entity_id,
+            "action_cmd": action_cmd,
+            "reasoning": reasoning,
+            "position": position
+        })
+        # result = execute_action.invoke({
+        #     "session_id": session_id,
+        #     "entity_id": entity_id,
+        #     "action_cmd": action_cmd,
+        #     "reasoning": reasoning,
+        # })
+        search_steps.append(f"执行: {action_cmd} -> {entity_id}\n结果: {result}")
+    else:
+        search_steps.append(f"执行: {action_cmd} -> {entity_id}\n结果: 目标不存在")
     return Command(update={"search_steps": search_steps}, goto="search_decide")
 
 def _search_tool_report_node(

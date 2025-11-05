@@ -2,6 +2,7 @@ import pykka
 import uuid
 import json
 import time
+import numpy as np
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from loguru import logger
@@ -13,6 +14,7 @@ from agents.agent_memory.prompt_manager.scene_info.manager import DBManager as S
 from agents.agent_memory.prompt_manager.character.manager import DBManager as CharacterManager
 from agents.agent_memory.prompt_manager.system_preset.manager import DBManager as SystemPresetManager
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
+from agents.agent_memory.prompt_manager.spatial_entity.manager import DBManager as SpatialEntityManager
 from agents.agent_memory.prompt_manager.world_info.scanner import WorldInfoScanner
 from agents.agent_memory.prompt_manager.prompt_manager import PromptManager, GenerationType, GenerationOptions
 from agents.agent_memory.prompt_manager.utils import count_tokens_openai

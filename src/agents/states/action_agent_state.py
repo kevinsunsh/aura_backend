@@ -126,11 +126,11 @@ class ObservationResult(BaseModel):
 
 class ObserveNearbyItems(BaseModel):
     session_id: str = Field(..., description="当前session_id")
-    query: str = Field(..., description="说明观察的目标的描述，比如预期找什么样的物品等，描述的越详细，观察到的物品信息越准确。")
+    query_item_name: str = Field(..., description="说明观察的目标的名称，比如杯子，椅子，桌子等。")
+    query_item_description: str = Field(..., description="说明观察的目标的描述，比如一个红色的杯子，一个黑色的椅子，一个白色的桌子等越详细越好。")
 
 class QueryRegion(BaseModel):
     session_id: str = Field(..., description="当前session_id")
-    query: str = Field(..., description="说明查询的区域描述，比如预期找什么样的区域等，描述的越详细，查询到的区域信息越准确。")
 
 class SearchResult(BaseModel):
     search_task: str = Field(..., description="The search task")
@@ -145,7 +145,8 @@ class SearchDecision(BaseModel):
     # 对应工具所需参数
     session_id: str | None = Field(default=None, description="当前会话ID，仅当需要时提供")
     # observe 参数
-    query: str | None = Field(default=None, description="观察查询描述")
+    query_item_name: str | None = Field(default=None, description="观察查询目标名称，比如杯子，椅子，桌子等。")
+    query_item_description: str | None = Field(default=None, description="观察查询目标描述，比如一个红色的杯子，一个黑色的椅子，一个白色的桌子等越详细越好。")
     # execute 参数
     entity_id: str | None = Field(default=None, description="执行动作目标entity_id")
     action_cmd: str | None = Field(default=None, description="执行动作命令，如 move_to/examine")

@@ -2,6 +2,7 @@ import json
 import uuid
 import pykka
 import asyncio
+import numpy as np
 from datetime import datetime
 from loguru import logger
 from typing import Optional, Callable, Dict, Any
@@ -11,6 +12,7 @@ from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.database.connection_config import DatabaseConfigManager
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from agents.agent_memory.prompt_manager.scene_iteams.manager import DBManager as SceneItemEntryManager
+from agents.agent_memory.prompt_manager.spatial_entity.manager import DBManager as SpatialEntityManager
 from agents.agent_memory.configuration.config import ChatModel, EmbeddingModel
 from agents.agent_memory.prompt_manager.utils import count_tokens_openai
 from agents.agent_memory.message_store import MessageStore, MessageModel
@@ -245,6 +247,13 @@ class LLMActionActor(pykka.ThreadingActor):
             action_message = f"finished executing {self.current_action} with {self.current_target}."
             action_data = {'content': action_message, 'bot_name': self.bot_name}
             self._add_action_message(action_data, self.start_action)
+            char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(self.chat_id)
+            SpatialEntityManager().get_instance().update_item_position(
+                    session_id="static",
+                    scene_id=char_instance_info.current_scene_id,
+                    entity_id="Aura_0",
+                    position=np.array(self.current_position)
+                )
             for event in self.graph.stream(Command(resume=True, update=input_data), self.thread, stream_mode="updates"):
                 try:
                     self._publish_event(event)
@@ -343,9 +352,12 @@ class LLMActionActor(pykka.ThreadingActor):
                 logger.bind(tag="BASE").info(f"execute_action: {data}")
                 self.current_action = data.get("action_cmd", "")
                 self.current_target = data["entity_id"]
+                self.current_position = data.get("position", None)
+                self.current_position[2] = 0.5
                 result = {
                     "func": self.current_action,
-                    "target": self.current_target
+                    "target": self.current_target,
+                    "position": self.current_position.tolist()
                 }
                 action_message = f'planned to {result["func"]} with {result["target"]}. reason: {data["reasoning"]}'
                 if data.get("type") == "execute_action_tool":
