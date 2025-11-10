@@ -351,6 +351,10 @@ class LLMActionActor(pykka.ThreadingActor):
                 data = event['__interrupt__'][0].value
                 logger.bind(tag="BASE").info(f"execute_action: {data}")
                 self.current_action = data.get("action_cmd", "")
+                if self.current_action == "examine":
+                    self.current_action = "move"
+                elif self.current_action == "move_to":
+                    self.current_action = "move"
                 self.current_target = data["entity_id"]
                 self.current_position = data.get("position", None)
                 self.current_position[2] = 0.5

@@ -57,7 +57,7 @@ def query_spatial_memory(
         匹配的物品信息JSON，包含：item_id, item_type, item_description, item_relation, item_actions
     """
     # TODO: 实现实际的空间记忆查询逻辑
-    # logger.info(f"查询空间记忆: {item_description}, 关系过滤: {relation_filter}")
+    # logger.bind(tag="BASE").info(f"查询空间记忆: {item_description}, 关系过滤: {relation_filter}")
     embedding_model = EmbeddingModel(
         model_name="doubao-embedding-large-text-250515",
         api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
@@ -82,7 +82,7 @@ def query_spatial_memory(
 
 def format_observation_result(feedback) -> str:
     """格式化观察结果"""
-    logger.info(f"格式化观察结果: {feedback}")
+    logger.bind(tag="BASE").info(f"格式化观察结果: {feedback}")
     content = [f"以下是你在当前区域：{feedback['current_region']}观察到的物品信息："]
     for key, value in feedback.items():
         if key == "current_region":
@@ -105,7 +105,7 @@ def format_region_result(current_region, region_list) -> str:
         content.append(f"entity_id为:{region['entity_id']}")
     content.append(f"可以对历史记录里未观察的区域move_to过去，然后观察周围物品，这样可以遍历所有区域，就不会遗漏掉要找的东西。")
     result = "\n".join(content)
-    logger.info(f"格式化区域结果: {result}")
+    logger.bind(tag="BASE").info(f"格式化区域结果: {result}")
     return result
 
 @tool(args_schema=QueryItems)
@@ -368,7 +368,7 @@ def planner_node(
     config: RunnableConfig
 ) -> Command[Literal["search_team", "reporter"]]:
     """计划节点：生成行动计划"""
-    logger.info("Planner 生成行动计划")
+    logger.bind(tag="BASE").info("Planner 生成行动计划")
     
     current_step = config["metadata"]["langgraph_step"]
     recursion_limit = config["recursion_limit"]
@@ -690,20 +690,20 @@ def _search_tool_execute_action_node(
                 validated_regions.regions[spatial_entity_id].is_visited = True
             current_region = spatial_entity['entity_id']
         position = spatial_entity["anchor_point_3d"]
-        # result = interrupt({
-        #     "type": "execute_action_tool",
-        #     "session_id": session_id,
-        #     "entity_id": entity_id,
-        #     "action_cmd": action_cmd,
-        #     "reasoning": reasoning,
-        #     "position": position
-        # })
-        result = execute_action.invoke({
+        result = interrupt({
+            "type": "execute_action_tool",
             "session_id": session_id,
             "entity_id": decision.action_params.entity_id,
             "action_cmd": decision.action_params.action_cmd,
             "reasoning": "reasoning",
+            "position": position
         })
+        # result = execute_action.invoke({
+        #     "session_id": session_id,
+        #     "entity_id": decision.action_params.entity_id,
+        #     "action_cmd": decision.action_params.action_cmd,
+        #     "reasoning": "reasoning",
+        # })
         search_steps.append(f"执行: {decision.action_params.action_cmd} -> {decision.action_params.entity_id}\n结果: {result}")
     else:
         search_steps.append(f"执行: {decision.action_params.action_cmd} -> {decision.action_params.entity_id}\n结果: 目标不存在")
