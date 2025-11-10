@@ -15,19 +15,21 @@ from langgraph.prebuilt import create_react_agent
 from loguru import logger
 from agents.agent_memory.configuration.config import ChatModel, EmbeddingModel
 
-from agents.states.action_agent_state import ActionFlowState, Plan, StepType, Step, ObserveNearbyItems, SearchState, SearchDecision, QueryRegion
+from agents.states.action_agent_state import ActionFlowState, Plan, StepType, Step, QueryItems, SearchState, SearchActionDecision, QueryRegions, RegionInfo, ValidatedRegions, EntityInfo, ObservationResult, SearchResult, QueryItemsParams, ExecuteActionParams, ReportParams, QueryRegionsParams
 from agents.prompts.action_agent_prompts import (
     ACTION_PLANNING_PROMPT,
     SEARCH_AGENT_PROMPT,
     SEARCH_REPORT_PROMPT,
+    PLAN_REPORT_PROMPT,
     ACTION_REPORT_PROMPT,
-    FIX_PLAN_PROMPT
+    FIX_PLAN_PROMPT,
+    OBSERVATION_PROMPT
 )
 from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.message_store import MessageStore
 from agents.output_parser.output_parser import RemoveFunctionCallOutputParser
 from configuration.configuration import Configuration
-from agents.states.action_agent_state import SearchResult, SearchDecision
+from agents.states.action_agent_state import SearchActionDecision
 from agents.agent_memory.prompt_manager.spatial_entity.manager import DBManager as SpatialEntityManager
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
 from langchain_core.callbacks import dispatch_custom_event
@@ -88,44 +90,44 @@ def format_observation_result(feedback) -> str:
         for entity_id, entity in value.items():
             if entity_id == "Aura_0":
                 continue
-            content.append(f"你的{key}有物品entity_id为:{entity_id}, 描述为:{entity['description']}, 可执行动作有{entity['acceptable_actions']}")
+            content.append(f"你的{key}有物品entity_id为:{entity_id}, 物品描述为:{entity['description']}, 可执行动作有{entity['acceptable_actions']}")
     result = "\n".join(content)
     return result
 
 def format_region_result(current_region, region_list) -> str:
     """格式化区域结果"""
     content = ["以下是查询到的区域信息："]
-    content.append(f"人物当前所属区域entity_id为:{current_region['entity_id']}")
+    content.append(f"人物当前所属区域entity_id为:{current_region}")
     content.append(f"周围其它区域有：")
     for region in region_list:
-        if region["entity_id"] == current_region["entity_id"]:
+        if region["entity_id"] == current_region:
             continue
         content.append(f"entity_id为:{region['entity_id']}")
-    content.append(f"可以对历史记录里未观察的区域move_to过去，然后观察周围物品，这样可以遍历所有区域，不遗漏掉要找的东西。")
+    content.append(f"可以对历史记录里未观察的区域move_to过去，然后观察周围物品，这样可以遍历所有区域，就不会遗漏掉要找的东西。")
     result = "\n".join(content)
     logger.info(f"格式化区域结果: {result}")
     return result
 
-@tool(args_schema=ObserveNearbyItems)
-def observe_nearby_items(
-    session_id: str,
-    query_item_name: str,
-    query_item_description: str
+@tool(args_schema=QueryItems)
+def query_items(
+    current_scene_id: str,
+    current_region: str,
+    action_goal: str
 ) -> str:
     """不能移动位置的动作，只能观察附近10米空间的物品，用不同的query可以观察到不同的物品，同样的query只能观察到一样的物品，所以相同query不要多次调用（没有意义），否则会返回同样的物品信息。
     
     Args:
-        session_id: 当前session_id
-        query: 说明观察的目标的描述，比如预期找什么样的物品等，描述的越详细，观察到的物品信息越准确。
+        current_scene_id: 当前场景ID
+        action_goal: 说明观察的目标的描述，比如预期找什么样的物品等，描述的越详细，观察到的物品信息越准确。
     
     Returns:
         附近物品列表JSON，每个物品包含：entity_id, description, acceptable_actions
     """
     # TODO: 实现实际的观察逻辑
     try:
-        char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
+        # char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
         self_entity = SpatialEntityManager().get_instance().query_items_by_entity_id(
-            scene_id=char_instance_info.current_scene_id,
+            scene_id=current_scene_id,
             entity_id="Aura_0"
         )
         
@@ -136,27 +138,53 @@ def observe_nearby_items(
             api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
             api_base="https://ark.cn-beijing.volces.com/api/v3"
         )
-        query_vector = embedding_model.embed(f"{query_item_name} {query_item_description}", embedding_size=1024)
-        current_region = SpatialEntityManager().get_instance().query_region_include_item(
-            scene_id=char_instance_info.current_scene_id,
-            item_entity_id="Aura_0",
-            session_id="static"
-        )
+        query_vector = embedding_model.embed(action_goal, embedding_size=1024)
+        # current_region = SpatialEntityManager().get_instance().query_region_include_item(
+        #     scene_id=current_scene_id,
+        #     item_entity_id="Aura_0",
+        #     session_id="static"
+        # )
         entities = SpatialEntityManager().get_instance().query_items_in_region(
-            scene_id=char_instance_info.current_scene_id,
-            region_entity_id=current_region["entity_id"],
+            scene_id=current_scene_id,
+            region_entity_id=current_region,
             session_id="static",
             description_vector=query_vector,
             description_similarity_threshold=0.3,
             limit=10
         )
+        action_model_config = get_chat_model_by_type("pfc_action")
+        action_model = init_chat_model(
+            model=action_model_config.model_name,
+            model_provider=action_model_config.model_provider,
+            api_key=action_model_config.api_key,
+            base_url=action_model_config.api_base
+        )
+        # 创建输出解析器
+        output_parser = RemoveFunctionCallOutputParser(pydantic_object=ObservationResult)
+        structured_llm = action_model | output_parser
+        format_instructions = output_parser.get_format_instructions()
+        query_item_info_list = []
+        for entity in entities:
+            query_item_info_list.append(f"entity_id: {entity['entity_id']}, description: {entity['description']}, acceptable_actions: {entity['actions']}")
+        system_instructions = OBSERVATION_PROMPT.format(
+            item_info_list="\n".join(query_item_info_list),
+            query_target=action_goal,
+            format=format_instructions
+        )
+        
+        messages = [SystemMessage(content=system_instructions)]
+        
+        observations: ObservationResult = structured_llm.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
         feedback = {}
-        feedback["current_region"] = current_region["entity_id"]
+        feedback["current_region"] = current_region
         feedback["forward"] = {}
         feedback["backward"] = {}
         feedback["left"] = {}
         feedback["right"] = {}
         for entity in entities:
+            entity_id = entity["entity_id"]
+            if entity_id not in observations.entities:
+                continue
             entity_pos = entity["anchor_point_3d"]
             try:
                 self_pos_np = np.array(self_pos, dtype=float)
@@ -192,23 +220,24 @@ def observe_nearby_items(
                         relation = "left" if cross_z > 0 else "right"
                 # 写入分类桶
                 feedback[relation][entity["entity_id"]] = {
-                    "description": entity["description"],
+                    "description": observations.entities[entity_id].summary_description,
                     "acceptable_actions": list(set(entity["actions"] + ["move_to", "examine"]))
                 }
             except Exception:
                 # 回退：若计算失败，按前方处理
                 feedback["forward"][entity["entity_id"]] = {
-                    "description": entity["description"],
+                    "description": observations.entities[entity_id].summary_description,
                     "acceptable_actions": list(set(entity["actions"] + ["move_to", "examine"]))
                 }
         return format_observation_result(feedback)
     except Exception as e:
         logger.error(f"观察附近物品失败: {e}")
 
-@tool(args_schema=QueryRegion)
-def query_region(
-    session_id: str
-) -> str:
+@tool(args_schema=QueryRegions)
+def query_regions(
+    scene_id: str,
+    current_region: str
+) -> List[str]:
     """可以移动位置的动作，查询周围的区域，区域是符合描述的物品的集合。
     
     Args:
@@ -216,43 +245,50 @@ def query_region(
         query: 说明查询的区域描述，比如预期找什么样的区域等，描述的越详细，查询到的区域信息越准确。
     
     Returns:
-        区域列表JSON，每个区域包含：entity_id, description, acceptable_actions
+        区域列表，每个区域包含：entity_id
     """
     # TODO: 实现实际的观察逻辑
     try:
-        char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
-        current_region = SpatialEntityManager().get_instance().query_region_include_item(
-            scene_id=char_instance_info.current_scene_id,
-            item_entity_id="Aura_0",
-            session_id="static"
-        )
         all_region = SpatialEntityManager().get_instance().query_region_connected_with_current_region(
-            scene_id=char_instance_info.current_scene_id,
+            scene_id=scene_id,
             session_id="static",
-            region_entity_id=current_region["entity_id"],
+            region_entity_id=current_region,
             limit=15,
         )
-        return format_region_result(current_region, all_region)
+        return [region["entity_id"] for region in all_region]
     except Exception as e:
         logger.error(f"观察附近物品失败: {e}")
 
 @tool(return_direct=True, args_schema=SearchResult)
 def report_search_result(
     search_task: str,
-    search_result: str,
-    follow_up_search_suggestion: str
+    finish_reasoning: str,
+    task_execution_record: str,
 ) -> str:
     """当完成任务后，调用此工具报告
     
     Args:
         search_task: 搜索任务
-        search_result: 搜索结果
-        follow_up_search_suggestion: 后续搜索建议
+        finish_reasoning: 完成任务的原因说明
     Returns:
         搜索任务结果和后续搜索建议
     """
-    result_str = f"搜索任务: {search_task}, 搜索结果: {search_result}, 后续搜索建议: {follow_up_search_suggestion}"
-    return result_str
+    planner_model_config = get_chat_model_by_type("pfc_action")
+    planner_model = init_chat_model(
+        model="doubao-seed-1-6-251015",
+        model_provider=planner_model_config.model_provider,
+        api_key=planner_model_config.api_key,
+        base_url=planner_model_config.api_base
+    )
+    # 构建提示词（加入最近观察，避免重复观察）
+    system_instructions = SEARCH_REPORT_PROMPT.format(
+        search_task=search_task,
+        finish_reasoning=finish_reasoning,
+        task_execution_record=task_execution_record
+    )
+    messages = [SystemMessage(content=system_instructions)]
+    result = planner_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+    return result.content
 
 @tool
 def execute_action(
@@ -335,11 +371,16 @@ def planner_node(
     logger.info("Planner 生成行动计划")
     
     configurable = Configuration.from_runnable_config(config)
-    plan_iterations = state.get("plan_iterations", 0)
+    action_step = state.get("action_step", 0)
     
+    session_id = state.get("session_id", "")
+    current_scene_id = state.get("current_scene_id", None)
+    if not current_scene_id:
+        char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
+        current_scene_id = char_instance_info.current_scene_id
     # 检查是否超过最大迭代次数
-    if plan_iterations >= configurable.max_plan_iterations:
-        logger.warning(f"达到最大计划迭代次数 {configurable.max_plan_iterations}")
+    if action_step >= configurable.max_step:
+        logger.warning(f"达到最大计划迭代次数 {configurable.max_step}")
         return Command(goto="reporter")
     
     # 获取必要信息
@@ -359,14 +400,11 @@ def planner_node(
     structured_llm = planner_model | output_parser
     format_instructions = output_parser.get_format_instructions()
     
-    # 构建提示词（加入最近观察，避免重复观察）
     plan_history = state.get("plan_history", [])
-    plan_history_text = ""
-    for i, plan_content in enumerate(plan_history):
-        plan_history_text += f"步骤{i+1}: {plan_content}\n"
+    # 构建提示词（加入最近观察，避免重复观察）
     system_instructions = ACTION_PLANNING_PROMPT.format(
         current_goal=action_goal,
-        executed_steps=plan_history_text,
+        task_execution_record="\n".join(plan_history),
         format=format_instructions
     )
     
@@ -382,7 +420,8 @@ def planner_node(
         return Command(
             update={
                 "current_plan": plan,
-                "plan_iterations": plan_iterations + 1
+                "current_scene_id": current_scene_id,
+                "action_step": action_step + 1
             },
             goto="search_team" if not plan.has_achieved_goal else "reporter"
         )
@@ -401,9 +440,16 @@ def fix_plan_node(
     logger.bind(tag="BASE").info("Fix Plan 修复计划")
     
     raw_plan = state.get("raw_plan")
+    action_step = state.get("action_step", 0)
+
+    configurable = Configuration.from_runnable_config(config)
+    if action_step >= configurable.max_step:
+        logger.warning(f"达到最大计划迭代次数 {configurable.max_step}")
+        return Command(goto="reporter", update={"action_step": action_step + 1})
+    
     if not raw_plan:
         logger.warning("没有原始计划")
-        return Command(goto="reporter")
+        return Command(goto="reporter", update={"action_step": action_step + 1})
     
     # 获取模型
     planner_model_config = get_chat_model_by_type("pfc_action")
@@ -425,20 +471,21 @@ def fix_plan_node(
     # 更新状态
     return Command(
         update={
-            "current_plan": plan
+            "current_plan": plan,
+            "action_step": action_step + 1
         },
         goto="search_team" if not plan.has_achieved_goal else "reporter"
     )
 
 def search_team_node(
-    state: ActionFlowState
+    state: ActionFlowState,
+    config: RunnableConfig
 ) -> Command[Literal["search", "planner", "reporter"]]:
     """搜索团队节点：分配任务给搜索者"""
     logger.bind(tag="BASE").info("Search Team 分配任务")
     
     current_plan = state.get("current_plan")
-    current_goal = state.get("action_goal", "")
-    plan_history = state.get("plan_history", [])
+    action_step = state.get("action_step", 0)
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
         logger.warning("当前没有有效的计划或步骤")
@@ -451,6 +498,10 @@ def search_team_node(
             next_step = step
             break
     
+    configurable = Configuration.from_runnable_config(config)
+    if action_step > configurable.max_step - 1:
+        next_step = None
+    
     if not next_step:
         # 所有步骤都已完成
         logger.bind(tag="BASE").info("所有步骤已完成，返回规划节点")
@@ -462,33 +513,66 @@ def search_team_node(
             base_url=planner_model_config.api_base
         )
         # 构建提示词（加入最近观察，避免重复观察）
-        system_instructions = SEARCH_REPORT_PROMPT.format(
-            plan_goal=current_goal,
-            plan_execution_result=current_plan.plan_steps_to_string(),
+        plan_record = ["计划执行记录:"]
+        for i, step in enumerate(current_plan.steps):
+            if step.result:
+                plan_record.append(f"Step {i+1}: {step.step_goal}, 执行结果: {step.result}")
+            else:
+                plan_record.append(f"Step {i+1}: {step.step_goal}, 执行结果: 未执行")
+        plan_record = "\n".join(plan_record)
+        system_instructions = PLAN_REPORT_PROMPT.format(
+            plan_execution_record="\n".join(plan_record)
         )
         messages = [SystemMessage(content=system_instructions)]
         result = planner_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
         logger.bind(tag="BASE").info(f"报告搜索结果: {result.content}")
+        plan_history = state.get("plan_history", [])
         plan_history.append(result.content)
-        return Command(goto="planner", update={"plan_history": plan_history})
+        update = {"plan_history": plan_history, "action_step": action_step + 1}
+        return Command(goto="planner", update=update)
     
     # 根据步骤类型分发到不同的节点
-    logger.bind(tag="BASE").info(f"执行观察步骤: {next_step.step_goal}")
-    return Command(goto="search", update={"session_id": state.get("session_id", ""), "current_plan": current_plan, "plan_history": plan_history})
+    logger.bind(tag="BASE").info(f"执行搜索步骤: {next_step.step_goal}")
+    return Command(goto="search", update={"session_id": state.get("session_id", ""), "current_plan": current_plan, "action_step": action_step + 1})
 
 def _search_decide_node(
     state: SearchState,
     config: RunnableConfig
-) -> Command[Literal["tool_observe_items", "tool_query_region", "tool_execute_action", "tool_report", END]]:
+) -> Command[Literal["tool_query_items", "tool_query_regions", "tool_execute_action", "tool_report", END]]:
     """搜索子图-决策节点：决定调用哪个工具，并写入参数到状态"""
     logger.bind(tag="BASE").info("Search子图 决策下一步工具")
-
     current_plan = state.get("current_plan")
+    current_scene_id = state.get("current_scene_id", "")
+    current_region = state.get("current_region", None)
+    action_step = state.get("action_step", 0)
+    if not current_region:
+        current_region_obj = SpatialEntityManager().get_instance().query_region_include_item(
+            scene_id=current_scene_id,
+            item_entity_id="Aura_0",
+            session_id="static"
+        )
+        current_region = current_region_obj['entity_id']
     
+    validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+    search_steps_history = state.get("search_steps", [])
+
+    configurable = Configuration.from_runnable_config(config)
+    if action_step > configurable.max_step - 2:
+        logger.warning(f"达到最大计划迭代次数 {configurable.max_step}")
+        decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="达到最大计划迭代次数"))
+        update = {"next_search_decision": decision, "action_step": action_step + 2}
+        return Command(goto="tool_report", update=update)
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
         logger.warning("当前没有有效的计划或步骤")
-        return Command(goto="reporter")
+        decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="当前没有有效的计划或步骤"))
+        update = {"next_search_decision": decision, "action_step": action_step + 2}
+        return Command(goto="tool_report", update=update)
+    
+    if len(search_steps_history) == 0:
+        decision = SearchActionDecision(action_name="Query_Regions", action_params=QueryRegionsParams(current_region=current_region))
+        update = {"next_search_decision": decision, "current_region": current_region, "action_step": action_step + 2}
+        return Command(goto="tool_query_regions", update=update)
     
     # 找到第一个未执行的步骤
     next_step = None
@@ -506,61 +590,76 @@ def _search_decide_node(
         base_url=observer_model_config.api_base
     )
     # 解析成 SearchDecision
-    output_parser = RemoveFunctionCallOutputParser(pydantic_object=SearchDecision)
+    output_parser = RemoveFunctionCallOutputParser(pydantic_object=SearchActionDecision)
     structured_llm = observer_model | output_parser
     format_instructions = output_parser.get_format_instructions()
     system_instructions = SEARCH_AGENT_PROMPT.format(
-        session_id=state.get("session_id", ""),
-        search_task=f"{next_step.step_goal}",
-        search_steps_history=state.get("search_steps", []),
+        current_region=current_region,
+        validated_regions=validated_regions.to_string(),
+        search_task=f"任务目标: {next_step.step_goal}, 检查点: {', '.join(next_step.check_points)}",
+        search_steps_history="\n".join(search_steps_history),
         format=format_instructions
     )
     messages = [SystemMessage(content=system_instructions)]
-    decision: SearchDecision = structured_llm.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+    decision: SearchActionDecision = structured_llm.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
     logger.bind(tag="BASE").info(f"搜索决策: {decision}")
-
-    update = {"next_search_decision": decision}
-    if decision.tool_name == "Observe_Items":
-        return Command(update=update, goto="tool_observe_items")
-    if decision.tool_name == "Query_Region":
-        return Command(update=update, goto="tool_query_region")
-    if decision.tool_name == "Execute_Action":
+    update = {"next_search_decision": decision, "current_region": current_region, "action_step": action_step + 2}
+    if decision.action_name == "Query_Items":
+        return Command(update=update, goto="tool_query_items")
+    if decision.action_name == "Query_Regions":
+        return Command(update=update, goto="tool_query_regions")
+    if decision.action_name == "Execute_Action":
         return Command(update=update, goto="tool_execute_action")
     return Command(update=update, goto="tool_report")
 
-def _search_tool_observe_items_node(
-    state: SearchState,
-    config: RunnableConfig
+def _search_tool_query_items_node(
+    state: SearchState
 ) -> Command[Literal["search_decide"]]:
     """搜索子图-观察工具节点"""
-    decision: SearchDecision | None = state.get("next_search_decision")
-    session_id = decision.session_id or state.get("session_id", "") if decision else state.get("session_id", "")
-    query_item_name = decision.query_item_name if decision else None
-    query_item_description = decision.query_item_description if decision else None
-    if not query_item_name or not query_item_description:
-        logger.warning("缺少观察参数query_item_name或query_item_description，回到决策")
+    decision: SearchActionDecision | None = state.get("next_search_decision")
+    if not decision or not decision.action_params or not isinstance(decision.action_params, QueryItemsParams):
+        logger.warning("缺少动作参数，回到决策")
         return Command(goto="search_decide")
+    # session_id = decision.session_id or state.get("session_id", "") if decision else state.get("session_id", "")
+    current_scene_id = state.get("current_scene_id", "")
+    current_region = state.get("current_region", None)
     try:
-        result = observe_nearby_items.invoke({"session_id": session_id, "query_item_name": query_item_name, "query_item_description": query_item_description})
+        result = query_items.invoke({"current_scene_id": current_scene_id, "current_region": current_region, "action_goal": decision.action_params.query_item_description})
         search_steps = state.get("search_steps", [])
-        search_steps.append(f"观察: {query_item_name} {query_item_description}\n结果: {result}")
-        return Command(update={"search_steps": search_steps}, goto="search_decide")
+        search_steps.append(f"Step {len(search_steps)+1}: Query_Items: 查询目标 {decision.action_params.query_item_description}\n 查询结果: {result}")
+        current_region = state.get("current_region", None)
+        update = {"search_steps": search_steps}
+        if current_region:
+            validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+            if current_region not in validated_regions.regions:
+                validated_regions.regions[current_region] = RegionInfo(is_visited=True, is_searched=True)
+            else:
+                validated_regions.regions[current_region].is_searched = True
+                validated_regions.regions[current_region].is_visited = True
+            update = {"search_steps": search_steps, "validated_regions": validated_regions}
+        return Command(update=update, goto="search_decide")
     except Exception as e:
         logger.error(f"执行观察失败: {e}")
         return Command(goto="search_decide")
 
-def _search_tool_query_region_node(
+def _search_tool_query_regions_node(
     state: SearchState,
     config: RunnableConfig
 ) -> Command[Literal["search_decide"]]:
     """搜索子图-查询区域工具节点"""
-    decision: SearchDecision | None = state.get("next_search_decision")
-    session_id = decision.session_id or state.get("session_id", "") if decision else state.get("session_id", "")
+    # decision: SearchDecision | None = state.get("next_search_decision")
+    current_scene_id = state.get("current_scene_id", "")
+    current_region = state.get("current_region", "")
     try:
-        result = query_region.invoke({"session_id": session_id})
+        result = query_regions.invoke({"scene_id": current_scene_id, "current_region": current_region})
         search_steps = state.get("search_steps", [])
-        search_steps.append(f"查询区域: {result}")
-        return Command(update={"search_steps": search_steps}, goto="search_decide")
+        search_steps.append(f"Step {len(search_steps)+1}: Query_Regions: 查询当前区域{current_region}周边的区域\n结果: {result}")
+        validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+        for region_id in result:
+            if region_id not in validated_regions.regions:
+                validated_regions.regions[region_id] = RegionInfo(is_visited=False, is_searched=False)
+        update = {"search_steps": search_steps, "validated_regions": validated_regions}
+        return Command(update=update, goto="search_decide")
     except Exception as e:
         logger.error(f"查询区域失败: {e}")
         return Command(goto="search_decide")
@@ -570,51 +669,57 @@ def _search_tool_execute_action_node(
     config: RunnableConfig
 ) -> Command[Literal["search_decide"]]:
     """搜索子图-执行动作工具节点"""
-    decision: SearchDecision | None = state.get("next_search_decision")
-    session_id = decision.session_id or state.get("session_id", "") if decision else state.get("session_id", "")
-    entity_id = decision.entity_id if decision else None
-    action_cmd = decision.action_cmd if decision else None
-    reasoning = decision.reasoning or ""
-    if not (entity_id and action_cmd):
-        logger.warning("缺少执行参数，回到决策")
+    decision: SearchActionDecision | None = state.get("next_search_decision")
+    if not decision or not decision.action_params or not isinstance(decision.action_params, ExecuteActionParams):
+        logger.warning("缺少动作参数，回到决策")
         return Command(goto="search_decide")
     session_id = state.get("session_id", "")
-    char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
+    current_scene_id = state.get("current_scene_id", "")
+    current_region = state.get("current_region", None)
+    validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+
     spatial_entity = SpatialEntityManager().get_instance().query_items_by_entity_id(
-        scene_id=char_instance_info.current_scene_id,
-        entity_id=entity_id
+        scene_id=current_scene_id,
+        entity_id=decision.action_params.entity_id
     )
     search_steps = state.get("search_steps", [])
     if spatial_entity:
+        if spatial_entity['entity_type'] == 'region':
+            spatial_entity_id = spatial_entity['entity_id']
+            if spatial_entity_id not in validated_regions.regions:
+                validated_regions.regions[spatial_entity_id] = RegionInfo(is_visited=False, is_searched=False)
+            else:
+                validated_regions.regions[spatial_entity_id].is_visited = True
+            current_region = spatial_entity['entity_id']
         position = spatial_entity["anchor_point_3d"]
-        result = interrupt({
-            "type": "execute_action_tool",
-            "session_id": session_id,
-            "entity_id": entity_id,
-            "action_cmd": action_cmd,
-            "reasoning": reasoning,
-            "position": position
-        })
-        # result = execute_action.invoke({
+        # result = interrupt({
+        #     "type": "execute_action_tool",
         #     "session_id": session_id,
         #     "entity_id": entity_id,
         #     "action_cmd": action_cmd,
         #     "reasoning": reasoning,
+        #     "position": position
         # })
-        search_steps.append(f"执行: {action_cmd} -> {entity_id}\n结果: {result}")
+        result = execute_action.invoke({
+            "session_id": session_id,
+            "entity_id": decision.action_params.entity_id,
+            "action_cmd": decision.action_params.action_cmd,
+            "reasoning": "reasoning",
+        })
+        search_steps.append(f"执行: {decision.action_params.action_cmd} -> {decision.action_params.entity_id}\n结果: {result}")
     else:
-        search_steps.append(f"执行: {action_cmd} -> {entity_id}\n结果: 目标不存在")
-    return Command(update={"search_steps": search_steps}, goto="search_decide")
+        search_steps.append(f"执行: {decision.action_params.action_cmd} -> {decision.action_params.entity_id}\n结果: 目标不存在")
+    return Command(update={"search_steps": search_steps, "current_region": current_region, "validated_regions": validated_regions}, goto="search_decide")
 
 def _search_tool_report_node(
     state: SearchState,
     config: RunnableConfig
 ) -> Command[Literal[END]]:
     """搜索子图-报告工具节点，结束当前步骤并返回上层"""
-    decision: SearchDecision | None = state.get("next_search_decision")
-    if not decision or not (decision.search_result and decision.follow_up_search_suggestion):
-        logger.warning("缺少报告参数，直接返回")
-        return Command(goto=END)
+    decision: SearchActionDecision | None = state.get("next_search_decision")
+    if not decision or not decision.action_params or not isinstance(decision.action_params, ReportParams):
+        logger.warning("缺少动作参数，回到决策")
+        return Command(goto="search_decide")
     try:
         # 写入当前步骤结果
         current_plan = state.get("current_plan")
@@ -624,13 +729,12 @@ def _search_tool_report_node(
                 if not step.result:
                     result = report_search_result.invoke({
                         "search_task": step.step_goal,
-                        "search_result": decision.search_result,
-                        "follow_up_search_suggestion": decision.follow_up_search_suggestion,
+                        "finish_reasoning": decision.action_params.finish_reasoning,
+                        "task_execution_record": "\n".join(search_steps),
                     })
                     step.result = result
-                    search_steps.append(f"报告结果: {result}")
                     break
-        return Command(update={"search_steps": search_steps, "next_search_decision": None}, goto=END)
+        return Command(update={"search_steps": None, "next_search_decision": None}, goto=END)
     except Exception as e:
         logger.error(f"报告结果失败: {e}")
         return Command(goto=END)
@@ -639,7 +743,7 @@ def reporter_node(state: ActionFlowState) -> Dict[str, Any]:
     """报告节点：生成最终结果"""
     logger.bind(tag="BASE").info("Reporter 生成最终报告")
     current_plan = state.get("current_plan", None)
-    plan_history = state.get("plan_history", [])
+    plan_history = state.get("plan_history", "")
     action_goal = state.get("action_goal", "")
     # 构建最终结果
     result = "## 执行步骤"
@@ -688,8 +792,8 @@ search_subgraph_builder = StateGraph(
     config_schema=Configuration
 )
 search_subgraph_builder.add_node("search_decide", _search_decide_node)
-search_subgraph_builder.add_node("tool_observe_items", _search_tool_observe_items_node)
-search_subgraph_builder.add_node("tool_query_region", _search_tool_query_region_node)
+search_subgraph_builder.add_node("tool_query_items", _search_tool_query_items_node)
+search_subgraph_builder.add_node("tool_query_regions", _search_tool_query_regions_node)
 search_subgraph_builder.add_node("tool_execute_action", _search_tool_execute_action_node)
 search_subgraph_builder.add_node("tool_report", _search_tool_report_node)
 search_subgraph_builder.add_edge(START, "search_decide")
@@ -737,7 +841,7 @@ if __name__ == "__main__":
     
     # 构造测试状态
     test_state = ActionFlowState(
-        action_goal="数一数房间里有多少个凳子",
+        action_goal="找到并检查这个房间所有的凳子",
         action_result="",
         observations=[],
         plan_iterations=0,
@@ -784,7 +888,7 @@ if __name__ == "__main__":
         # 执行 graph，stream 模式逐步输出状态变更
         for idx, event in enumerate(test_graph.stream(test_state, thread_config, stream_mode="updates")):
             print(f"\n---- Event #{idx} ----")
-            pprint(event)
+            # pprint(event)
     except Exception as e:
         print(f"执行测试Graph时出错: {str(e)}")
         import traceback

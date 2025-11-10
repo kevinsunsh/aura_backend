@@ -15,7 +15,7 @@ class Configuration:
 	# search_api: SearchAPI = SearchAPI.TAVILY # Default to TAVILY
 	# search_api_config: Optional[Dict[str, Any]] = None 
 	serper_api_key: str = "48fdcd7bf30f08324b50dc97c2cafe038da46a16"# Defaults to serper_api_key
-	max_plan_iterations: int = 5  # Maximum number of plan iterations
+	max_step: int = 23  # Maximum number of plan iterations
 	max_search_results: int = 3 # Maximum number of search results
 	max_step_num: int = 3 # Maximum number of steps
 	search_iteration_limit: int = 2 # Maximum number of search iterations
