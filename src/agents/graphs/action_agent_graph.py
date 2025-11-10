@@ -150,7 +150,7 @@ def query_items(
             session_id="static",
             description_vector=query_vector,
             description_similarity_threshold=0.3,
-            limit=10
+            limit=30
         )
         action_model_config = get_chat_model_by_type("pfc_action")
         action_model = init_chat_model(
@@ -370,18 +370,18 @@ def planner_node(
     """计划节点：生成行动计划"""
     logger.info("Planner 生成行动计划")
     
-    configurable = Configuration.from_runnable_config(config)
-    action_step = state.get("action_step", 0)
+    current_step = config["metadata"]["langgraph_step"]
+    recursion_limit = config["recursion_limit"]
+    # 检查是否超过最大迭代次数
+    if current_step >= recursion_limit:
+        logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
+        return Command(goto="reporter")
     
     session_id = state.get("session_id", "")
     current_scene_id = state.get("current_scene_id", None)
     if not current_scene_id:
         char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
         current_scene_id = char_instance_info.current_scene_id
-    # 检查是否超过最大迭代次数
-    if action_step >= configurable.max_step:
-        logger.warning(f"达到最大计划迭代次数 {configurable.max_step}")
-        return Command(goto="reporter")
     
     # 获取必要信息
     action_goal = state.get("action_goal", "")
@@ -420,8 +420,7 @@ def planner_node(
         return Command(
             update={
                 "current_plan": plan,
-                "current_scene_id": current_scene_id,
-                "action_step": action_step + 1
+                "current_scene_id": current_scene_id
             },
             goto="search_team" if not plan.has_achieved_goal else "reporter"
         )
@@ -440,16 +439,16 @@ def fix_plan_node(
     logger.bind(tag="BASE").info("Fix Plan 修复计划")
     
     raw_plan = state.get("raw_plan")
-    action_step = state.get("action_step", 0)
+    current_step = config["metadata"]["langgraph_step"]
+    recursion_limit = config["recursion_limit"]
 
-    configurable = Configuration.from_runnable_config(config)
-    if action_step >= configurable.max_step:
-        logger.warning(f"达到最大计划迭代次数 {configurable.max_step}")
-        return Command(goto="reporter", update={"action_step": action_step + 1})
+    if current_step >= recursion_limit:
+        logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
+        return Command(goto="reporter")
     
     if not raw_plan:
         logger.warning("没有原始计划")
-        return Command(goto="reporter", update={"action_step": action_step + 1})
+        return Command(goto="reporter")
     
     # 获取模型
     planner_model_config = get_chat_model_by_type("pfc_action")
@@ -471,8 +470,7 @@ def fix_plan_node(
     # 更新状态
     return Command(
         update={
-            "current_plan": plan,
-            "action_step": action_step + 1
+            "current_plan": plan
         },
         goto="search_team" if not plan.has_achieved_goal else "reporter"
     )
@@ -485,7 +483,8 @@ def search_team_node(
     logger.bind(tag="BASE").info("Search Team 分配任务")
     
     current_plan = state.get("current_plan")
-    action_step = state.get("action_step", 0)
+    current_step = config["metadata"]["langgraph_step"]
+    recursion_limit = config["recursion_limit"]
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
         logger.warning("当前没有有效的计划或步骤")
@@ -498,8 +497,7 @@ def search_team_node(
             next_step = step
             break
     
-    configurable = Configuration.from_runnable_config(config)
-    if action_step > configurable.max_step - 1:
+    if current_step > recursion_limit - 1:
         next_step = None
     
     if not next_step:
@@ -528,12 +526,12 @@ def search_team_node(
         logger.bind(tag="BASE").info(f"报告搜索结果: {result.content}")
         plan_history = state.get("plan_history", [])
         plan_history.append(result.content)
-        update = {"plan_history": plan_history, "action_step": action_step + 1}
+        update = {"plan_history": plan_history}
         return Command(goto="planner", update=update)
     
     # 根据步骤类型分发到不同的节点
     logger.bind(tag="BASE").info(f"执行搜索步骤: {next_step.step_goal}")
-    return Command(goto="search", update={"session_id": state.get("session_id", ""), "current_plan": current_plan, "action_step": action_step + 1})
+    return Command(goto="search", update={"session_id": state.get("session_id", ""), "current_plan": current_plan})
 
 def _search_decide_node(
     state: SearchState,
@@ -544,7 +542,8 @@ def _search_decide_node(
     current_plan = state.get("current_plan")
     current_scene_id = state.get("current_scene_id", "")
     current_region = state.get("current_region", None)
-    action_step = state.get("action_step", 0)
+    current_step = config["metadata"]["langgraph_step"]
+    recursion_limit = config["recursion_limit"]
     if not current_region:
         current_region_obj = SpatialEntityManager().get_instance().query_region_include_item(
             scene_id=current_scene_id,
@@ -556,22 +555,21 @@ def _search_decide_node(
     validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
     search_steps_history = state.get("search_steps", [])
 
-    configurable = Configuration.from_runnable_config(config)
-    if action_step > configurable.max_step - 2:
-        logger.warning(f"达到最大计划迭代次数 {configurable.max_step}")
+    if current_step > recursion_limit - 2:
+        logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
         decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="达到最大计划迭代次数"))
-        update = {"next_search_decision": decision, "action_step": action_step + 2}
+        update = {"next_search_decision": decision}
         return Command(goto="tool_report", update=update)
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
         logger.warning("当前没有有效的计划或步骤")
         decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="当前没有有效的计划或步骤"))
-        update = {"next_search_decision": decision, "action_step": action_step + 2}
+        update = {"next_search_decision": decision}
         return Command(goto="tool_report", update=update)
     
     if len(search_steps_history) == 0:
         decision = SearchActionDecision(action_name="Query_Regions", action_params=QueryRegionsParams(current_region=current_region))
-        update = {"next_search_decision": decision, "current_region": current_region, "action_step": action_step + 2}
+        update = {"next_search_decision": decision, "current_region": current_region}
         return Command(goto="tool_query_regions", update=update)
     
     # 找到第一个未执行的步骤
@@ -603,7 +601,7 @@ def _search_decide_node(
     messages = [SystemMessage(content=system_instructions)]
     decision: SearchActionDecision = structured_llm.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
     logger.bind(tag="BASE").info(f"搜索决策: {decision}")
-    update = {"next_search_decision": decision, "current_region": current_region, "action_step": action_step + 2}
+    update = {"next_search_decision": decision, "current_region": current_region}
     if decision.action_name == "Query_Items":
         return Command(update=update, goto="tool_query_items")
     if decision.action_name == "Query_Regions":
@@ -841,7 +839,7 @@ if __name__ == "__main__":
     
     # 构造测试状态
     test_state = ActionFlowState(
-        action_goal="找到并检查这个房间所有的凳子",
+        action_goal="找到并检查这个房间所有的能坐的位子",
         action_result="",
         observations=[],
         plan_iterations=0,
@@ -856,7 +854,8 @@ if __name__ == "__main__":
     thread_config = {
         "configurable": {
             "thread_id": "test_thread"
-        }
+        },
+        "recursion_limit": 100
     }
 
     # SpatialEntityManager().get_instance().add_entity(

@@ -88,7 +88,6 @@ from langgraph.graph import MessagesState
 #     # 角色描述
 #     character_description: str
 #     # 行动步骤计数
-#     action_step_count: int
 #     # 执行结果
 #     current_result: str
 from enum import Enum
@@ -185,7 +184,6 @@ class ActionFlowState(MessagesState):
     current_scene_id: str
     action_goal: str
     action_result: str
-    action_step: int = 0
     plan_history: List[str]
     current_plan: Plan | None = None
     # 原始计划，用于修复计划
@@ -203,5 +201,4 @@ class SearchState(TypedDict):
     next_search_decision: SearchActionDecision | None = None
     current_region: str | None = None
     validated_regions: ValidatedRegions
-    action_step: int = 0
 
