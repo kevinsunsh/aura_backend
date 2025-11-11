@@ -27,6 +27,7 @@ from langgraph.types import Command, Interrupt
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg_pool import ConnectionPool
 from langgraph.graph import START, END, StateGraph
+from agents.states.action_agent_state import ValidatedRegions
 
 class LLMActionActor(pykka.ThreadingActor):
     """仅负责文本处理（LLM）的 Actor"""
@@ -276,7 +277,8 @@ class LLMActionActor(pykka.ThreadingActor):
             input_data = {
                 "session_id": self.chat_id,
                 "action_goal": goal_input,
-                "plan_iterations": 0
+                "plan_history": [],
+                "current_plan": None
             }
             for event in self.graph.stream(input_data, self.thread, stream_mode="updates"):
                 try:

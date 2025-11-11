@@ -117,12 +117,14 @@ class LLMChatActor(pykka.ThreadingActor):
                         "event": ServerEvent.ChatResponseEnd,
                     })
         elif payload["tag"] == "action":
+            logger.bind(tag="BASE").info(f"action payload: {payload}")
             if payload["status"] == "start":
                 self.action_tag_start = True
                 self.action_content = ""
             elif payload["status"] == "streaming":
                 self.action_content += payload["content"]
             elif payload["status"] == "end":
+                logger.bind(tag="BASE").info(f"end with action_content: {self.action_content}")
                 if self.output_callback:
                     if self.action_tag_start:
                         self.action_tag_start = False

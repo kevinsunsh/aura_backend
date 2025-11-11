@@ -372,43 +372,49 @@ def planner_node(
     
     # 检查是否超过最大迭代次数
     if state["remaining_steps"] <= 2:
-        logger.warning(f"剩余步骤不足2步，无法生成计划: {state["remaining_steps"]}")
+        logger.bind(tag="BASE").info(f"剩余步骤不足2步，无法生成计划: {state["remaining_steps"]}")
         return Command(goto="reporter")
-    
-    session_id = state.get("session_id", "")
-    current_scene_id = state.get("current_scene_id", None)
-    if not current_scene_id:
-        char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
-        current_scene_id = char_instance_info.current_scene_id
-    
-    # 获取必要信息
-    action_goal = state.get("action_goal", "")
-    
-    # 获取模型
-    planner_model_config = get_chat_model_by_type("pfc_action")
-    planner_model = init_chat_model(
-        model="doubao-seed-1-6-251015",
-        model_provider=planner_model_config.model_provider,
-        api_key=planner_model_config.api_key,
-        base_url=planner_model_config.api_base
-    )
+    try:
+        session_id = state.get("session_id", "")
+        current_scene_id = state.get("current_scene_id", None)
+        validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+
+        if not current_scene_id:
+            char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
+            current_scene_id = char_instance_info.current_scene_id
+        logger.bind(tag="BASE").info(f"current_scene_id: {current_scene_id}")
+        # 获取必要信息
+        action_goal = state.get("action_goal", "")
         
-    # 创建输出解析器
-    output_parser = RemoveFunctionCallOutputParser(pydantic_object=Plan)
-    structured_llm = planner_model | output_parser
-    format_instructions = output_parser.get_format_instructions()
-    
-    plan_history = state.get("plan_history", [])
-    # 构建提示词（加入最近观察，避免重复观察）
-    system_instructions = ACTION_PLANNING_PROMPT.format(
-        current_goal=action_goal,
-        task_execution_record="\n".join(plan_history),
-        format=format_instructions
-    )
-    
-    messages = [HumanMessage(content=system_instructions)]
-    
-    result = planner_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+        # 获取模型
+        planner_model_config = get_chat_model_by_type("pfc_action")
+        planner_model = init_chat_model(
+            model="doubao-seed-1-6-251015",
+            model_provider=planner_model_config.model_provider,
+            api_key=planner_model_config.api_key,
+            base_url=planner_model_config.api_base
+        )
+        
+        # 创建输出解析器
+        output_parser = RemoveFunctionCallOutputParser(pydantic_object=Plan)
+        structured_llm = planner_model | output_parser
+        format_instructions = output_parser.get_format_instructions()
+        
+        plan_history = state.get("plan_history", [])
+        # 构建提示词（加入最近观察，避免重复观察）
+        system_instructions = ACTION_PLANNING_PROMPT.format(
+            current_goal=action_goal,
+            task_execution_record="\n".join(plan_history),
+            format=format_instructions
+        )
+        
+        messages = [HumanMessage(content=system_instructions)]
+        logger.bind(tag="BASE").info(f"system_instructions: {system_instructions}")
+        result = planner_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+        logger.bind(tag="BASE").info(f"result: {result.content}")
+    except Exception as e:
+        logger.bind(tag="BASE").info(f"生成计划失败: {e} goto reporter")
+        return Command(goto="reporter")
     # 生成计划
     try:
         plan: Plan = output_parser.invoke(result.content)
@@ -418,12 +424,13 @@ def planner_node(
         return Command(
             update={
                 "current_plan": plan,
-                "current_scene_id": current_scene_id
+                "current_scene_id": current_scene_id,
+                "validated_regions": validated_regions.reset_regions()
             },
             goto="search_team" if not plan.has_achieved_goal else "reporter"
         )
     except Exception as e:
-        logger.error(f"生成计划失败: {e}")
+        logger.bind(tag="BASE").info(f"生成计划失败: {e} goto fix_plan_node")
         return Command(
             update={"raw_plan": result.content},
             goto="fix_plan_node"
@@ -548,20 +555,21 @@ def _search_decide_node(
     search_steps_history = state.get("search_steps", [])
 
     if state["remaining_steps"] <= 3:
-        logger.warning(f"剩余步骤不足3步，无法决策: {state["remaining_steps"]}")
+        logger.bind(tag="BASE").info(f"剩余步骤不足3步，无法决策: {state["remaining_steps"]}")
         decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="达到最大计划迭代次数"))
         update = {"next_search_decision": decision}
         return Command(goto="tool_report", update=update)
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
-        logger.warning("当前没有有效的计划或步骤")
+        logger.bind(tag="BASE").info("当前没有有效的计划或步骤")
         decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="当前没有有效的计划或步骤"))
         update = {"next_search_decision": decision}
         return Command(goto="tool_report", update=update)
     
     if len(search_steps_history) == 0:
+        logger.bind(tag="BASE").info(f"查询当前区域周边的区域: {current_region}, {validated_regions.to_string()}")
         decision = SearchActionDecision(action_name="Query_Regions", action_params=QueryRegionsParams(current_region=current_region))
-        update = {"next_search_decision": decision, "current_region": current_region}
+        update = {"next_search_decision": decision, "current_region": current_region, "validated_regions": validated_regions}
         return Command(goto="tool_query_regions", update=update)
     
     # 找到第一个未执行的步骤
@@ -579,12 +587,18 @@ def _search_decide_node(
         api_key=observer_model_config.api_key,
         base_url=observer_model_config.api_base
     )
+    need_query_items = False
+    if current_region in validated_regions.regions:
+        if validated_regions.regions[current_region].is_searched == False:
+            need_query_items = True
+    else:
+        need_query_items = True
     # 解析成 SearchDecision
     output_parser = RemoveFunctionCallOutputParser(pydantic_object=SearchActionDecision)
     structured_llm = observer_model | output_parser
     format_instructions = output_parser.get_format_instructions()
     system_instructions = SEARCH_AGENT_PROMPT.format(
-        current_region=current_region,
+        current_region=f"当前区域: {current_region}{'， 当前区域未搜索过，如需搜索物品，请调用Query_Items工具。' if need_query_items else ''}",
         validated_regions=validated_regions.to_string(),
         search_task=f"任务目标: {next_step.step_goal}, 检查点: {', '.join(next_step.check_points)}",
         search_steps_history="\n".join(search_steps_history),
@@ -693,9 +707,10 @@ def _search_tool_query_regions_node(
             if region_id not in validated_regions.regions:
                 validated_regions.regions[region_id] = RegionInfo(is_visited=False, is_searched=False)
         update = {"search_steps": search_steps, "validated_regions": validated_regions}
+        logger.bind(tag="BASE").info(f"查询区域成功: {update}")
         return Command(update=update, goto="search_decide")
     except Exception as e:
-        logger.error(f"查询区域失败: {e}")
+        logger.bind(tag="BASE").info(f"查询区域失败: {e}")
         return Command(goto="search_decide")
 
 def _search_tool_execute_action_node(
