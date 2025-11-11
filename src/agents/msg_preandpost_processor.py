@@ -6,10 +6,10 @@ from loguru import logger
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from agents.agent_memory.prompt_manager.char_instance_info.manager import DBManager as CharInstanceInfoManager
-from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
+# from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
 from agents.agent_memory.chat_stream import ChatStreamManager
 from agents.agent_memory.message_store import MessageStore, MessageModel
-from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
+# from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 from agents.agent_memory.configuration import get_chat_model_by_type
 from agents.agent_memory.user_info.manager import DBManager as UserInfoManager
 from agents.agent_memory.prompt_manager.character.manager import DBManager as CharacterManager

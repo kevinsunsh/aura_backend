@@ -80,7 +80,8 @@ class LLMActionActor(pykka.ThreadingActor):
             self.thread = {
                 "configurable": {
                     "thread_id": self.chat_id
-                }
+                },
+                "recursion_limit": 100
             }
             db_conn_string = DatabaseConfigManager.get_config_by_environment().get_checkpointer_connection_string()
             pool = ConnectionPool(conninfo=db_conn_string)

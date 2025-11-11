@@ -370,11 +370,9 @@ def planner_node(
     """计划节点：生成行动计划"""
     logger.bind(tag="BASE").info("Planner 生成行动计划")
     
-    current_step = config["metadata"]["langgraph_step"]
-    recursion_limit = config["recursion_limit"]
     # 检查是否超过最大迭代次数
-    if current_step >= recursion_limit:
-        logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
+    if state["remaining_steps"] <= 2:
+        logger.warning(f"剩余步骤不足2步，无法生成计划: {state["remaining_steps"]}")
         return Command(goto="reporter")
     
     session_id = state.get("session_id", "")
@@ -439,11 +437,8 @@ def fix_plan_node(
     logger.bind(tag="BASE").info("Fix Plan 修复计划")
     
     raw_plan = state.get("raw_plan")
-    current_step = config["metadata"]["langgraph_step"]
-    recursion_limit = config["recursion_limit"]
-
-    if current_step >= recursion_limit:
-        logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
+    if state["remaining_steps"] <= 2:
+        logger.warning(f"剩余步骤不足2步，无法修复计划: {state["remaining_steps"]}")
         return Command(goto="reporter")
     
     if not raw_plan:
@@ -483,8 +478,6 @@ def search_team_node(
     logger.bind(tag="BASE").info("Search Team 分配任务")
     
     current_plan = state.get("current_plan")
-    current_step = config["metadata"]["langgraph_step"]
-    recursion_limit = config["recursion_limit"]
     # 检查计划是否存在
     if not current_plan or not current_plan.steps:
         logger.warning("当前没有有效的计划或步骤")
@@ -497,7 +490,8 @@ def search_team_node(
             next_step = step
             break
     
-    if current_step > recursion_limit - 1:
+    if state["remaining_steps"] <= 3:
+        logger.warning(f"剩余步骤不足3步，无法分配任务: {state["remaining_steps"]}")
         next_step = None
     
     if not next_step:
@@ -542,8 +536,6 @@ def _search_decide_node(
     current_plan = state.get("current_plan")
     current_scene_id = state.get("current_scene_id", "")
     current_region = state.get("current_region", None)
-    current_step = config["metadata"]["langgraph_step"]
-    recursion_limit = config["recursion_limit"]
     if not current_region:
         current_region_obj = SpatialEntityManager().get_instance().query_region_include_item(
             scene_id=current_scene_id,
@@ -555,8 +547,8 @@ def _search_decide_node(
     validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
     search_steps_history = state.get("search_steps", [])
 
-    if current_step > recursion_limit - 2:
-        logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
+    if state["remaining_steps"] <= 3:
+        logger.warning(f"剩余步骤不足3步，无法决策: {state["remaining_steps"]}")
         decision = SearchActionDecision(action_name="Report", action_params=ReportParams(finish_reasoning="达到最大计划迭代次数"))
         update = {"next_search_decision": decision}
         return Command(goto="tool_report", update=update)
@@ -609,6 +601,50 @@ def _search_decide_node(
     if decision.action_name == "Execute_Action":
         return Command(update=update, goto="tool_execute_action")
     return Command(update=update, goto="tool_report")
+
+# def _fix_search_node(
+#     state: SearchState,
+#     config: RunnableConfig
+# ) -> Command[Literal["tool_query_items", "tool_query_regions", "tool_execute_action", "tool_report", END]]:
+#     """修复计划节点：修复计划中的错误"""
+#     logger.bind(tag="BASE").info("Fix Search 修复搜索")
+    
+#     raw_search = state.get("raw_search")
+#     current_step = config["metadata"]["langgraph_step"]
+#     recursion_limit = config["recursion_limit"]
+
+#     if current_step >= recursion_limit:
+#         logger.warning(f"达到最大计划迭代次数 {recursion_limit}")
+#         return Command(goto="tool_query_regions", update=update)
+    
+#     if not raw_plan:
+#         logger.warning("没有原始计划")
+#         return Command(goto="reporter")
+    
+#     # 获取模型
+#     planner_model_config = get_chat_model_by_type("pfc_action")
+#     planner_model = init_chat_model(
+#         model="doubao-seed-1-6-251015",
+#         model_provider=planner_model_config.model_provider,
+#         api_key=planner_model_config.api_key,
+#         base_url=planner_model_config.api_base
+#     )
+#     output_parser = RemoveFunctionCallOutputParser(pydantic_object=Plan)
+#     structured_llm = planner_model | output_parser
+#     format_instructions = output_parser.get_format_instructions()
+#     system_instructions = FIX_PLAN_PROMPT.format(
+#         raw_plan=raw_plan,
+#         format=format_instructions
+#     )
+#     messages = [HumanMessage(content=system_instructions)]
+#     plan: Plan = structured_llm.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+#     # 更新状态
+#     return Command(
+#         update={
+#             "current_plan": plan
+#         },
+#         goto="search_team" if not plan.has_achieved_goal else "reporter"
+#     )
 
 def _search_tool_query_items_node(
     state: SearchState
@@ -669,7 +705,7 @@ def _search_tool_execute_action_node(
     """搜索子图-执行动作工具节点"""
     decision: SearchActionDecision | None = state.get("next_search_decision")
     if not decision or not decision.action_params or not isinstance(decision.action_params, ExecuteActionParams):
-        logger.warning("缺少动作参数，回到决策")
+        logger.bind(tag="BASE").warning("缺少动作参数，回到决策")
         return Command(goto="search_decide")
     session_id = state.get("session_id", "")
     current_scene_id = state.get("current_scene_id", "")

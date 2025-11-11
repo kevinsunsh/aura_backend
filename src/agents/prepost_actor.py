@@ -21,8 +21,8 @@ from agents.agent_memory.prompt_manager.utils import count_tokens_openai
 from agents.agent_memory.message_store import MessageStore, MessageModel
 from agents.agent_memory.chat_stream import ChatStreamManager
 from agents.agent_memory.configuration import get_chat_model_by_type
-from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
-from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
+# from agents.agent_memory.task.task_manager import TaskManager, TaskStateType
+# from agents.agent_memory.task.task_prompt import TASK_PARAMS_PROMPT
 
 class PrePostActor(pykka.ThreadingActor):
     """预处理和后处理 Actor"""

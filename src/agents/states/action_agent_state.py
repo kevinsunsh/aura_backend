@@ -1,11 +1,11 @@
 """
 Agent 流程状态定义
 """
-from typing import Dict, List, Any, Optional, TypedDict, Literal
+from typing import Dict, List, Any, Optional, TypedDict, Literal, Annotated
 from datetime import datetime
 from pydantic import BaseModel, Field
 from langgraph.graph import MessagesState
-
+from langgraph.managed import RemainingSteps
 # class ActionsGoal(BaseModel):
 #     action_goal: str = Field(
 #         description="Action goal.",
@@ -190,6 +190,7 @@ class ActionFlowState(MessagesState):
     raw_plan: str = None
     current_region: str | None = None
     validated_regions: ValidatedRegions
+    remaining_steps: RemainingSteps
 
 class SearchState(TypedDict):
     session_id: str
@@ -201,4 +202,5 @@ class SearchState(TypedDict):
     next_search_decision: SearchActionDecision | None = None
     current_region: str | None = None
     validated_regions: ValidatedRegions
+    remaining_steps: RemainingSteps
 
