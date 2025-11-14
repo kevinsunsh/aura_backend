@@ -164,19 +164,24 @@ class LLMTTSActor(pykka.ThreadingActor):
                 await self.output_callback(message)
         except Exception as e:
             logger.error(f"文本处理器回调失败: {e}")
-
+    
     def _run_async(self, coro):
-        """在同步Actor中运行异步任务的工具方法"""
         try:
-            asyncio.run(coro)
+            running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            # 已存在事件循环时，创建新的事件循环
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(coro)
-            finally:
-                loop.close()
+            running_loop = None
+
+        if running_loop and running_loop.is_running():
+            return running_loop.create_task(coro)
+
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        except Exception as e:
+            logger.error(f"Failed to run async: {str(e)}")
+        finally:
+            loop.close()
     
     # TTS回调方法
     def _on_tts_sentence_start(self, payload, session_id):

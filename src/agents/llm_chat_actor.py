@@ -137,14 +137,21 @@ class LLMChatActor(pykka.ThreadingActor):
     
     def _run_async(self, coro):
         try:
-            asyncio.run(coro)
+            running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(coro)
-            finally:
-                loop.close()
+            running_loop = None
+
+        if running_loop and running_loop.is_running():
+            return running_loop.create_task(coro)
+
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        except Exception as e:
+            logger.error(f"Failed to run async: {str(e)}")
+        finally:
+            loop.close()
     
     async def handle_message(self, prompts: list[dict]) -> Dict[str, Any]:
         try:

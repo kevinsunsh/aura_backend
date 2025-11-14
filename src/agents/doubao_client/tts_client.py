@@ -579,9 +579,9 @@ class TtsClient:
             if self._tts_session_active == False:
                 logger.bind(tag="TTS").info(f"TTS会话未激活，跳过发送: {text[:50]}...")
                 self.need_reconnect = True
-                # self.session_id_str = str(uuid.uuid4()).replace('-', '')
+                self.session_id_str = str(uuid.uuid4()).replace('-', '')
                 # self.session_id.value = self.session_id_str.encode('utf-8')
-                # await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
+                await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 return
             if len(self.buffer_text) > 0:
                 await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
