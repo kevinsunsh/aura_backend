@@ -170,7 +170,7 @@ class TtsClient:
         # self.session_id = session_id
         self.connection_id = None
         self.connection_lost = False  # 新增：标记连接是否丢失
-        self.need_reconnect = False
+        self.need_connect = True
         
         # TTS会话状态
         self._tts_session_active = False
@@ -269,22 +269,13 @@ class TtsClient:
             response.payload, offset = self._read_tts_payload(res, offset)
         
         return response
-    async def _start_and_loop(self):
-        """在内部事件循环中启动并开启接收循环"""
-        try:
-            if self.message_loop is not None and self.message_loop.done() == False:
-                self.message_loop.cancel()
-            await self._connect()
-            self.message_loop = asyncio.create_task(self.message_receive_loop())
-        except Exception as e:
-            logger.error(f"内部循环启动TTS失败: {e}")
-            raise
-
-    def start_background(self, chat_id: str, user_id: str):
+    
+    def start_message_receive_loop(self, chat_id: str, user_id: str):
         """在内部事件循环线程中启动TTS并保持接收循环持续运行"""
         self.uid = user_id
         self.chat_id = chat_id
-        return asyncio.run_coroutine_threadsafe(self._start_and_loop(), self._loop)
+        return asyncio.run_coroutine_threadsafe(self.message_receive_loop(), self._loop)
+    
     async def _tts_start_connection(self, websocket):
         """TTS开始连接"""
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
@@ -312,7 +303,7 @@ class TtsClient:
         optional = TTSOptional(event=EVENT_TaskRequest, sessionId=session_id).as_bytes()
         payload = get_tts_payload_bytes(uid=self.uid, event=EVENT_TaskRequest, text=text, speaker=speaker, mood_code=mood_code, mood_level=mood_level, speech_rate=speech_rate)
         return await self._send_tts_event(ws, header, optional, payload)
-
+    
     async def _tts_finish_session(self, ws, session_id):
         """TTS结束会话"""
         logger.bind(tag="TTS").info(f"===========TTS结束会话: {session_id}")
@@ -323,6 +314,7 @@ class TtsClient:
         optional = TTSOptional(event=EVENT_FinishSession, sessionId=session_id).as_bytes()
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
+    
     async def _cleanup_all(self):
         """内部事件循环上的完整清理"""
         try:
@@ -333,7 +325,7 @@ class TtsClient:
             logger.debug("TTS客户端已清理(内部循环)")
         except Exception as e:
             logger.error(f"内部循环清理TTS客户端时出错: {e}")
-
+    
     def cleanup_background(self):
         """在内部事件循环线程中执行清理，并尝试停止内部事件循环"""
         try:
@@ -389,21 +381,6 @@ class TtsClient:
         #     self.speech_rate = speech_rate
             # await self._tts_finish_session(self.ws, self.session_id_str)
     
-    async def start(self, chat_id: str, user_id: str):
-        """启动TTS连接并建立会话"""
-        self.uid = user_id
-        self.chat_id = chat_id
-        
-        try:
-            if self.message_loop is not None and self.message_loop.done() == False:
-                self.message_loop.cancel()
-                await self.message_loop
-            await self._connect()
-            self.message_loop = asyncio.create_task(self.message_receive_loop())
-        except Exception as e:
-            logger.error(f"启动TTS连接失败: {e}")
-            raise
-    
     async def _connect(self):
         """建立TTS连接和会话"""
         logger.info(f"建立TTS连接: {self.ws_url}")
@@ -455,6 +432,7 @@ class TtsClient:
     async def message_receive_loop(self):
         """接收音频数据循环"""
         try:
+            await self._connect()
             while True:
                 try:
                     if self.is_running == False:
@@ -464,9 +442,9 @@ class TtsClient:
                         res = self._parse_tts_response(await asyncio.wait_for(self.ws.recv(), timeout=self.recv_timeout))
                     except asyncio.TimeoutError:
                         logger.debug("TTS接收超时，继续等待")
-                        if self.need_reconnect:
+                        if self.need_connect:
                             await self._connect()
-                            self.need_reconnect = False
+                            self.need_connect = False
                         continue
                     logger.debug(f"TTS响应: cur session_id={self.session_id_str}, event_session_id={res.optional.sessionId}, event={res.optional.event}, type={res.header.message_type}")
                     
@@ -578,10 +556,10 @@ class TtsClient:
                 return
             if self._tts_session_active == False:
                 logger.bind(tag="TTS").info(f"TTS会话未激活，跳过发送: {text[:50]}...")
-                self.need_reconnect = True
-                self.session_id_str = str(uuid.uuid4()).replace('-', '')
+                self.need_connect = True
+                # self.session_id_str = str(uuid.uuid4()).replace('-', '')
                 # self.session_id.value = self.session_id_str.encode('utf-8')
-                await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
+                # await self._tts_start_session(self.ws, self.speaker, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 return
             if len(self.buffer_text) > 0:
                 await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)

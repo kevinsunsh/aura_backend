@@ -46,7 +46,7 @@ class TTSActor(pykka.ThreadingActor):
                 tts_sentence_end_callback=self._on_tts_sentence_end,
                 tts_ended_callback=self._on_tts_ended,
             )
-            self.tts_client.start_background(self.chat_id, self.user_id)
+            self.tts_client.start_message_receive_loop(self.chat_id, self.user_id)
             logger.info(f"TTSActor启动成功: chat_id={self.chat_id}, user_id={self.user_id}")
             return {"success": True}
         except Exception as e:
