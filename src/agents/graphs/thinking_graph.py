@@ -22,10 +22,8 @@ from agents.prompts.thinking_prompt import (
     THINKING_ACTION_PLANNER_PROMPT,
     THINKING_ACTION
 )
-from agents.agent_memory.message_store import Message
 from utils.utils import start_performance_point, end_performance_point
 from utils.todo_mock_func import (
-    _build_chat_history_str,
     _build_goals_str,
     _build_action_history_summary,
     _build_knowledge_info_str

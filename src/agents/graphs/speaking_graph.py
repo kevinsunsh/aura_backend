@@ -1,226 +1,293 @@
+from types import SimpleNamespace
+from typing import Any, Dict, List
 import json
-import uuid
-import asyncio
-import time
-from datetime import datetime
-from typing import Literal, Optional, Tuple, Dict, Any, List
-
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
-from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
-from langgraph.types import interrupt, Command
+from langgraph.types import Command
 from langgraph.config import get_stream_writer
 
-from agents.states.speaking_state import SpeakingTaskState
-from configuration.config import GraphConfiguration, get_chat_model_by_type
+from agents.states.speaking_state import SpeakingTaskState, PlannerResponse
+from agents.agent_memory.configuration import get_chat_model_by_type
 from loguru import logger
-from agents.prompts.speaking_prompt import (
-    SPEAKING_ACTION_PLANNER_PROMPT,
-    SPEAKING_GENERATOR_FOLLOW_UP_PROMPT
-)
-from agents.agent_memory.message_store import MessageStore
-from agents.agent_memory.chat_stream import ChatStreamManager
-from utils.utils import start_performance_point, end_performance_point
-from utils.todo_mock_func import (
-    _build_action_history_summary
-)
-from agents.task.task_manager import TaskManager, TaskType, TaskStateType
+from agents.output_parser.output_parser import RemoveFunctionCallOutputParser
+from agents.prompts.speaking_prompt import FLASH_RESPONSE_PROMPT, VISUAL_RESPONSE_PROMPT, ACTION_RESPONSE_PROMPT, PLANNER_GOAL_PROMPT
+from utils.utils import start_performance_point
+from langchain.chat_models import init_chat_model
+from configuration.configuration import Configuration
 
+reply_max_latency = 30  # s
 
-reply_max_latency = 30 #s
-
-async def _plan_action(state: SpeakingTaskState, config: RunnableConfig):
-    """规划下一步行动"""
-    try:
-        await asyncio.sleep(1)
-        if TaskManager.get_instance().get_task_state(TaskType.SPEAKING) == TaskStateType.PAUSED:
-            return Command(goto=END)
-        chat_model = get_chat_model_by_type("pfc_action_planner")
-        
-        # 构建提示词参数
-        persona_text = ""
-        action_history_summary = _build_action_history_summary(state.get("action_history", []))
-        observing_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.OBSERVING)
-        processed_chat_history_str = observing_task_shared_data.get("processed_chat_history_str", "还没有聊天记录。")
-        unprocessed_chat_history_str = observing_task_shared_data.get("unprocessed_chat_history_str", "还没有聊天记录。")
-        last_bot_message_time = observing_task_shared_data.get("last_bot_message_time", None)
-        last_user_message_time = observing_task_shared_data.get("last_user_message_time", None)
-        
-        # 构建时间和超时信息
-        time_since_last_bot_message_info = ""
-        if last_bot_message_time:
-            time_diff = (datetime.now().timestamp() - last_bot_message_time) / (1000 * 1000)
-            if time_diff < reply_max_latency:
-                time_since_last_bot_message_info = f"提示：你上一条成功发送的消息是在 {time_diff:.1f} 秒前。"
-            else:
-                time_since_last_bot_message_info = "提示：你已经很久没说话了。"
-        
-        timeout_context = ""
-        if last_user_message_time:
-            if last_bot_message_time > last_user_message_time:
-                time_diff = (datetime.now().timestamp() - last_user_message_time) / (1000 * 1000)
-                timeout_context = f"重要提示：对方已经{time_diff:.1f}秒没有回复你的消息了,请基于此情况规划下一步。"
-                if time_diff > reply_max_latency:
-                    timeout_context = "重要提示：对方已经长时间没有回复你的消息了（这可能代表对方繁忙/不想回复/没注意到你的消息等情况，或在对方看来本次聊天已告一段落），请基于此情况规划下一步。"
-            else:
-                time_diff = (datetime.now().timestamp() - last_bot_message_time) / (1000 * 1000)
-                timeout_context = f"重要提示：你已经{time_diff:.1f}秒没有回复对方了，请基于此情况规划下一步。"
-                if time_diff > reply_max_latency:
-                    timeout_context = "重要提示：你已经很长时间没有回复对方了，请基于此情况规划下一步。"
-        
-        thinking_task_shared_data = await TaskManager.get_instance().get_task_shared_data(TaskType.THINKING)
-        goals_str = thinking_task_shared_data.get("goals_str", "")
-        knowledge_info_str = thinking_task_shared_data.get("knowledge_info_str", "")
-        logger.info(f"plan_action goals_str: {goals_str}")
-
-        # logger.info(f"plan_action action_str: {action_str}")
-        # 格式化提示词
-        prompt = SPEAKING_ACTION_PLANNER_PROMPT.format(
-            persona_text=persona_text,
-            goals_str=goals_str,
-            knowledge_info_str=knowledge_info_str,
-            action_history_summary=action_history_summary,
-            time_since_last_bot_message_info=time_since_last_bot_message_info,
-            timeout_context=timeout_context,
-            processed_chat_history_str=processed_chat_history_str,
-            unprocessed_chat_history_str=unprocessed_chat_history_str,
-            bot_name="aura",
-            user_name=state.get("user_id", "")
-        )
-        
-        # 调用LLM规划行动
-        response = ""
-        async for chunk in chat_model.astream([SystemMessage(content=prompt)], extra_body={"thinking": {"type": "disabled"}}):
-            if hasattr(chunk, 'content'):
-                response += chunk.content
-        
-        # 解析JSON响应
-        try:
-            action_data = json.loads(response)
-            action = action_data.get("action", "wait")
-            reason = action_data.get("reason", "")
-            logger.info(f"plan_action action: {action}, reason: {reason}")
-        except json.JSONDecodeError:
-            logger.warning("行动规划响应不是有效的JSON格式")
-            action = "wait"
-            reason = "解析响应失败，默认等待"
-        
-        # 更新状态
-        return Command(
-            update={
-                "current_action": action,
-                "action_reason": reason,
-                "processed_chat_history_str": processed_chat_history_str,
-                "unprocessed_chat_history_str": unprocessed_chat_history_str,
-                "last_bot_message_time": last_bot_message_time,
-                "last_user_message_time": last_user_message_time,
-                "goals_str": goals_str,
-                "knowledge_info_str": knowledge_info_str
-            },
-            goto="execute_action"
-        )
-    except Exception as e:
-        logger.error(f"规划行动时出错: {str(e)}")
-        return Command(
-            goto=END
-        )
-
-async def _execute_action(state: SpeakingTaskState, config: RunnableConfig):
-    """执行规划的行动"""
-    try:
-        action_type = state.get("current_action")
-        if not action_type:
-            return Command(goto="wait_for_user_message")
-        
-        # 根据行动类型执行不同的逻辑
-        if action_type == "send_new_message":
-            return Command(goto="generate_new_message")
-        elif action_type == "listening":
-            return Command(goto="wait_for_user_message")
-        elif action_type == "wait":
-            return Command(goto="wait_for_user_message")
-        else:
-            # 默认等待
-            return Command(goto="wait_for_user_message")
-    except Exception as e:
-        logger.error(f"执行行动时出错: {str(e)}")
-        return Command(goto=END)
-        
-async def _wait_for_user_message(state: SpeakingTaskState, config: RunnableConfig):
-    """等待用户输入"""
-    await asyncio.sleep(3)
-    return Command(goto=END)
-
-async def _generate_new_message(state: SpeakingTaskState, config: RunnableConfig):
+def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
     """发送立即回复"""
     try:  
         # 使用LLM生成立即回复
-        chat_model = get_chat_model_by_type("pfc_chat")
-        
-        persona_text = ""
-        
-        # 使用从checkpoint获取的共享变量，如果没有则使用state中的默认值
-        goals_str = state.get("goals_str", "")
-        knowledge_info_str = state.get("knowledge_info_str", "")
-        unprocessed_chat_history_str = state.get("unprocessed_chat_history_str", "还没有聊天记录。")
-        processed_chat_history_str = state.get("processed_chat_history_str", "还没有聊天记录。")
-        
-        # 格式化提示词
-        prompt = SPEAKING_GENERATOR_FOLLOW_UP_PROMPT.format(
-            persona_text=persona_text,
-            goals_str=goals_str,
-            knowledge_info_str=knowledge_info_str,
-            processed_chat_history_str=processed_chat_history_str,
-            unprocessed_chat_history_str=unprocessed_chat_history_str
+        user_input = state.get("user_input", "")
+        chat_model_config = get_chat_model_by_type("pfc_action_planner")
+        chat_model = init_chat_model(
+            model=chat_model_config.model_name,
+            model_provider=chat_model_config.model_provider,
+            api_key=chat_model_config.api_key,
+            base_url=chat_model_config.api_base
         )
-    
+        # 构建提示词（加入最近观察，避免重复观察）
+        system_instructions = FLASH_RESPONSE_PROMPT.format(
+            user_input=user_input
+        )
+        messages = [SystemMessage(content=system_instructions), HumanMessage(content=[
+            {
+                "image_url":
+                    {
+                        "url":"https://aura-view-eye.tos-cn-beijing.volces.com/assets/2342342334/0031312f-49f2-0fa3-9a5f-b18815278e2d/view_data/look.jpg"
+                    },
+                "type":"image_url"
+            },
+            {
+                "text": "这是你看到的画面",
+                "type": "text"
+            }
+        ])]
         writer = get_stream_writer()
+        tag_configs = {
+            "<need_planner_response>": "planner_response"
+        }
+        tag_markers = list(tag_configs.keys())
+        buffer = ""
         # 生成立即回复
         final_response = ""
-        quick_response_point_id = start_performance_point("快速响应")
-        async for chunk in chat_model.astream([
-            SystemMessage(content=prompt)
-        ],
-        extra_body={"thinking": {"type": "disabled"}}):
+        writer({"chat_start": True})
+        for chunk in chat_model.stream(messages, extra_body={"thinking": {"type": "disabled"}}):
             if hasattr(chunk, 'content'):
-                end_performance_point(quick_response_point_id)
-                if TaskManager.get_instance().get_task_state(TaskType.SPEAKING) == TaskStateType.PAUSED:
-                    logger.info(f"打断流式响应，继续倾听")  
-                    break
-                # 停止其他说话任务
-                # if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.RUNNING:
-                #     await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.STOPPED)
-                if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.RUNNING:
-                    await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.STOPPED)
-                final_response += chunk.content
-                writer({"content": chunk.content})
-        
-        ChatStreamManager.get_instance().update_chat_stream_checked_at(state["chat_id"])
-        
-        if TaskManager.get_instance().get_task_state(TaskType.REPLYING) == TaskStateType.STOPPED:
-            await TaskManager.get_instance().set_task_state(TaskType.REPLYING, TaskStateType.RUNNING)
-        # if TaskManager.get_instance().get_task_state(TaskType.MUTTERING) == TaskStateType.STOPPED:
-        #     await TaskManager.get_instance().set_task_state(TaskType.MUTTERING, TaskStateType.RUNNING)
+                text = chunk.content
+                buffer += text
+
+                def _find_next_tag(segment: str):
+                    matched_tag = None
+                    matched_index = len(segment)
+                    for tag in tag_markers:
+                        idx = segment.find(tag)
+                        if idx != -1 and idx < matched_index:
+                            matched_index = idx
+                            matched_tag = tag
+                    return matched_tag, matched_index
+
+                def _longest_partial_suffix(segment: str) -> int:
+                    max_len = 0
+                    for tag in tag_markers:
+                        for prefix_len in range(1, len(tag)):
+                            if segment.endswith(tag[:prefix_len]):
+                                max_len = max(max_len, prefix_len)
+                    return max_len
+
+                while True:
+                    matched_tag, matched_index = _find_next_tag(buffer)
+                    if not matched_tag:
+                        break
+                    prefix_text = buffer[:matched_index]
+                    if prefix_text:
+                        writer({"chat_streaming": prefix_text})
+                        final_response += prefix_text
+                    buffer = buffer[matched_index + len(matched_tag):]
+                    return Command(goto=tag_configs[matched_tag], update={
+                        "user_input": user_input,
+                        "final_response": final_response
+                    })
+
+                keep_len = _longest_partial_suffix(buffer)
+                flush_len = len(buffer) - keep_len
+                if flush_len > 0:
+                    flush_text = buffer[:flush_len]
+                    writer({"chat_streaming": flush_text})
+                    final_response += flush_text
+                    buffer = buffer[flush_len:]
+
+        if buffer:
+            writer({"chat_streaming": buffer})
+            final_response += buffer
+        writer({"chat_end": True})
         return Command(goto=END, update={
-            "speaking_response": "finished"
-        })            
+            "speaking_response": "finished",
+            "final_response": final_response
+        })
     except Exception as e:
         logger.error(f"生成主动回复时出错: {str(e)}")
         return Command(goto=END, update={
             "speaking_response": "error"
         })            
 
+# def _generate_visual_response(state: SpeakingTaskState, config: RunnableConfig):
+#     """发送视觉补充回复"""
+#     try:
+#         user_input = state.get("user_input", "")
+#         flash_response = state.get("final_response") or ""
+#         chat_model_config = get_chat_model_by_type("vlm")
+#         chat_model = init_chat_model(
+#             model=chat_model_config.model_name,
+#             model_provider=chat_model_config.model_provider,
+#             api_key=chat_model_config.api_key,
+#             base_url=chat_model_config.api_base
+#         )
+#         output_parser = RemoveFunctionCallOutputParser(pydantic_object=VisualResponse)
+#         structured_llm = chat_model | output_parser
+#         format_instructions = output_parser.get_format_instructions()
+#         system_instructions = VISUAL_RESPONSE_PROMPT.format(
+#             user_input=user_input,
+#             flash_response=flash_response
+#         )
+#         messages = [SystemMessage(content=system_instructions), HumanMessage(content=[
+#             {
+#                 "image_url":
+#                     {
+#                         "url":"https://aura-view-eye.tos-cn-beijing.volces.com/assets/2342342334/0031312f-49f2-0fa3-9a5f-b18815278e2d/view_data/look.jpg"
+#                     },
+#                 "type":"image_url"
+#             },
+#             {
+#                 "text": "这是你看到的画面",
+#                 "type": "text"
+#             }
+#         ])]
+#         final_response = flash_response
+#         visual_response_output = chat_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+
+#         return {
+#             "speaking_response": "finished",
+#             "final_response": final_response,
+#             "visual_response": visual_response_output
+#         }
+#     except Exception as e:
+#         logger.error(f"生成视觉补充回复时出错: {str(e)}")
+#         return Command(goto=END, update={
+#             "speaking_response": "error"
+#         })
+
+def _generate_planner_response(state: SpeakingTaskState, config: RunnableConfig):
+    """发送视觉补充回复"""
+    try:
+        session_id = state.get("session_id", "")
+        user_id = state.get("user_id", "")
+        import requests
+        response = requests.post(
+            "https://sd2ruht27399ulo39rt0g.apigateway-cn-beijing.volceapi.com/v1/save_view",
+            json={
+                "chat_id": session_id,
+                "user_id": user_id
+            }
+        )
+        print(response.json())
+        user_input = state.get("user_input", "")
+        flash_response = state.get("final_response") or ""
+        chat_model_config = get_chat_model_by_type("vlm")
+        chat_model = init_chat_model(
+            model="doubao-seed-1-6-vision-250815",
+            model_provider=chat_model_config.model_provider,
+            api_key=chat_model_config.api_key,
+            base_url=chat_model_config.api_base
+        )
+        output_parser = RemoveFunctionCallOutputParser(pydantic_object=PlannerResponse)
+        structured_llm = chat_model | output_parser
+        format_instructions = output_parser.get_format_instructions()
+        system_instructions = PLANNER_GOAL_PROMPT.format(
+            user_input=user_input,
+            flash_response=flash_response
+        )
+        messages = [SystemMessage(content=system_instructions), HumanMessage(content=[
+            {
+                "image_url":
+                    {
+                        "url":f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/save_view_info/look.jpg"
+                    },
+                "type":"image_url"
+            },
+            {
+                "text": "这是你看到的画面",
+                "type": "text"
+            }
+        ])]
+        planner_response_output = chat_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
+        writer = get_stream_writer()
+        json_output = json.loads(planner_response_output.content)
+        writer(json_output)
+        return Command(goto=END)
+    except Exception as e:
+        logger.error(f"生成视觉补充回复时出错: {str(e)}")
+        return Command(goto=END, update={
+            "speaking_response": "error"
+        })
+
 # 创建前台状态机图
-builder = StateGraph(SpeakingTaskState, config_schema=GraphConfiguration)
+chat_agent_builder = StateGraph(SpeakingTaskState, config_schema=Configuration)
 
 # 添加节点
-builder.add_node("plan_action", _plan_action)
-builder.add_node("execute_action", _execute_action)
-builder.add_node("waiting", _wait_for_user_message)
-builder.add_node("generate_reply", _generate_new_message)
-
+chat_agent_builder.add_node("flash_response", _generate_flash_response)
+# builder.add_node("visual_response", _generate_visual_response)
+chat_agent_builder.add_node("planner_response", _generate_planner_response)
 # 添加边
-builder.add_edge(START, "plan_action")
+chat_agent_builder.add_edge(START, "flash_response")
+
+# 编译graph供外部调用
+speaking_graph = chat_agent_builder.compile()
+
+# ==========================================
+# 测试代码
+# ==========================================
+
+if __name__ == "__main__":
+    test_cases = [
+        {
+            "description": "普通快速回复",
+            "user_input": "你好，很高兴见到你",
+            "expected_goto": END,
+        },
+        {
+            "description": "命中视觉补充标签",
+            "user_input": "你看看你面前有什么",
+            "expected_goto": "visual_response",
+        },
+        {
+            "description": "命中视觉补充标签",
+            "user_input": "你看到前面的那个沙发了么？",
+            "expected_goto": "visual_response",
+        },
+        {
+            "description": "命中行动补充标签",
+            "user_input": "你到前面的沙发边上去",
+            "expected_goto": "action_response",
+        },
+        {
+            "description": "命中行动补充标签",
+            "user_input": "向前走两步",
+            "expected_goto": "action_response",
+        },
+    ]
+
+    for case in test_cases:
+        outputs: List[str] = []
+
+        def writer(payload: Dict[str, Any]):
+            outputs.append(payload.get("content", ""))
+
+        print(f"\n=== 测试场景：{case['description']} ===")
+        thread_config = {
+            "configurable": {
+                "thread_id": f"test_thread_{case['description']}"
+            },
+            "recursion_limit": 10
+        }
+        events: List[Dict[str, Any]] = []
+        try:
+            for idx, event in enumerate(
+                speaking_graph.stream(
+                    SpeakingTaskState(user_input=case["user_input"]),
+                    thread_config,
+                    stream_mode="custom"
+                )
+            ):
+                print(f"\n---- Event #{idx} ----")
+                print(event)
+                events.append(event)
+        except Exception as exc:
+            print(f"测试执行出错: {exc}")
+            continue
 

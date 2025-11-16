@@ -359,9 +359,342 @@ def format_items_info(items_info: List[Dict[str, Any]]) -> str:
     
     return "\n".join(formatted)
 
+def deproject_screen_to_world(
+    screen_pos: np.ndarray,           # [x, y] 像素坐标
+    view_rect: tuple,                 # (min_x, min_y, width, height)
+    inv_view_matrix: np.ndarray,      # 4x4 逆视图矩阵 (world = inv_view * camera)
+    inv_projection_matrix: np.ndarray # 4x4 逆投影矩阵 (camera = inv_proj * proj)
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    将屏幕坐标反向投影到世界空间中的射线起点和方向。
+
+    Args:
+        screen_pos: [x, y] 屏幕像素坐标
+        view_rect: (min_x, min_y, width, height) 视口区域
+        inv_view_matrix: 4x4 逆视图矩阵 (将相机空间转为世界空间)
+        inv_projection_matrix: 4x4 逆投影矩阵 (将投影空间转为相机空间)
+
+    Returns:
+        world_origin: 世界空间中射线起点（即相机位置）
+        world_direction: 世界空间中射线方向（单位向量）
+    """
+    # 1. 转换为整数像素坐标
+    pixel_x = int(screen_pos[0])
+    pixel_y = int(screen_pos[1])
+
+    # 2. 归一化到 [0, 1] 范围内
+    min_x, min_y, width, height = view_rect
+    normalized_x = (pixel_x - min_x) / width
+    normalized_y = (pixel_y - min_y) / height
+
+    # 3. 映射到 [-1, 1] 的投影空间（NDC）
+    screen_space_x = (normalized_x - 0.5) * 2.0
+    screen_space_y = (1.0 - normalized_y - 0.5) * 2.0  # 注意 Y 轴翻转
+
+    # 4. 构造投影空间中的两个点（z=1 和 z=0.01）
+    ray_start_proj = np.array([screen_space_x, screen_space_y, 1.0, 1.0])  # near plane
+    ray_end_proj   = np.array([screen_space_x, screen_space_y, 0.01, 1.0])  # far point
+
+    # 5. 应用逆投影矩阵（投影空间 → 相机空间）
+    h_ray_start_view = inv_projection_matrix @ ray_start_proj
+    h_ray_end_view   = inv_projection_matrix @ ray_end_proj
+
+    # 6. 除以 w 分量，得到相机空间坐标
+    if h_ray_start_view[3] != 0:
+        ray_start_view = h_ray_start_view[:3] / h_ray_start_view[3]
+    else:
+        ray_start_view = h_ray_start_view[:3]
+
+    if h_ray_end_view[3] != 0:
+        ray_end_view = h_ray_end_view[:3] / h_ray_end_view[3]
+    else:
+        ray_end_view = h_ray_end_view[:3]
+
+    # 7. 计算相机空间中的方向
+    ray_dir_view = ray_end_view - ray_start_view
+    ray_dir_view = ray_dir_view / np.linalg.norm(ray_dir_view)
+
+    # 8. 变换到世界空间
+    ray_start_world = inv_view_matrix @ np.append(ray_start_view, 1.0)
+    ray_start_world = ray_start_world[:3] / ray_start_world[3] if ray_start_world[3] != 0 else ray_start_world[:3]
+
+    ray_dir_world = inv_view_matrix @ np.append(ray_dir_view, 0.0)
+    ray_dir_world = ray_dir_world[:3] / np.linalg.norm(ray_dir_world)
+
+    return ray_start_world, ray_dir_world
+
+def world_position_from_depth(
+    screen_pos: np.ndarray,
+    view_rect: tuple,
+    inv_view_matrix: np.ndarray,
+    inv_projection_matrix: np.ndarray,
+    camera_position: np.ndarray,
+    camera_forward: np.ndarray,
+    depth_value: float,
+):
+    """
+    基于射线 + 深度余弦校正计算最终世界坐标。
+
+    约定：depth_value 为相机前向方向（camera_forward）上的线性深度(米)，
+    即常见的相机空间 Z 深度。如果是其它定义，请先转换到该定义。
+    """
+    origin, direction = deproject_screen_to_world(
+        screen_pos, view_rect, inv_view_matrix, inv_projection_matrix
+    )
+    # 使用更准确的相机位置作为射线起点
+    cam_pos = np.asarray(camera_position, dtype=np.float64)
+    cam_fwd = np.asarray(camera_forward, dtype=np.float64)
+    cam_fwd = cam_fwd / (np.linalg.norm(cam_fwd) if np.linalg.norm(cam_fwd) > 0 else 1.0)
+
+    correction_factor = float(np.dot(direction, cam_fwd))
+    if abs(correction_factor) < 1e-6:
+        raise ValueError("Ray direction is nearly perpendicular to camera forward vector.")
+
+    euclidean_distance = float(depth_value) / correction_factor
+    world_position = cam_pos + direction * euclidean_distance
+    return world_position
+
+def screen_distance_to_world_distance(
+    screen_pos1: np.ndarray,
+    screen_pos2: np.ndarray,
+    depth1: float,
+    depth2: float,
+    view_rect: tuple,
+    inv_view_matrix: np.ndarray,
+    inv_projection_matrix: np.ndarray,
+    camera_position: np.ndarray,
+    camera_forward: np.ndarray,
+) -> float:
+    """
+    根据屏幕空间的两个点和对应的深度值，计算它们在世界空间中的距离。
+    
+    Args:
+        screen_pos1: 第一个屏幕点坐标 [x, y]
+        screen_pos2: 第二个屏幕点坐标 [x, y]
+        depth1: 第一个点的深度值（米）
+        depth2: 第二个点的深度值（米）
+        view_rect: 视口区域 (min_x, min_y, width, height)
+        inv_view_matrix: 4x4 逆视图矩阵
+        inv_projection_matrix: 4x4 逆投影矩阵
+        camera_position: 相机位置
+        camera_forward: 相机前向向量
+        
+    Returns:
+        两个点在世界空间中的欧几里得距离（米）
+    """
+    # 将两个屏幕点转换为世界坐标
+    world_pos1 = world_position_from_depth(
+        screen_pos1, view_rect, inv_view_matrix, inv_projection_matrix,
+        camera_position, camera_forward, depth1
+    )
+    
+    world_pos2 = world_position_from_depth(
+        screen_pos2, view_rect, inv_view_matrix, inv_projection_matrix,
+        camera_position, camera_forward, depth2
+    )
+    
+    # 计算欧几里得距离
+    distance = np.linalg.norm(world_pos2 - world_pos1)
+    return float(distance)
+
+def handle_position(user_id:str, session_id:str, scene_id:str, related_items:List[Dict[str, Any]]):
+    import requests
+    import cv2
+    import numpy as np
+    look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
+    cam_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/cam.json"
+    depth_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/depth.png"
+    # 直接下载为内存数据（不落地临时文件）
+    try:
+        print(f"正在下载 look.jpg: {look_url}")
+        resp_look = requests.get(look_url, timeout=30)
+        resp_look.raise_for_status()
+        look_bytes = np.frombuffer(resp_look.content, dtype=np.uint8)
+        look_img = cv2.imdecode(look_bytes, cv2.IMREAD_COLOR)
+        if look_img is None:
+            raise RuntimeError("look.jpg 解析失败")
+        print("look.jpg 下载并解析完成")
+        print(f"正在下载 cam.json: {cam_url}")
+        resp_cam = requests.get(cam_url, timeout=30)
+        resp_cam.raise_for_status()
+        cam_data = json.loads(resp_cam.content.decode('utf-8'))
+        print("cam.json 下载并解析完成")
+        print(f"正在下载 depth.png: {depth_url}")
+        resp_depth = requests.get(depth_url, timeout=30)
+        resp_depth.raise_for_status()
+        depth_content = resp_depth.content
+        if depth_content is None or len(depth_content) == 0:
+            raise RuntimeError("depth.png 内容为空")
+        print("depth.png 下载完成（内存）")
+    except Exception as e:
+        raise Exception(f"下载资源失败: {e}")
+    
+    try:
+        img_h, img_w = (look_img.shape[0], look_img.shape[1]) if look_img is not None else (1080, 1920)
+    except Exception:
+        img_h, img_w = (1080, 1920)
+    inv_mvp = None
+    depth_linear = None
+    try:
+        print(f"正在解析 cam.json（内存）")
+        print(f"cam.json 下载成功，包含 {len(cam_data)} 个键")
+        # 优先读取分离的 proj/view 矩阵
+        proj = cam_data.get('projection_matrix')
+        view_m = cam_data.get('view_matrix')
+        scene_name = cam_data.get('scene_name')
+        # # 近远裁剪面（若提供）
+        # if isinstance(cam_data.get('near'), (int, float)):
+        #     near_plane = float(cam_data['near'])
+        # if isinstance(cam_data.get('far'), (int, float)):
+        #     far_plane = float(cam_data['far'])
+        if isinstance(proj, list) and len(proj) == 16 and isinstance(view_m, list) and len(view_m) == 16:
+            proj_matrix = np.array([proj[i*4:(i+1)*4] for i in range(4)], dtype=np.float64).transpose()
+            view_matrix = np.array([view_m[i*4:(i+1)*4] for i in range(4)], dtype=np.float64).transpose()
+            print("已解析分离的 proj/view 矩阵 (4x4)")
+            try:
+                inv_proj_matrix = np.linalg.inv(proj_matrix)
+                inv_view_matrix = np.linalg.inv(view_matrix)
+                camera_position = inv_view_matrix[:3, 3]
+                cam_fwd_h = inv_view_matrix @ np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float64)
+                camera_forward = cam_fwd_h[:3]
+                n = np.linalg.norm(camera_forward)
+                if n > 0:
+                    camera_forward = camera_forward / n
+            except Exception as e:
+                print(f"计算 inv_proj/inv_view 或相机参数失败: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"下载 cam.json 失败: {e}")
+    except json.JSONDecodeError as e:
+        print(f"解析 cam.json 失败: {e}")
+    except Exception as e:
+        print(f"处理 cam.json 时出错: {e}")
+    # 读取 PNG 深度图（内存）
+    try:
+        print(f"正在解析 depth.png（内存）")
+        # 使用 OpenCV 解码 PNG 深度图（保持位深/通道）
+        depth_buf = np.frombuffer(depth_content, dtype=np.uint8)
+        depth_img = cv2.imdecode(depth_buf, cv2.IMREAD_UNCHANGED)
+        if depth_img is None:
+            raise RuntimeError("depth.png 解码失败")
+        # 期望格式：32位色，float 分4字节压入 RGBA
+        # OpenCV 解码返回通道顺序为 BGRA（若有4通道）
+        if depth_img.ndim == 3 and depth_img.shape[2] == 4:
+            # 提取通道（B,G,R,A）
+            b = depth_img[:, :, 0]
+            g = depth_img[:, :, 1]
+            r = depth_img[:, :, 2]
+            a = depth_img[:, :, 3]
+            # 还原为小端序 float32 字节序列 [R,G,B,A]
+            rgba_bytes = np.stack([r, g, b, a], axis=-1).astype(np.uint8)
+            flat_bytes = rgba_bytes.reshape(-1, 4)
+            # 通过视图转换为 float32，再 reshape 回原尺寸
+            depth_f32 = flat_bytes.view(np.float32).reshape(depth_img.shape[0], depth_img.shape[1])
+            depth_linear = depth_f32.astype(np.float64)
+        else:
+            raise RuntimeError("depth.png 通道数不为4，无法按 RGBA 打包规则解析")
+        print(f"depth.png 解析成功（RGBA-packed float32），shape={depth_linear.shape}, 值范围=[{np.nanmin(depth_linear):.6f}, {np.nanmax(depth_linear):.6f}]")
+    except Exception as e:
+        print(f"读取 depth.png 失败: {e}")
+    # 视口矩形
+    view_rect = (0, 0, img_w, img_h)
+    related_items_with_id = []
+    for related_item in related_items:
+        x1 = related_item.get("bounding_box", [0, 0, 0, 0])[0]
+        y1 = related_item.get("bounding_box", [0, 0, 0, 0])[1]
+        x2 = related_item.get("bounding_box", [0, 0, 0, 0])[2]
+        y2 = related_item.get("bounding_box", [0, 0, 0, 0])[3]
+        # 计算像素中心点
+        cx_px = (x2 - x1) / 2 + x1
+        cy_px = (y2 - y1) / 2 + y1
+        if inv_proj_matrix is not None and inv_view_matrix is not None and depth_linear is not None and camera_position is not None and camera_forward is not None:
+            # 确保区域有效
+            if x2 > x1 and y2 > y1:
+                # 获取检测区域内的深度值并找到中值
+                detection_depth_region = depth_linear[y1:y2, x1:x2]
+                # 过滤掉无效的深度值（通常为0或负数）
+                valid_depths = detection_depth_region[detection_depth_region > 0]
+                if len(valid_depths) > 0:
+                    depth_value = float(np.median(valid_depths))
+                else:
+                    # 如果没有有效深度值，使用中心点
+                    u0 = int(np.clip(np.floor(cx_px), 0, img_w - 1))
+                    v0 = int(np.clip(np.floor(cy_px), 0, img_h - 1))
+                    depth_value = float(depth_linear[v0, u0])
+            else:
+                # 如果区域无效，使用中心点
+                u0 = int(np.clip(np.floor(cx_px), 0, img_w - 1))
+                v0 = int(np.clip(np.floor(cy_px), 0, img_h - 1))
+                depth_value = float(depth_linear[v0, u0])
+                # 将两个屏幕点转换为世界坐标
+            world = world_position_from_depth(
+                        np.array([cx_px, cy_px], dtype=np.float64),
+                        view_rect,
+                        inv_view_matrix,
+                        inv_proj_matrix,
+                        camera_position,
+                        camera_forward,
+                        depth_value,
+                    )
+            world_size = screen_distance_to_world_distance(
+                np.array([x2, y2], dtype=np.float64),
+                np.array([x1, y1], dtype=np.float64),
+                depth_value,
+                depth_value,
+                view_rect,
+                inv_view_matrix,
+                inv_proj_matrix,
+                camera_position,
+                camera_forward,
+            )
+            bbox = [world[0], world[1], world[2], world_size, world_size, world_size]
+            embedding_model = EmbeddingModel(
+                model_name="doubao-embedding-large-text-250515",
+                api_key="dc7e10e7-1095-40ae-a172-3a7d16fc1e61",
+                api_base="https://ark.cn-beijing.volces.com/api/v3"
+            )
+            query_vector = embedding_model.embed(f"{related_item.get('item_name', '')}: {related_item.get('item_description', '')}")
+            spatial_entity = SpatialEntityManager().get_instance().query_entity_by_description_and_bbox_overlap(
+                session_id="static",
+                scene_id=scene_id,
+                world_bb=bbox,
+                description_vector=query_vector,
+                entity_types=["object"],
+                limit=50,
+            )
+            if spatial_entity:
+                related_items_with_id.append({
+                    "item_name": related_item.get("item_name", ""),
+                    "item_description": related_item.get("item_description", ""),
+                    "spatial_entity_id": spatial_entity["entity_id"]
+                })
+            else:
+                related_items_with_id.append({
+                    "item_name": related_item.get("item_name", ""),
+                    "item_description": related_item.get("item_description", ""),
+                    "spatial_entity_id": None
+                })
+    return related_items_with_id
 # ==========================================
 # 节点定义
 # ==========================================
+
+def prepare_data(state: ActionFlowState) -> Dict[str, Any]:
+    session_id = state.get("session_id", "")
+    current_scene_id = state.get("current_scene_id", None)
+    if not current_scene_id:
+        char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
+        current_scene_id = char_instance_info.current_scene_id
+    user_id = state.get("user_id", "")
+    action_input = state.get("action_input", {})
+    related_items = action_input.get("related_items", [])
+    related_items_with_id = handle_position(user_id, session_id, current_scene_id, related_items)
+    action_input["related_items"] = related_items_with_id
+    validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+    if isinstance(validated_regions, ValidatedRegions):
+        validated_regions.reset_regions()
+    else:
+        validated_regions = ValidatedRegions(regions={})
+    return {"session_id": session_id, "current_scene_id": current_scene_id, "validated_regions": validated_regions, "action_input": action_input}
 
 def planner_node(
     state: ActionFlowState, 
@@ -377,15 +710,14 @@ def planner_node(
     try:
         session_id = state.get("session_id", "")
         current_scene_id = state.get("current_scene_id", None)
-        validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
-
-        if not current_scene_id:
-            char_instance_info = CharInstanceInfoManager().get_instance().get_char_instance_info_by_chat_id(session_id)
-            current_scene_id = char_instance_info.current_scene_id
         logger.bind(tag="BASE").info(f"current_scene_id: {current_scene_id}")
+        validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
+        validated_regions.reset_regions()
         # 获取必要信息
-        action_goal = state.get("action_goal", "")
-        
+        user_id = state.get("user_id", "")
+        action_input = state.get("action_input", {})
+        action_goal = action_input.get("goal_to_plan", "")
+        related_items = action_input.get("related_items", [])
         # 获取模型
         planner_model_config = get_chat_model_by_type("pfc_action")
         planner_model = init_chat_model(
@@ -404,6 +736,7 @@ def planner_node(
         # 构建提示词（加入最近观察，避免重复观察）
         system_instructions = ACTION_PLANNING_PROMPT.format(
             current_goal=action_goal,
+            related_items=related_items,
             task_execution_record="\n".join(plan_history),
             format=format_instructions
         )
@@ -425,7 +758,7 @@ def planner_node(
             update={
                 "current_plan": plan,
                 "current_scene_id": current_scene_id,
-                "validated_regions": validated_regions.reset_regions()
+                "validated_regions": validated_regions
             },
             goto="search_team" if not plan.has_achieved_goal else "reporter"
         )
@@ -532,7 +865,7 @@ def search_team_node(
     
     # 根据步骤类型分发到不同的节点
     logger.bind(tag="BASE").info(f"执行搜索步骤: {next_step.step_goal}")
-    return Command(goto="search", update={"session_id": state.get("session_id", ""), "current_plan": current_plan})
+    return Command(goto="search", update={"session_id": state.get("session_id", ""), "current_plan": current_plan, "action_input": state.get("action_input", {})})
 
 def _search_decide_node(
     state: SearchState,
@@ -543,6 +876,8 @@ def _search_decide_node(
     current_plan = state.get("current_plan")
     current_scene_id = state.get("current_scene_id", "")
     current_region = state.get("current_region", None)
+    action_input = state.get("action_input", {})
+    related_items = action_input.get("related_items", [])
     if not current_region:
         current_region_obj = SpatialEntityManager().get_instance().query_region_include_item(
             scene_id=current_scene_id,
@@ -566,11 +901,11 @@ def _search_decide_node(
         update = {"next_search_decision": decision}
         return Command(goto="tool_report", update=update)
     
-    if len(search_steps_history) == 0:
-        logger.bind(tag="BASE").info(f"查询当前区域周边的区域: {current_region}, {validated_regions.to_string()}")
-        decision = SearchActionDecision(action_name="Query_Regions", action_params=QueryRegionsParams(current_region=current_region))
-        update = {"next_search_decision": decision, "current_region": current_region, "validated_regions": validated_regions}
-        return Command(goto="tool_query_regions", update=update)
+    # if len(search_steps_history) == 0:
+    #     logger.bind(tag="BASE").info(f"查询当前区域周边的区域: {current_region}, {validated_regions.to_string()}")
+    #     decision = SearchActionDecision(action_name="Query_Regions", action_params=QueryRegionsParams(current_region=current_region))
+    #     update = {"next_search_decision": decision, "current_region": current_region, "validated_regions": validated_regions}
+    #     return Command(goto="tool_query_regions", update=update)
     
     # 找到第一个未执行的步骤
     next_step = None
@@ -599,9 +934,10 @@ def _search_decide_node(
     format_instructions = output_parser.get_format_instructions()
     system_instructions = SEARCH_AGENT_PROMPT.format(
         current_region=f"当前区域: {current_region}{'， 当前区域未搜索过，如需搜索物品，请调用Query_Items工具。' if need_query_items else ''}",
+        related_items=related_items,
         validated_regions=validated_regions.to_string(),
         search_task=f"任务目标: {next_step.step_goal}, 检查点: {', '.join(next_step.check_points)}",
-        search_steps_history="\n".join(search_steps_history),
+        task_execution_record="\n".join(search_steps_history),
         format=format_instructions
     )
     messages = [SystemMessage(content=system_instructions)]
@@ -793,7 +1129,8 @@ def reporter_node(state: ActionFlowState) -> Dict[str, Any]:
     logger.bind(tag="BASE").info("Reporter 生成最终报告")
     current_plan = state.get("current_plan", None)
     plan_history = state.get("plan_history", "")
-    action_goal = state.get("action_goal", "")
+    action_input = state.get("action_input", {})
+    action_goal = action_input.get("goal_to_plan", "")
     # 构建最终结果
     result = "## 执行步骤"
     for i, plan_content in enumerate(plan_history):
@@ -832,6 +1169,7 @@ action_agent_builder = StateGraph(
 )
 
 # 添加节点
+action_agent_builder.add_node("prepare_data", prepare_data)
 action_agent_builder.add_node("planner", planner_node)
 action_agent_builder.add_node("search_team", search_team_node)
 
@@ -860,7 +1198,8 @@ action_agent_builder.add_node("fix_plan_node", fix_plan_node)
 # 注意：每个节点都有自己的 Command，通过 goto 控制流程
 # planner -> search_team -> (search) -> search_team -> planner (循环)
 # 或者到达 reporter -> END
-action_agent_builder.add_edge(START, "planner")
+action_agent_builder.add_edge(START, "prepare_data")
+action_agent_builder.add_edge("prepare_data", "planner")
 action_agent_builder.add_edge("reporter", END)
 action_agent_builder.add_edge("search", "search_team")
 

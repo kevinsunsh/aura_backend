@@ -275,8 +275,9 @@ class LLMActionActor(pykka.ThreadingActor):
             
             logger.bind(tag="BASE").info(f"收到目标输入: {goal_input}")
             input_data = {
+                "user_id": self.user_id,
                 "session_id": self.chat_id,
-                "action_goal": goal_input,
+                "action_input": goal_input,
                 "plan_history": [],
                 "current_plan": None
             }

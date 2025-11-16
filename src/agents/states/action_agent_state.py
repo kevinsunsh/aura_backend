@@ -184,21 +184,23 @@ class ValidatedRegions(BaseModel):
             region_info.is_searched = False
 
 class ActionFlowState(MessagesState):
+    user_id: str
     session_id: str
     current_scene_id: str
-    action_goal: str
+    action_input: Dict[str, Any]
     action_result: str
     plan_history: List[str]
     current_plan: Plan | None = None
     # 原始计划，用于修复计划
     raw_plan: str = None
     current_region: str | None = None
-    validated_regions: ValidatedRegions
+    validated_regions: ValidatedRegions = ValidatedRegions(regions={})
     remaining_steps: RemainingSteps
 
 class SearchState(TypedDict):
     session_id: str
     current_scene_id: str
+    action_input: Dict[str, Any]
     current_plan: Plan | str = None
     search_steps: List[str]
     search_result: str | None = None

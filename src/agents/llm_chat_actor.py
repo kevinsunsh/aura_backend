@@ -10,6 +10,10 @@ from .message_processor_text import StreamingTagParser
 from agents.agent_memory.configuration import get_chat_model_by_type
 from utils.utils import safe_call
 from agents.agent_memory.prompt_manager.system_prompt.default import ACTION_RESPONSE_FORMAT_PROMPT
+from agents.agent_memory.database.connection_config import DatabaseConfigManager
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg_pool import ConnectionPool
+from agents.graphs.speaking_graph import chat_agent_builder
 
 class LLMChatActor(pykka.ThreadingActor):
     """仅负责文本处理（LLM）的 Actor"""
@@ -55,6 +59,17 @@ class LLMChatActor(pykka.ThreadingActor):
             self.user_id = data.get("user_id")
             if not self.chat_id or not self.user_id:
                 return {"success": False, "error": "Missing chat_id or user_id"}
+            self.thread = {
+                "configurable": {
+                    "thread_id": self.chat_id
+                },
+                "recursion_limit": 100
+            }
+            db_conn_string = DatabaseConfigManager.get_config_by_environment().get_checkpointer_connection_string()
+            pool = ConnectionPool(conninfo=db_conn_string)
+            checkpointer = PostgresSaver(pool)
+            checkpointer.setup()
+            self.graph = chat_agent_builder.compile(checkpointer=checkpointer)
             self.is_running = True
             logger.bind(tag="BASE").info(f"LLMChatActor启动成功: chat_id={self.chat_id}, user_id={self.user_id}")
             return {"success": True}
@@ -157,30 +172,42 @@ class LLMChatActor(pykka.ThreadingActor):
         try:
             # for prompt in prompts:
             #     logger.bind(tag="BASE").info(f"{prompt['role']}: {prompt['content']}")
-            chat_model = get_chat_model_by_type("pfc_action_planner")
-            final_response = ""
-            first_chunk = True
-            logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
-            async for chunk in chat_model.astream(prompts, extra_body={"thinking": {"type": "disabled"}}):
-                if hasattr(chunk, 'content'):
-                    # logger.bind(tag="BASE").info(f"chunk: {chunk.content}")
-                    if self.is_interruption:
-                        logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
-                        break
-                    final_response += chunk.content
-                    if first_chunk:
-                        first_chunk = False
-                        logger.bind(tag="TTS").info(f"start streaming response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
-                    await self.parser.feed(chunk.content)
-            await self.parser.end()
-            if self.output_callback:
-                await safe_call(self.output_callback, {
-                    "event": ServerEvent.ChatEnded,
-                    "payload_msg": {
-                        "content": final_response
-                    }
-                })
-            logger.bind(tag="TASK").info(f"final_response: {final_response}")
+            # chat_model = get_chat_model_by_type("pfc_action_planner")
+            # final_response = ""
+            # first_chunk = True
+            # logger.bind(tag="DELAY").info(f"start llm response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
+            # async for chunk in chat_model.astream(prompts, extra_body={"thinking": {"type": "disabled"}}):
+            #     if hasattr(chunk, 'content'):
+            #         # logger.bind(tag="BASE").info(f"chunk: {chunk.content}")
+            #         if self.is_interruption:
+            #             logger.bind(tag="TTS").info(f"打断流式响应，继续倾听")
+            #             break
+            #         final_response += chunk.content
+            #         if first_chunk:
+            #             first_chunk = False
+            #             logger.bind(tag="TTS").info(f"start streaming response delay: {int((datetime.now().timestamp() - self.process_timer) * 1000)}ms")
+            #         await self.parser.feed(chunk.content)
+            # await self.parser.end()
+            # if self.output_callback:
+            #     await safe_call(self.output_callback, {
+            #         "event": ServerEvent.ChatEnded,
+            #         "payload_msg": {
+            #             "content": final_response
+            #         }
+            #     })
+            logger.bind(tag="BASE").info(f"收到用户输入: {prompts[-1]['content']}")
+            input_data = {
+                "session_id": self.chat_id,
+                "user_id": self.user_id,
+                "user_input": prompts[-1]["content"]
+            }
+            for event in self.graph.stream(input_data, self.thread, stream_mode="custom"):
+                try:
+                    self._publish_event(event)
+                except Exception as e:
+                    logger.error(f"Failed to publish event to Redis: {str(e)}")
+                    # 继续处理下一个事件，不中断流程
+                    continue
         except asyncio.CancelledError:
             logger.bind(tag="BASE").info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:
@@ -221,3 +248,39 @@ class LLMChatActor(pykka.ThreadingActor):
             logger.bind(tag="BASE").info(f"回复任务被取消: chat_id={self.chat_id}")
         except Exception as e:
             logger.bind(tag="BASE").info(f"生成被动回复时出错: {str(e)}")
+    
+    def _publish_event(self, event):
+        try:
+            if 'chat_start' in event:
+                if self.output_callback:
+                    self._run_async(safe_call(self.output_callback, {
+                        "event": ServerEvent.ChatResponseParams,
+                        "payload_msg": {
+                            "params": event.get("attributes", {})
+                        }
+                    }))
+            elif 'chat_streaming' in event:
+                if self.output_callback:
+                    content = event["chat_streaming"].replace('\n', '').replace('\r', '')
+                    self._run_async(safe_call(self.output_callback, {
+                        "event": ServerEvent.ChatResponse,
+                        "payload_msg": {
+                            "content": content
+                        }
+                    }))
+            elif 'chat_end' in event:
+                if self.output_callback:
+                    self._run_async(safe_call(self.output_callback, {
+                        "event": ServerEvent.ChatResponseEnd,
+                    }))
+            elif 'goal_to_plan' in event:
+                if self.output_callback:
+                    self._run_async(safe_call(self.output_callback, {
+                        "event": ServerEvent.ChatActionGoal,
+                        "payload_msg": {
+                            "content": event
+                        }
+                    }))
+        except Exception as e:
+            logger.error(f"Failed to publish event to Redis: {str(e)}")
+            raise
