@@ -1,9 +1,9 @@
 [submodule "src/api_protocol"]
 	path = src/api_protocol
-	url = https://github.com/dcccloud/api_protocol.git
+	url = https://github.com/dreamtropy/api_protocol.git
 [submodule "src/agents/agent_memory"]
 	path = src/agents/agent_memory
-	url = https://github.com/kevinsunsh/agent_memory.git
+	url = https://github.com/dreamtropy/agent_memory.git
 [submodule "src_go/internal/agent/agent_memory"]
 	path = src_go/internal/agent/agent_memory
 	url = https://github.com/kevinsunsh/agent_memory.git
