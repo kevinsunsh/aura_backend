@@ -145,14 +145,20 @@ Aura引导回复：{flash_response}
 
 # 规划决策提示词
 PLANNER_DECISION_PROMPT = """
-你是Aura的规划决策模块，当你发现Aura的回复是安抚性的，需要规划后续行动以响应用户输入时，请输出true，否则输出false。
+你是Aura的规划决策模块，根据Aura的回复判断是否需要执行物理动作或操作（即“要做某事”）：
+例如：
+- 明确动作：“打开灯”、“关窗”、“拿水杯”  
+- 任务目标：“找钥匙”、“整理桌面”、“检查抽屉”  
+- 状态调整：“调暗灯光”、“打开空调”  
+- 探索指令：“找房间里所有的椅子”
+需要请输出true，否则输出false。
 
 用户输入：{user_input}
 Aura回复：{flash_response}
 
 输出格式：
 {{
-  "need_planner_response": true|false # 是否需要后续规划动作，true表示需要规划，false表示不需要规划
+  "need_planner_response": true|false # 是否需要后续行动，true表示需要行动，false表示不需要行动
 }}
 """
 

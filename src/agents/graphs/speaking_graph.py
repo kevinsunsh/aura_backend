@@ -10,6 +10,7 @@ from langgraph.config import get_stream_writer
 
 from agents.states.speaking_state import SpeakingTaskState, PlannerResponse
 from agents.agent_memory.configuration import get_chat_model_by_type
+from agents.agent_memory.prompt_manager.prompt_manager import is_downloadable
 from loguru import logger
 from agents.output_parser.output_parser import RemoveFunctionCallOutputParser
 from agents.prompts.speaking_prompt import FLASH_RESPONSE_PROMPT, VISUAL_RESPONSE_PROMPT, ACTION_RESPONSE_PROMPT, PLANNER_GOAL_PROMPT, PLANNER_DECISION_PROMPT
@@ -35,19 +36,28 @@ def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
             base_url=chat_model_config.api_base
         )
         # 构建提示词（加入最近观察，避免重复观察）
-        messages = [SystemMessage(content=FLASH_RESPONSE_PROMPT), SystemMessage(content=[
-            {
-                "image_url":
-                    {
-                        "url":f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
-                    },
-                "type":"image_url"
-            },
-            {
-                "text": "这是Aura眼前看到的画面",
-                "type": "text"
-            }
-        ]), HumanMessage(content=f"用户输入: {user_input}")]
+        image_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
+        system_content = [SystemMessage(content=FLASH_RESPONSE_PROMPT)]
+        
+        # 检查URL是否可下载，只有可下载时才添加视觉画面
+        if is_downloadable(image_url):
+            system_content.append(SystemMessage(content=[
+                {
+                    "image_url":
+                        {
+                            "url": image_url
+                        },
+                    "type":"image_url"
+                },
+                {
+                    "text": "这是Aura眼前看到的画面",
+                    "type": "text"
+                }
+            ]))
+        else:
+            logger.warning(f"图片URL不可访问，跳过添加视觉画面: {image_url}")
+        
+        messages = system_content + [HumanMessage(content=f"用户输入: {user_input}")]
         writer = get_stream_writer()
         # tag_configs = {
         #     "<need_planner_response>": "planner_response"
@@ -105,10 +115,9 @@ def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
         #     writer({"chat_streaming": buffer})
         #     final_response += buffer
         writer({"chat_end": True})
-        return Command(goto=END, update={
-            "speaking_response": "finished",
+        return {
             "final_response": final_response
-        })
+        }
     except Exception as e:
         logger.error(f"生成主动回复时出错: {str(e)}")
         return Command(goto=END, update={
@@ -217,19 +226,29 @@ def _generate_planner_response(state: SpeakingTaskState, config: RunnableConfig)
             user_input=user_input,
             flash_response=flash_response
         )
-        messages = [SystemMessage(content=system_instructions), HumanMessage(content=[
-            {
-                "image_url":
-                    {
-                        "url":f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/save_view_info/look.jpg"
-                    },
-                "type":"image_url"
-            },
-            {
-                "text": "这是你看到的画面",
-                "type": "text"
-            }
-        ])]
+        image_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/save_view_info/look.jpg"
+        
+        # 检查URL是否可下载，只有可下载时才添加视觉画面
+        human_content = []
+        if is_downloadable(image_url):
+            human_content = [
+                {
+                    "image_url":
+                        {
+                            "url": image_url
+                        },
+                    "type":"image_url"
+                },
+                {
+                    "text": "这是你看到的画面",
+                    "type": "text"
+                }
+            ]
+        else:
+            logger.warning(f"图片URL不可访问，跳过添加视觉画面: {image_url}")
+            human_content = [{"text": "这是你看到的画面", "type": "text"}]
+        
+        messages = [SystemMessage(content=system_instructions), HumanMessage(content=human_content)]
         planner_response_output = chat_model.invoke(messages, extra_body={"thinking": {"type": "disabled"}})
         writer = get_stream_writer()
         json_output = json.loads(planner_response_output.content)

@@ -479,6 +479,20 @@ class LLMActionActor(pykka.ThreadingActor):
             #             action_message = f'finished the goal {data["action_goal"]} with {data["current_result"]}'
             #             action_data = {'content': action_message, 'bot_name': self.bot_name}
             #             self._add_action_message(action_data, False)
+            if "prepare_data" in event:
+                data = event["prepare_data"]
+                self.current_position[2] = 0.5
+                result = {
+                    "func": self.current_action,
+                    "target": self.current_target,
+                    "position": self.current_position.tolist()
+                }
+                self._run_async(safe_call(self.output_callback, {
+                    "event": ServerEvent.RelatedItems,
+                    "payload_msg": {
+                        "content": data.get("related_items", [])
+                    }
+                }))
         except Exception as e:
             logger.error(f"Failed to publish event to Redis: {str(e)}")
             raise
