@@ -499,7 +499,8 @@ def screen_distance_to_world_distance(
 
 def handle_position(user_id:str, session_id:str, scene_id:str, related_items:List[Dict[str, Any]]):
     import requests
-    import cv2
+    from PIL import Image
+    import io
     import numpy as np
     look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
     cam_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/cam.json"
@@ -509,8 +510,10 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
         print(f"正在下载 look.jpg: {look_url}")
         resp_look = requests.get(look_url, timeout=30)
         resp_look.raise_for_status()
-        look_bytes = np.frombuffer(resp_look.content, dtype=np.uint8)
-        look_img = cv2.imdecode(look_bytes, cv2.IMREAD_COLOR)
+        # 使用 PIL 解码图像，然后转换为 numpy 数组（RGB 格式）
+        look_img_pil = Image.open(io.BytesIO(resp_look.content)).convert('RGB')
+        look_img = np.array(look_img_pil)
+        # PIL 返回 RGB，OpenCV 是 BGR，但这里只需要形状，所以不需要转换通道顺序
         if look_img is None:
             raise RuntimeError("look.jpg 解析失败")
         print("look.jpg 下载并解析完成")
@@ -571,18 +574,18 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
     # 读取 PNG 深度图（内存）
     try:
         print(f"正在解析 depth.png（内存）")
-        # 使用 OpenCV 解码 PNG 深度图（保持位深/通道）
-        depth_buf = np.frombuffer(depth_content, dtype=np.uint8)
-        depth_img = cv2.imdecode(depth_buf, cv2.IMREAD_UNCHANGED)
+        # 使用 PIL 解码 PNG 深度图（保持位深/通道）
+        depth_img_pil = Image.open(io.BytesIO(depth_content))
+        depth_img = np.array(depth_img_pil)
         if depth_img is None:
             raise RuntimeError("depth.png 解码失败")
         # 期望格式：32位色，float 分4字节压入 RGBA
-        # OpenCV 解码返回通道顺序为 BGRA（若有4通道）
+        # PIL 解码返回通道顺序为 RGBA（若有4通道）
         if depth_img.ndim == 3 and depth_img.shape[2] == 4:
-            # 提取通道（B,G,R,A）
-            b = depth_img[:, :, 0]
+            # 提取通道（R,G,B,A）- PIL 直接返回 RGBA 顺序
+            r = depth_img[:, :, 0]
             g = depth_img[:, :, 1]
-            r = depth_img[:, :, 2]
+            b = depth_img[:, :, 2]
             a = depth_img[:, :, 3]
             # 还原为小端序 float32 字节序列 [R,G,B,A]
             rgba_bytes = np.stack([r, g, b, a], axis=-1).astype(np.uint8)
