@@ -9,6 +9,7 @@ class RelatedItem(BaseModel):
     bottom_right_corner: List[int] = Field(default_factory=list, description="相关物品在画面中的右下角位置，格式为[x, y]")
 
 class PlannerResponse(BaseModel):
+    need_planner_response: bool = Field(description="是否需要规划")
     goal_to_plan: str = Field(description="规划的目标")
     related_items: List[RelatedItem] = Field(default_factory=list, description="规划中相关物品在画面中的位置")
 
