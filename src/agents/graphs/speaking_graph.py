@@ -24,6 +24,8 @@ def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
     try:  
         # 使用LLM生成立即回复
         user_input = state.get("user_input", "")
+        user_id = state.get("user_id", "")
+        session_id = state.get("session_id", "")
         chat_model_config = get_chat_model_by_type("pfc_action_planner")
         chat_model = init_chat_model(
             model=chat_model_config.model_name,
@@ -39,7 +41,7 @@ def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
             {
                 "image_url":
                     {
-                        "url":"https://aura-view-eye.tos-cn-beijing.volces.com/assets/2342342334/0031312f-49f2-0fa3-9a5f-b18815278e2d/view_data/look.jpg"
+                        "url":f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
                     },
                 "type":"image_url"
             },

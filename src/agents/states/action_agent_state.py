@@ -178,6 +178,7 @@ class ValidatedRegions(BaseModel):
         for region_id, region_info in self.regions.items():
             regions_string += f"区域ID: {region_id}, 是否已访问: {region_info.is_visited}, 是否已搜索: {region_info.is_searched}\n"
         return regions_string
+    
     def reset_regions(self):
         for region_info in self.regions.values():
             region_info.is_visited = False
