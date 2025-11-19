@@ -502,36 +502,41 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
     from PIL import Image
     import io
     import numpy as np
-    look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
-    cam_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/cam.json"
-    depth_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/depth.png"
-    # 直接下载为内存数据（不落地临时文件）
-    try:
-        print(f"正在下载 look.jpg: {look_url}")
-        resp_look = requests.get(look_url, timeout=30)
-        resp_look.raise_for_status()
-        # 使用 PIL 解码图像，然后转换为 numpy 数组（RGB 格式）
-        look_img_pil = Image.open(io.BytesIO(resp_look.content)).convert('RGB')
-        look_img = np.array(look_img_pil)
-        # PIL 返回 RGB，OpenCV 是 BGR，但这里只需要形状，所以不需要转换通道顺序
-        if look_img is None:
-            raise RuntimeError("look.jpg 解析失败")
-        print("look.jpg 下载并解析完成")
-        print(f"正在下载 cam.json: {cam_url}")
-        resp_cam = requests.get(cam_url, timeout=30)
-        resp_cam.raise_for_status()
-        cam_data = json.loads(resp_cam.content.decode('utf-8'))
-        print("cam.json 下载并解析完成")
-        print(f"正在下载 depth.png: {depth_url}")
-        resp_depth = requests.get(depth_url, timeout=30)
-        resp_depth.raise_for_status()
-        depth_content = resp_depth.content
-        if depth_content is None or len(depth_content) == 0:
-            raise RuntimeError("depth.png 内容为空")
-        print("depth.png 下载完成（内存）")
-    except Exception as e:
-        raise Exception(f"下载资源失败: {e}")
-    
+    # look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
+    # cam_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/cam.json"
+    # depth_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/depth.png"
+    # # 直接下载为内存数据（不落地临时文件）
+    # try:
+    #     print(f"正在下载 look.jpg: {look_url}")
+    #     resp_look = requests.get(look_url, timeout=30)
+    #     resp_look.raise_for_status()
+    #     # 使用 PIL 解码图像，然后转换为 numpy 数组（RGB 格式）
+    #     look_img_pil = Image.open(io.BytesIO(resp_look.content)).convert('RGB')
+    #     look_img = np.array(look_img_pil)
+    #     # PIL 返回 RGB，OpenCV 是 BGR，但这里只需要形状，所以不需要转换通道顺序
+    #     if look_img is None:
+    #         raise RuntimeError("look.jpg 解析失败")
+    #     print("look.jpg 下载并解析完成")
+    #     print(f"正在下载 cam.json: {cam_url}")
+    #     resp_cam = requests.get(cam_url, timeout=30)
+    #     resp_cam.raise_for_status()
+    #     cam_data = json.loads(resp_cam.content.decode('utf-8'))
+    #     print("cam.json 下载并解析完成")
+    #     print(f"正在下载 depth.png: {depth_url}")
+    #     resp_depth = requests.get(depth_url, timeout=30)
+    #     resp_depth.raise_for_status()
+    #     depth_content = resp_depth.content
+    #     if depth_content is None or len(depth_content) == 0:
+    #         raise RuntimeError("depth.png 内容为空")
+    #     print("depth.png 下载完成（内存）")
+    # except Exception as e:
+    #     raise Exception(f"下载资源失败: {e}")
+
+    view_eye_data = os.environ.get("VIEW_EYE_DATA")
+    view_eye_data_path = f"{view_eye_data}{user_id}/{session_id}/save_view_info"
+    look_img = Image.open(os.path.join(view_eye_data_path, "look.jpg"))
+    cam_data = json.load(open(os.path.join(view_eye_data_path, "view_matrix.json")))
+    depth_content = open(os.path.join(view_eye_data_path, "depth.png"), "rb").read()
     try:
         img_h, img_w = (look_img.shape[0], look_img.shape[1]) if look_img is not None else (1080, 1920)
     except Exception:
@@ -539,12 +544,9 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
     inv_mvp = None
     depth_linear = None
     try:
-        print(f"正在解析 cam.json（内存）")
-        print(f"cam.json 下载成功，包含 {len(cam_data)} 个键")
         # 优先读取分离的 proj/view 矩阵
         proj = cam_data.get('projection_matrix')
         view_m = cam_data.get('view_matrix')
-        scene_name = cam_data.get('scene_name')
         # # 近远裁剪面（若提供）
         # if isinstance(cam_data.get('near'), (int, float)):
         #     near_plane = float(cam_data['near'])

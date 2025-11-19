@@ -267,6 +267,15 @@ class ActorMessageProcessor:
             self.e2e_actor.tell({"type": "input", "data": payload_msg})
             # 发送到Loop Actor
             self.loop_actor.tell({"type": "input"})
+        elif message_data.get("event") == ClientEvent.RoleLookRequest:
+            role_look_env = message_data.get("payload_msg", {}).get("role_look_env", {})
+            view_matrix = role_look_env.get("view_matrix", [])
+            projection_matrix = role_look_env.get("projection_matrix", [])
+            char_status = {"action": {"current": "", "target": ""}, "view_image": role_look_env.get("color_base64", ""), "depth_image": role_look_env.get("depth_base64", "")}
+            # logger.bind(tag="BASE").info(f"RoleLookRequest char_status: {char_status}")
+            # logger.bind(tag="BASE").info(f"RoleLookRequest view_matrix: {view_matrix}")
+            # logger.bind(tag="BASE").info(f"RoleLookRequest projection_matrix: {projection_matrix}")
+            CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status, view_matrix=view_matrix, projection_matrix=projection_matrix)
         elif message_data.get("event") == ClientEvent.SpeakEnded:
             if self.asr_is_started:
                 self.asr_is_started = False

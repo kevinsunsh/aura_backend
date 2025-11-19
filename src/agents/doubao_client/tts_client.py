@@ -492,7 +492,7 @@ class TtsClient:
                     except asyncio.TimeoutError:
                         # 超时是正常的，继续等待
                         # 检查是否需要重连
-                        logger.bind(tag="TTS").info(f"检测到超时，need_reconnect: {self.need_reconnect}")
+                        # logger.bind(tag="TTS").info(f"检测到超时，need_reconnect: {self.need_reconnect}")
                         if self.need_reconnect:
                             logger.bind(tag="TTS").info("检测到需要重连，重新连接TTS服务器")
                             await self._connect_tts_server()

@@ -488,9 +488,9 @@ class LLMActionActor(pykka.ThreadingActor):
                     "position": self.current_position.tolist()
                 }
                 self._run_async(safe_call(self.output_callback, {
-                    "event": ServerEvent.RelatedItems,
+                    "event": ServerEvent.EnvStatus,
                     "payload_msg": {
-                        "content": data.get("related_items", [])
+                        "items": [{"item_id": item["spatial_entity_id"], "description": item["item_description"], "bbox": [item["world_bb"][0] - item["world_bb"][3]/2, item["world_bb"][1] - item["world_bb"][4]/2, item["world_bb"][2] - item["world_bb"][5]/2, item["world_bb"][0] + item["world_bb"][3]/2, item["world_bb"][1] + item["world_bb"][4]/2, item["world_bb"][2] + item["world_bb"][5]/2]} for item in data.get("related_items", [])]
                     }
                 }))
         except Exception as e:

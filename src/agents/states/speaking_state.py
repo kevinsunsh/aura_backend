@@ -21,3 +21,7 @@ class SpeakingTaskState(TypedDict):
     session_id: str
     user_input: str
     final_response: str
+    image_content: str
+    depth_content: str
+    view_matrix: List[float]
+    projection_matrix: List[float]

@@ -9,6 +9,9 @@ import json
 import atexit
 import random
 import asyncio
+import base64
+import os
+from pathlib import Path
 
 def atomic_compare_and_set(value_obj: Any, lock: Any, expected: bool, new_value: bool) -> bool:
     """
@@ -288,6 +291,48 @@ async def safe_call(func: Callable | None, *args, **kwargs) -> Tuple[Any, Option
         return result, None
     except Exception as e:
         return None, e
+
+
+def save_base64_image(base64_string: str, output_path: str, image_format: str = "jpeg") -> bool:
+    """
+    将 base64 编码的图像保存到文件
+    
+    Args:
+        base64_string: base64 编码的图像字符串（可以是纯 base64 或带 data URI 前缀）
+        output_path: 输出文件路径
+        image_format: 图像格式（jpeg, png 等），默认 jpeg
+    
+    Returns:
+        bool: 保存成功返回 True，失败返回 False
+    """
+    try:
+        if not base64_string:
+            return False
+        
+        # 移除 data URI 前缀（如果存在）
+        if base64_string.startswith("data:image/"):
+            # 格式: data:image/jpeg;base64,<base64_data>
+            base64_string = base64_string.split(",", 1)[1]
+        elif "base64," in base64_string:
+            # 处理其他可能的格式
+            base64_string = base64_string.split("base64,", 1)[1]
+        
+        # 解码 base64 字符串
+        image_data = base64.b64decode(base64_string)
+        
+        # 确保输出目录存在
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        
+        # 保存图像文件
+        with open(output_path, 'wb') as f:
+            f.write(image_data)
+        
+        return True
+    except Exception as e:
+        print(f"保存 base64 图像失败: {e}")
+        return False
 
 
 # 进程退出时自动输出性能报告
