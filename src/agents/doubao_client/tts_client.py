@@ -179,20 +179,9 @@ class TtsClient:
         self.mood_level = 3
         self.speech_rate = 3
 
-        # 内部事件循环线程，确保接收循环稳定运行
-        self._loop = asyncio.new_event_loop()
-        self._loop_stopped = threading.Event()
-        self._receive_task = None  # 接收循环任务引用
-        self._loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
-        self._loop_thread.start()
-    
-    def _run_event_loop(self):
-        """在独立线程中运行事件循环"""
-        asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_forever()
-        finally:
-            self._loop_stopped.set()
+        # 消息循环线程
+        self._message_loop_thread = None
+        self._receive_task = None  # 接收循环任务引用（用于取消）
         
     def _gen_log_id(self):
         """生成logID"""
@@ -278,41 +267,55 @@ class TtsClient:
         
         return response
     
+    def _run_message_loop_thread(self):
+        """在线程中直接运行消息循环"""
+        # 创建新的事件循环（每个线程需要自己的事件循环）
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # 直接运行消息循环
+            self._receive_task = loop.create_task(self.message_receive_loop())
+            loop.run_until_complete(self._receive_task)
+        except asyncio.CancelledError:
+            logger.bind(tag="TTS").info("消息循环任务已取消")
+        except Exception as e:
+            logger.bind(tag="TTS").error(f"消息循环线程异常: {e}")
+        finally:
+            # 清理连接
+            try:
+                if self.ws:
+                    loop.run_until_complete(self._cleanup_connection())
+            except Exception as e:
+                logger.debug(f"清理连接时出错: {e}")
+            loop.close()
+    
     def start_message_receive_loop(self, chat_id: str, user_id: str):
         """
-        在内部事件循环线程中启动TTS接收循环
+        在独立的消息循环线程中启动TTS接收循环
         
         Args:
             chat_id: 聊天ID
             user_id: 用户ID
-            
-        Returns:
-            Future对象，可以通过它等待任务完成或检查状态
         """
         self.uid = user_id
         self.chat_id = chat_id
         
-        def _start_task():
-            """在事件循环线程中启动任务（同步函数）"""
-            # 如果已有任务在运行，先取消它
-            if self._receive_task is not None and not self._receive_task.done():
-                logger.bind(tag="TTS").warning("已有接收循环在运行，先取消旧任务")
-                self._receive_task.cancel()
-            
-            # 创建新任务
-            self._receive_task = self._loop.create_task(self.message_receive_loop())
-            logger.bind(tag="TTS").info("TTS接收循环任务已启动")
-            return self._receive_task
+        # 如果消息循环线程已存在且正在运行，先停止它
+        if self._message_loop_thread is not None and self._message_loop_thread.is_alive():
+            logger.bind(tag="TTS").warning("已有消息循环线程在运行，先停止旧线程")
+            # 设置停止标志，让循环自然退出
+            self.is_running = False
+            # 等待线程结束（最多等待2秒）
+            self._message_loop_thread.join(timeout=2)
+            if self._message_loop_thread.is_alive():
+                logger.warning("旧的消息循环线程未能及时结束")
         
-        # 在事件循环线程中执行（使用call_soon_threadsafe确保线程安全）
-        if self._loop.is_running():
-            self._loop.call_soon_threadsafe(_start_task)
-            # 返回一个Future以便外部可以等待
-            return asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self._loop)
-        else:
-            # 如果循环还没运行，直接创建任务
-            self._receive_task = self._loop.create_task(self.message_receive_loop())
-            return self._receive_task
+        # 创建新的消息循环线程
+        logger.bind(tag="TTS").info("创建消息循环线程")
+        self.is_running = True
+        self._message_loop_thread = threading.Thread(target=self._run_message_loop_thread, daemon=True)
+        self._message_loop_thread.start()
+        logger.bind(tag="TTS").info("TTS消息接收循环线程已启动")
     
     async def _tts_start_connection(self, websocket):
         """TTS开始连接"""
@@ -334,7 +337,7 @@ class TtsClient:
 
     async def _tts_send_text(self, ws, speaker: str, text: str, session_id, mood_code='neutral', mood_level=3, speech_rate=3):
         """TTS发送文本"""
-        # logger.bind(tag="TTS").info(f"===========TTS发送文本: {text} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
+        logger.bind(tag="TTS").info(f"===========TTS发送文本: {text} with mood_code={mood_code}, mood_level={mood_level}, speech_rate={speech_rate}")
         header = TTSHeader(message_type=FULL_CLIENT_REQUEST,
                           message_type_specific_flags=MsgTypeFlagWithEvent,
                           serial_method=JSON).as_bytes()
@@ -353,60 +356,29 @@ class TtsClient:
         payload = str.encode('{}')
         return await self._send_tts_event(ws, header, optional, payload)
     
-    async def _cleanup_all(self):
-        """内部事件循环上的完整清理"""
-        try:
-            # 取消接收循环任务
-            if self._receive_task is not None and not self._receive_task.done():
-                logger.bind(tag="TTS").info("取消TTS接收循环任务")
-                self._receive_task.cancel()
-                try:
-                    await self._receive_task
-                except asyncio.CancelledError:
-                    logger.bind(tag="TTS").debug("接收循环任务已取消")
-                except Exception as e:
-                    logger.bind(tag="TTS").error(f"等待接收循环任务结束时出错: {e}")
-            
-            # 设置运行标志为False，确保循环退出
-            self.is_running = False
-            
-            # 清理连接
-            await self._cleanup_connection()
-            
-            logger.bind(tag="TTS").debug("TTS客户端已清理(内部循环)")
-        except Exception as e:
-            logger.error(f"内部循环清理TTS客户端时出错: {e}")
-    
     def cleanup_background(self):
         """
-        在内部事件循环线程中执行清理，并停止内部事件循环
+        停止消息循环线程并清理资源
         
-        注意：调用此方法后，事件循环将停止，无法再使用
+        注意：调用此方法后，消息循环线程将停止
         """
         try:
-            # 在事件循环线程中执行清理
-            if self._loop.is_running():
-                fut = asyncio.run_coroutine_threadsafe(self._cleanup_all(), self._loop)
-                # 等待清理完成（短超时避免阻塞）
-                try:
-                    fut.result(timeout=3)
-                except Exception as e:
-                    logger.warning(f"等待清理完成时出错: {e}")
+            # 设置停止标志，让消息循环自然退出
+            self.is_running = False
             
-            # 停止内部事件循环
-            if self._loop.is_running():
-                logger.bind(tag="TTS").info("停止内部事件循环")
-                self._loop.call_soon_threadsafe(self._loop.stop)
-            
-            # 等待事件循环线程结束
-            if self._loop_thread.is_alive():
-                self._loop_thread.join(timeout=2)
-                if self._loop_thread.is_alive():
-                    logger.warning("事件循环线程未能及时结束")
+            # 等待消息循环线程结束（线程内部会自动清理连接）
+            if self._message_loop_thread is not None and self._message_loop_thread.is_alive():
+                logger.bind(tag="TTS").info("等待消息循环线程结束")
+                self._message_loop_thread.join(timeout=3)
+                if self._message_loop_thread.is_alive():
+                    logger.warning("消息循环线程未能及时结束")
+                else:
+                    logger.bind(tag="TTS").info("消息循环线程已结束")
             
             logger.bind(tag="TTS").info("TTS客户端后台清理完成")
         except Exception as e:
-            logger.error(f"停止内部事件循环失败: {e}")
+            logger.error(f"停止消息循环失败: {e}")
+    
     async def _tts_cancel_session(self, ws, session_id):
         """TTS取消会话"""
         logger.bind(tag="TTS").info(f"===========TTS取消会话: {session_id}")
@@ -457,6 +429,7 @@ class TtsClient:
             "X-Api-App-Key": self.app_id,
             "X-Api-Access-Key": self.token,
             "X-Api-Resource-Id": 'volc.service_type.10029',
+            "X-Api-Session-Id": 'seed-tts-2.0',
             "X-Api-Connect-Id": str(uuid.uuid4()),
             "X-Tt-Logid": self.log_id,
         }
@@ -519,6 +492,7 @@ class TtsClient:
                     except asyncio.TimeoutError:
                         # 超时是正常的，继续等待
                         # 检查是否需要重连
+                        logger.bind(tag="TTS").info(f"检测到超时，need_reconnect: {self.need_reconnect}")
                         if self.need_reconnect:
                             logger.bind(tag="TTS").info("检测到需要重连，重新连接TTS服务器")
                             await self._connect_tts_server()
@@ -680,10 +654,10 @@ class TtsClient:
             text = text.replace("...", "，")
             text = text.replace("~", "。")
             self.buffer_text += text
-            if self.is_connected() == False:
-                return
-            if self._tts_session_active == False:
+            if self.is_connected() == False or self._tts_session_active == False:
                 logger.bind(tag="TTS").info(f"TTS会话未激活，跳过发送: {text[:50]}...")
+                # self.cleanup_background()
+                # self.start_message_receive_loop(self.chat_id, self.uid)
                 self.need_reconnect = True
                 # self.session_id_str = str(uuid.uuid4()).replace('-', '')
                 # self.session_id.value = self.session_id_str.encode('utf-8')
@@ -693,6 +667,7 @@ class TtsClient:
                 await self._tts_send_text(self.ws, self.speaker, self.buffer_text, self.session_id_str, self.mood_code, self.mood_level, self.speech_rate)
                 self.buffer_text = ""
             if end:
+                logger.bind(tag="TTS").info(f"TTS句子结束: {text}")
                 await self._tts_finish_session(self.ws, self.session_id_str)
             logger.bind(tag="TTS").debug(f"文本已加入发送队列: {text[:50]}...")
         except Exception as e:

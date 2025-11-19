@@ -66,7 +66,7 @@ def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
         # buffer = ""
         # 生成立即回复
         final_response = ""
-        writer({"chat_start": True})
+        writer({"chat_start": ""})
         for chunk in chat_model.stream(messages, extra_body={"thinking": {"type": "disabled"}}):
             if hasattr(chunk, 'content'):
                 text = chunk.content
@@ -114,7 +114,7 @@ def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
         # if buffer:
         #     writer({"chat_streaming": buffer})
         #     final_response += buffer
-        writer({"chat_end": True})
+        writer({"chat_end": final_response})
         return {
             "final_response": final_response
         }

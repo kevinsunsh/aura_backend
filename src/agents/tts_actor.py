@@ -67,6 +67,7 @@ class TTSActor(pykka.ThreadingActor):
         try:
             if not self.tts_client:
                 return {"success": False, "error": "TTS未启动"}
+            logger.bind(tag="BASE").info(f"send_text_chunk: {text}")
             # 交给内部事件循环
             import asyncio
             asyncio.run(self.tts_client.send_text_chunk(text, start=start, end=end))

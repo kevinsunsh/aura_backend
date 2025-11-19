@@ -262,6 +262,7 @@ class LLMChatActor(pykka.ThreadingActor):
             elif 'chat_streaming' in event:
                 if self.output_callback:
                     content = event["chat_streaming"].replace('\n', '').replace('\r', '')
+                    logger.bind(tag="BASE").info(f"chat_streaming: {content}")
                     self._run_async(safe_call(self.output_callback, {
                         "event": ServerEvent.ChatResponse,
                         "payload_msg": {
@@ -271,7 +272,10 @@ class LLMChatActor(pykka.ThreadingActor):
             elif 'chat_end' in event:
                 if self.output_callback:
                     self._run_async(safe_call(self.output_callback, {
-                        "event": ServerEvent.ChatResponseEnd,
+                        "event": ServerEvent.ChatEnded,
+                        "payload_msg": {
+                            "content": event["chat_end"]
+                        }
                     }))
             elif 'goal_to_plan' in event:
                 if self.output_callback:

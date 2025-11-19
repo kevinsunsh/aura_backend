@@ -675,7 +675,7 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
                 related_items_with_id.append({
                     "item_name": related_item.get("item_name", ""),
                     "item_description": related_item.get("item_description", ""),
-                    "spatial_entity_id": None
+                    "spatial_entity_id": None,
                     "world_bb": None
                 })
     return related_items_with_id

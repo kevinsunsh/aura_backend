@@ -183,6 +183,7 @@ class ActorMessageProcessor:
                 # self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
                 pass
             elif message.get("event") == ServerEvent.ChatEnded:
+                logger.bind(tag="BASE").info(f"ChatEnded: {message.get('payload_msg', {}).get('content', '')}")
                 self.tts_actor.tell({"type": "send_text_chunk", "text": "", "start": False, "end": True})
                 self.prepost_actor.tell({"type": "postprocess", "data": message.get("payload_msg", {})})
             elif message.get("event") == ServerEvent.ChatActionGoal:
@@ -332,13 +333,19 @@ class ActorMessageProcessor:
         char_instance_info = CharInstanceInfoManager().get_char_instance_info_by_user_and_chat_id(self.user_id, self.chat_id)
         current_scene_id = char_instance_info.current_scene_id if char_instance_info else "d8943faa-bf00-481b-95af-c73bd04c1eb7"
         current_scene_info = SceneInfoManager().get_scene_info_by_scene_id(current_scene_id)
-        character = CharacterManager().get_character_by_id(current_scene_info.activated_char_id)
-        system_preset = SystemPresetManager().get_system_preset_by_id(current_scene_info.activated_system_preset_id)
+        if current_scene_info:
+            character = CharacterManager().get_character_by_id(current_scene_info.activated_char_id)
+            system_preset = SystemPresetManager().get_system_preset_by_id(current_scene_info.activated_system_preset_id)
+            world_info_scanner = WorldInfoScanner(activate_world_book_ids=current_scene_info.activated_world_book_ids)
+            world_info_scanner.set_activate_keys(current_scene_info.activated_world_book_keys)
+        else:
+            character = CharacterManager().get_character_by_id("092e7a27-5678-41eb-a951-eacb85b7b18b")
+            system_preset = SystemPresetManager().get_system_preset_by_id("2f11ff2b-0531-48d4-bc59-31224b0c5941")
+            world_info_scanner = WorldInfoScanner(activate_world_book_ids=[])
+            world_info_scanner.set_activate_keys([])
         system_preset_prompts = system_preset["prompts"]
         system_preset_prompt_order = system_preset["prompt_order"]
-        world_info_scanner = WorldInfoScanner(activate_world_book_ids=current_scene_info.activated_world_book_ids)
         # 激活世界书关键词
-        world_info_scanner.set_activate_keys(current_scene_info.activated_world_book_keys)
         prompt_manager.update_instance(
             chat_id=self.chat_id,
             user_info=user_info,
