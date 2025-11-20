@@ -25,7 +25,7 @@ reply_max_latency = 30  # s
 def _generate_flash_response(state: SpeakingTaskState, config: RunnableConfig):
     """发送立即回复"""
     try:  
-        logger.bind(tag="BASE").info(f"生成主动回复: {state}")
+        # logger.bind(tag="BASE").info(f"生成主动回复: {state}")
         # 使用LLM生成立即回复
         user_input = state.get("user_input", "")
         user_id = state.get("user_id", "")

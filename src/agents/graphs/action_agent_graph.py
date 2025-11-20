@@ -502,41 +502,42 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
     from PIL import Image
     import io
     import numpy as np
-    # look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/look.jpg"
-    # cam_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/cam.json"
-    # depth_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/view_data/depth.png"
-    # # 直接下载为内存数据（不落地临时文件）
-    # try:
-    #     print(f"正在下载 look.jpg: {look_url}")
-    #     resp_look = requests.get(look_url, timeout=30)
-    #     resp_look.raise_for_status()
-    #     # 使用 PIL 解码图像，然后转换为 numpy 数组（RGB 格式）
-    #     look_img_pil = Image.open(io.BytesIO(resp_look.content)).convert('RGB')
-    #     look_img = np.array(look_img_pil)
-    #     # PIL 返回 RGB，OpenCV 是 BGR，但这里只需要形状，所以不需要转换通道顺序
-    #     if look_img is None:
-    #         raise RuntimeError("look.jpg 解析失败")
-    #     print("look.jpg 下载并解析完成")
-    #     print(f"正在下载 cam.json: {cam_url}")
-    #     resp_cam = requests.get(cam_url, timeout=30)
-    #     resp_cam.raise_for_status()
-    #     cam_data = json.loads(resp_cam.content.decode('utf-8'))
-    #     print("cam.json 下载并解析完成")
-    #     print(f"正在下载 depth.png: {depth_url}")
-    #     resp_depth = requests.get(depth_url, timeout=30)
-    #     resp_depth.raise_for_status()
-    #     depth_content = resp_depth.content
-    #     if depth_content is None or len(depth_content) == 0:
-    #         raise RuntimeError("depth.png 内容为空")
-    #     print("depth.png 下载完成（内存）")
-    # except Exception as e:
-    #     raise Exception(f"下载资源失败: {e}")
+    look_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/save_view_info/look.jpg"
+    cam_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/save_view_info/view_matrix.json"
+    depth_url = f"https://aura-view-eye.tos-cn-beijing.volces.com/assets/{user_id}/{session_id}/save_view_info/depth.png"
+    # 直接下载为内存数据（不落地临时文件）
+    try:
+        logger.bind(tag="BASE").info(f"正在下载 look.jpg: {look_url}")
+        resp_look = requests.get(look_url, timeout=30)
+        resp_look.raise_for_status()
+        # 使用 PIL 解码图像，然后转换为 numpy 数组（RGB 格式）
+        look_img_pil = Image.open(io.BytesIO(resp_look.content)).convert('RGB')
+        look_img = np.array(look_img_pil)
+        # PIL 返回 RGB，OpenCV 是 BGR，但这里只需要形状，所以不需要转换通道顺序
+        if look_img is None:
+            raise RuntimeError("look.jpg 解析失败")
+        logger.bind(tag="BASE").info("look.jpg 下载并解析完成")
+        logger.bind(tag="BASE").info(f"正在下载 cam.json: {cam_url}")
+        resp_cam = requests.get(cam_url, timeout=30)
+        resp_cam.raise_for_status()
+        cam_data = json.loads(resp_cam.content.decode('utf-8'))
+        logger.bind(tag="BASE").info("cam.json 下载并解析完成")
+        logger.bind(tag="BASE").info(f"正在下载 depth.png: {depth_url}")
+        resp_depth = requests.get(depth_url, timeout=30)
+        resp_depth.raise_for_status()
+        depth_content = resp_depth.content
+        if depth_content is None or len(depth_content) == 0:
+            raise RuntimeError("depth.png 内容为空")
+        logger.bind(tag="BASE").info("depth.png 下载完成（内存）")
+    except Exception as e:
+        raise Exception(f"下载资源失败: {e}")
 
-    view_eye_data = os.environ.get("VIEW_EYE_DATA")
-    view_eye_data_path = f"{view_eye_data}{user_id}/{session_id}/save_view_info"
-    look_img = Image.open(os.path.join(view_eye_data_path, "look.jpg"))
-    cam_data = json.load(open(os.path.join(view_eye_data_path, "view_matrix.json")))
-    depth_content = open(os.path.join(view_eye_data_path, "depth.png"), "rb").read()
+    # view_eye_data = os.environ.get("VIEW_EYE_DATA")
+    # view_eye_data_path = f"{view_eye_data}{user_id}/{session_id}/save_view_info"
+    # look_img = Image.open(os.path.join(view_eye_data_path, "look.jpg"))
+    # cam_data = json.load(open(os.path.join(view_eye_data_path, "view_matrix.json")))
+    # depth_content = open(os.path.join(view_eye_data_path, "depth.png"), "rb").read()
+    # logger.bind(tag="BASE").info(f"view_eye_data_path: {view_eye_data_path}")
     try:
         img_h, img_w = (look_img.shape[0], look_img.shape[1]) if look_img is not None else (1080, 1920)
     except Exception:
@@ -555,7 +556,7 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
         if isinstance(proj, list) and len(proj) == 16 and isinstance(view_m, list) and len(view_m) == 16:
             proj_matrix = np.array([proj[i*4:(i+1)*4] for i in range(4)], dtype=np.float64).transpose()
             view_matrix = np.array([view_m[i*4:(i+1)*4] for i in range(4)], dtype=np.float64).transpose()
-            print("已解析分离的 proj/view 矩阵 (4x4)")
+            logger.bind(tag="BASE").info("已解析分离的 proj/view 矩阵 (4x4)")
             try:
                 inv_proj_matrix = np.linalg.inv(proj_matrix)
                 inv_view_matrix = np.linalg.inv(view_matrix)
@@ -566,16 +567,16 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
                 if n > 0:
                     camera_forward = camera_forward / n
             except Exception as e:
-                print(f"计算 inv_proj/inv_view 或相机参数失败: {e}")
+                logger.bind(tag="BASE").info(f"计算 inv_proj/inv_view 或相机参数失败: {e}")
     except requests.exceptions.RequestException as e:
-        print(f"下载 cam.json 失败: {e}")
+        logger.bind(tag="BASE").info(f"下载 cam.json 失败: {e}")
     except json.JSONDecodeError as e:
-        print(f"解析 cam.json 失败: {e}")
+        logger.bind(tag="BASE").info(f"解析 cam.json 失败: {e}")
     except Exception as e:
-        print(f"处理 cam.json 时出错: {e}")
+        logger.bind(tag="BASE").info(f"处理 cam.json 时出错: {e}")
     # 读取 PNG 深度图（内存）
     try:
-        print(f"正在解析 depth.png（内存）")
+        logger.bind(tag="BASE").info(f"正在解析 depth.png（内存）")
         # 使用 PIL 解码 PNG 深度图（保持位深/通道）
         depth_img_pil = Image.open(io.BytesIO(depth_content))
         depth_img = np.array(depth_img_pil)
@@ -597,9 +598,9 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
             depth_linear = depth_f32.astype(np.float64)
         else:
             raise RuntimeError("depth.png 通道数不为4，无法按 RGBA 打包规则解析")
-        print(f"depth.png 解析成功（RGBA-packed float32），shape={depth_linear.shape}, 值范围=[{np.nanmin(depth_linear):.6f}, {np.nanmax(depth_linear):.6f}]")
+        logger.bind(tag="BASE").info(f"depth.png 解析成功（RGBA-packed float32），shape={depth_linear.shape}, 值范围=[{np.nanmin(depth_linear):.6f}, {np.nanmax(depth_linear):.6f}]")
     except Exception as e:
-        print(f"读取 depth.png 失败: {e}")
+        logger.bind(tag="BASE").info(f"读取 depth.png 失败: {e}")
     # 视口矩形
     view_rect = (0, 0, img_w, img_h)
     related_items_with_id = []
@@ -680,6 +681,7 @@ def handle_position(user_id:str, session_id:str, scene_id:str, related_items:Lis
                     "spatial_entity_id": None,
                     "world_bb": None
                 })
+    logger.bind(tag="BASE").info(f"related_items_with_id: {related_items_with_id}")
     return related_items_with_id
 # ==========================================
 # 节点定义
@@ -694,7 +696,9 @@ def prepare_data(state: ActionFlowState) -> Dict[str, Any]:
     user_id = state.get("user_id", "")
     action_input = state.get("action_input", {})
     related_items = action_input.get("related_items", [])
+    logger.bind(tag="BASE").info(f"before handle_position state: {state}, current_scene_id: {current_scene_id}")
     related_items_with_id = handle_position(user_id, session_id, current_scene_id, related_items)
+    logger.bind(tag="BASE").info(f"after handle_position related_items_with_id: {related_items_with_id}")
     action_input["related_items"] = related_items_with_id
     validated_regions = state.get("validated_regions", ValidatedRegions(regions={}))
     if isinstance(validated_regions, ValidatedRegions):

@@ -23,6 +23,8 @@ class TTSActor(pykka.ThreadingActor):
                 return self._start_process(message.get("data", {}))
             elif msg_type == "stop":
                 return self._stop_process()
+            elif msg_type == "start_session":
+                return self._start_session()
             elif msg_type == "send_text_chunk":
                 return self._send_text_chunk(message.get("text", ""), message.get("start", False), message.get("end", False))
             elif msg_type == "set_callback":
@@ -76,6 +78,18 @@ class TTSActor(pykka.ThreadingActor):
             logger.error(f"发送TTS文本失败: {e}")
             return {"success": False, "error": str(e)}
 
+    def _start_session(self):
+        try:
+            if not self.tts_client:
+                return {"success": False, "error": "TTS未启动"}
+            logger.bind(tag="BASE").info(f"启动TTS会话 in TTSActor")
+            import asyncio
+            asyncio.run(self.tts_client.start_session())
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"启动TTS会话失败: {e}")
+            return {"success": False, "error": str(e)}
+    
     # 回调透传
     def _on_tts_sentence_start(self, payload, session_id):
         if self.output_callback:

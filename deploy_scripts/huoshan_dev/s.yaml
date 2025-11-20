@@ -6,7 +6,7 @@ vars:
   sid: "aurabkdev"
   region: "cn-beijing"
   functionName: "aura-backend-function-dev"
-  version: "0.0.98"
+  version: "0.1.15"
 
 resources:
   aura_backend_dev:
@@ -49,6 +49,8 @@ resources:
             Value: X1KxZeMkM#nobqKiq
           - Key: POSTGRES_SCHEMA
             Value: public
+          - Key: VIEW_EYE_DATA
+            Value: /mnt/auto/assets/
         VpcConfig:
           EnableVpc: true
           EnableSharedInternetAccess: true
@@ -57,7 +59,17 @@ resources:
             - subnet-rrkuf0d9y800v0x58hi8g42
           SecurityGroupIds:
             - sg-13g4pj6oq1r7k3n6nu5jnw94u
-
+        TosMountConfig:
+          EnableTos: true
+          Credentials:
+            AccessKeyId: ${config('AccessKey')}
+            SecretAccessKey: ${config('SecretKey')}
+          MountPoints:
+            - Endpoint: http://tos-${vars.region}.ivolces.com
+              BucketName: aura-view-eye
+              BucketPath: /
+              LocalMountPath: /mnt/auto
+              ReadOnly: false
       replicaLimit:
         MaxInstance: 10
       triggers:

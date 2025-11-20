@@ -137,6 +137,7 @@ class ActorMessageProcessor:
                 self.asr_is_started = False
                 self.process_timer = time.time()
                 logger.bind(tag="BASE").info("E2E检测到语音结束")
+                self.tts_actor.tell({"type": "start_session"})
                 self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
                 # 发送预处理信号
                 self.prepost_actor.tell({"type": "preprocess"})
@@ -201,6 +202,7 @@ class ActorMessageProcessor:
         logger.bind(tag="BASE").debug(f"收到Action LLM输出: {message}")
         try:
             if message.get("event") == ServerEvent.ChatActionResponse:
+                self.tts_actor.tell({"type": "start_session"})
                 self.llm_chat_actor.tell({"type": "response_action_message", "data": message.get("payload_msg", {})})
             if self.websocket_send_callback:
                 self.websocket_send_callback(message)
@@ -271,14 +273,16 @@ class ActorMessageProcessor:
             role_look_env = message_data.get("payload_msg", {}).get("role_look_env", {})
             view_matrix = role_look_env.get("view_matrix", [])
             projection_matrix = role_look_env.get("projection_matrix", [])
+            scene_info = SceneInfoManager().get_scene_info_by_scene_name(role_look_env.get("scene_name", "L_Showcase1"))
             char_status = {"action": {"current": "", "target": ""}, "view_image": role_look_env.get("color_base64", ""), "depth_image": role_look_env.get("depth_base64", "")}
             # logger.bind(tag="BASE").info(f"RoleLookRequest char_status: {char_status}")
             # logger.bind(tag="BASE").info(f"RoleLookRequest view_matrix: {view_matrix}")
             # logger.bind(tag="BASE").info(f"RoleLookRequest projection_matrix: {projection_matrix}")
-            CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status, view_matrix=view_matrix, projection_matrix=projection_matrix)
+            CharInstanceInfoManager().upsert_char_instance_info(self.user_id, self.chat_id, char_status=char_status, view_matrix=view_matrix, projection_matrix=projection_matrix, current_scene_id=scene_info.scene_id)
         elif message_data.get("event") == ClientEvent.SpeakEnded:
             if self.asr_is_started:
                 self.asr_is_started = False
+                self.tts_actor.tell({"type": "start_session"})
                 self.prepost_actor.tell({"type": "preprocess"})
                 self.process_timer = time.time()
                 self.prepost_actor.tell({"type": "set_process_timer", "timer": self.process_timer})
